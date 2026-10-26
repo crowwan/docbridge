@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { mkdtemp, writeFile } from 'node:fs/promises';
-import { connect } from 'node:net';
+import { connect, createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +9,7 @@ import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotoc
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { z } from 'zod';
-import { startBridge, type Bridge } from '../src/server/bridge.ts';
+import { PORT_ATTEMPTS, startBridge, type Bridge } from '../src/server/bridge.ts';
 
 const serverEntry = fileURLToPath(new URL('../src/server/index.ts', import.meta.url));
 const pingResultSchema = z.object({ viewerUrl: z.string(), viewers: z.number() });
@@ -58,6 +58,21 @@ function sendMalformedFrame(port: number, token: string): Promise<void> {
     });
     socket.once('close', () => resolve());
   });
+}
+
+/** 127.0.0.1 의 빈 포트 하나를 잡아 둔다(다른 프로그램이 쓰는 포트 흉내) */
+function occupyPort(port = 0): Promise<Server> {
+  const server = createServer();
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', () => resolve(server));
+  });
+}
+
+function portOf(server: Server): number {
+  const address = server.address();
+  if (address === null || typeof address === 'string') throw new Error('포트가 없습니다');
+  return address.port;
 }
 
 const nextMessage = (ws: WebSocket) =>
@@ -141,5 +156,34 @@ describe('SPEC-001 MCP·뷰어 서버 동시 구동 (기술 검증)', () => {
 
     expect(response.status).toBe(200);
     expect(await response.text()).toBe('export {}');
+  });
+
+  it('서버는 127.0.0.1 에서만 열린다', async () => {
+    bridge = await startBridge({ port: 0, viewerDir: tmpdir() });
+    expect(bridge.host).toBe('127.0.0.1');
+  });
+
+  it('기본 포트가 사용 중이면 다음 빈 포트로 열고 뷰어 주소에 그 포트를 쓴다', async () => {
+    const busy = await occupyPort();
+    const taken = portOf(busy);
+    try {
+      bridge = await startBridge({ port: taken, viewerDir: tmpdir() });
+      expect(bridge.port).toBeGreaterThan(taken);
+      expect(bridge.port).toBeLessThan(taken + PORT_ATTEMPTS);
+      expect(bridge.viewerUrl).toContain(`:${bridge.port}/`);
+    } finally {
+      busy.close();
+    }
+  });
+
+  it('시도할 포트가 모두 사용 중이면 시작하지 못하고 이유를 알린다', async () => {
+    const busy = await occupyPort();
+    try {
+      await expect(startBridge({ port: portOf(busy), viewerDir: tmpdir(), portAttempts: 1 })).rejects.toThrow(
+        `포트 ${portOf(busy)}~${portOf(busy)} 이 모두 사용 중입니다`,
+      );
+    } finally {
+      busy.close();
+    }
   });
 });
