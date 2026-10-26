@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { extractBlocks, numbersFromLayout, type Block, type ParagraphBlock, type TableBlock } from '../src/core/blocks.ts';
+import { findInBlocks } from '../src/core/find-text.ts';
 import { createBlankDocument } from '../src/core/rhwp-node.ts';
 import { openFixture } from './fixtures.ts';
 
@@ -157,6 +158,22 @@ describe('SPEC-001 블록 추출 (기술 검증)', () => {
     expect(doc.getSectionCount()).toBe(1);
     expect(doc.getSectionStarts()).toBe('[0,1]');
     expect(tables(extractBlocks(doc)).map((t) => [t.section, t.paragraph])).toEqual([[0, 2]]);
+  });
+
+  it('머리말·꼬리말·각주는 블록으로 내보내지 않고 찾기에도 나오지 않는다', () => {
+    const doc = createBlankDocument();
+    doc.insertText(0, 0, 0, '본문 문단');
+    doc.createHeaderFooter(0, true, 0);
+    doc.insertTextInHeaderFooter(0, true, 0, 0, 0, '머리말 글자');
+    doc.createHeaderFooter(0, false, 0);
+    doc.insertTextInHeaderFooter(0, false, 0, 0, 0, '꼬리말 글자');
+    const footnote = z.object({ controlIdx: z.number() }).parse(JSON.parse(doc.insertFootnote(0, 0, 2)));
+    doc.insertTextInFootnote(0, 0, footnote.controlIdx, 0, 0, '각주 글자');
+
+    const blocks = extractBlocks(doc);
+
+    expect(blocks.map((b) => (b.kind === 'paragraph' ? b.text : b.kind))).toEqual(['본문 문단']);
+    expect(findInBlocks(blocks, '글자')).toEqual([]);
   });
 
   it('여러 쪽 문서에서 블록마다 쪽 번호를 준다', () => {
