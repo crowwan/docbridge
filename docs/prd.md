@@ -61,7 +61,7 @@ updated: 2026-10-26
 
 - TypeScript 전체. Node 24 (`.nvmrc`)
 - MCP 서버: 공식 MCP TypeScript SDK, stdio
-- 서버 ↔ 뷰어: 127.0.0.1 WebSocket + 세션 토큰
+- 서버 ↔ 뷰어: 127.0.0.1 WebSocket + 세션 토큰. 뷰어 페이지는 MCP 서버가 직접 제공한다 (SPEC-001)
 - 뷰어: Vite + `@rhwp/core`(WASM, MIT) 직접 사용. 버전 고정
 - 테스트: Vitest(1~2 계층), Playwright(뷰어 스모크)
 - 배포(v0.2): Claude Desktop 확장(.mcpb)
@@ -75,7 +75,6 @@ updated: 2026-10-26
 
 ## 열린 질문
 
-- 뷰어는 MCP 서버가 띄우는 로컬 페이지인가, 따로 여는 페이지인가 — 결정: 기술 검증 후 (SPEC-001)
 - 사람이 뷰어에서 직접 편집하게 할지, 보기 전용으로 둘지 — 결정: v0.1 사용 후
 - rhwp 에디터(`@rhwp/editor`)를 붙일지, `@rhwp/core` 위에 최소 뷰어만 만들지 — 결정: 기술 검증 후 (SPEC-001)
 - 번호를 직접 타이핑한 문단("1.")을 옮겼을 때 번호를 고쳐 줄지 — 결정: 구현 중 (SPEC-002)
