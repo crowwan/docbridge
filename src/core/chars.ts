@@ -10,8 +10,17 @@ export const charLength = (text: string): number => [...text].length;
 /** start 글자부터 end 글자 앞까지 (end 를 빼면 끝까지) */
 export const sliceChars = (text: string, start: number, end?: number): string => [...text].slice(start, end).join('');
 
-/** text 안에서 query 와 일치하는 곳을 from 글자부터 찾는다. 글자 위치, 없으면 -1 */
-export function indexOfChars(text: string, query: string, from = 0): number {
-  const at = text.indexOf(query, sliceChars(text, 0, from).length);
-  return at === -1 ? -1 : charLength(text.slice(0, at));
+/**
+ * JS 문자열 위치(UTF-16) → 글자 위치 표. 표[i] = text.slice(0, i) 의 글자 수 (i = 0..text.length).
+ * 한 번 훑어 만든다. 문자열 검색(indexOf) 결과를 글자 위치로 바꿀 때 쓴다
+ */
+export function charIndexes(text: string): number[] {
+  const indexes: number[] = [];
+  let chars = 0;
+  for (const char of text) {
+    for (let unit = 0; unit < char.length; unit += 1) indexes.push(chars);
+    chars += 1;
+  }
+  indexes.push(chars);
+  return indexes;
 }

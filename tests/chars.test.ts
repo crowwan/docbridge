@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { charLength, indexOfChars, sliceChars } from '../src/core/chars.ts';
+import { charIndexes, charLength, sliceChars } from '../src/core/chars.ts';
 import { createBlankDocument } from '../src/core/rhwp-node.ts';
 
 describe('SPEC-001 블록 안 글자 위치 단위', () => {
@@ -12,11 +12,10 @@ describe('SPEC-001 블록 안 글자 위치 단위', () => {
     expect(doc.getTextRange(0, 0, 2, 1)).toBe('가');
   });
 
-  it('글자 단위로 자르고 찾는다(BMP 밖 글자를 반쪽 내지 않는다)', () => {
+  it('글자 단위로 자르고, 문자열 위치를 글자 위치로 바꾼다(BMP 밖 글자를 반쪽 내지 않는다)', () => {
     expect(sliceChars('𠀀😀가나', 1, 3)).toBe('😀가');
     expect(sliceChars('𠀀😀가나', 2)).toBe('가나');
-    expect(indexOfChars('𠀀😀가나가', '가')).toBe(2);
-    expect(indexOfChars('𠀀😀가나가', '가', 3)).toBe(4);
-    expect(indexOfChars('𠀀😀가나', '다')).toBe(-1);
+    // JS 문자열 위치 0..6 → 글자 위치 (𠀀·😀 는 UTF-16 두 칸)
+    expect(charIndexes('𠀀😀가나')).toEqual([0, 0, 1, 1, 2, 3, 4]);
   });
 });
