@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { extractBlocks, type Block, type ParagraphBlock, type TableBlock } from '../src/core/blocks.ts';
+import { extractBlocks, numbersFromLayout, type Block, type ParagraphBlock, type TableBlock } from '../src/core/blocks.ts';
 import { createBlankDocument } from '../src/core/rhwp-node.ts';
 import { openFixture } from './fixtures.ts';
 
@@ -46,6 +46,32 @@ describe('SPEC-001 블록 추출 (기술 검증)', () => {
 
     const [first] = paragraphs(extractBlocks(doc));
     expect(first?.number).toBe('1.');
+  });
+
+  it('다음 쪽으로 이어지는 번호 문단 앞에 머리말이 그려져도 번호는 첫 쪽의 번호 글자다', () => {
+    // 1쪽: 번호 "3." 다음에 문단 5 첫 줄. 2쪽: 머리말(문단 위치 없음) 다음에 문단 5 이어지는 줄
+    const numbers = numbersFromLayout([
+      [
+        { text: '3.' },
+        { text: '회신 기한: 2026. 11. 14.', secIdx: 0, paraIdx: 5, charStart: 0 },
+      ],
+      [
+        { text: '가나다구청 안내' },
+        { text: '까지 회신하여 주시기 바랍니다.', secIdx: 0, paraIdx: 5, charStart: 30 },
+      ],
+    ]);
+    expect(numbers.get('0:5')).toBe('3.');
+  });
+
+  it('문단 첫 줄이 아닌 줄 앞의 글자는 번호로 보지 않는다', () => {
+    // 쪽 머리에서 시작하는 이어지는 줄만 있고, 그 앞에 쪽 번호가 그려진 경우
+    const numbers = numbersFromLayout([
+      [
+        { text: '- 2 -' },
+        { text: '이어지는 줄', secIdx: 0, paraIdx: 7, charStart: 12 },
+      ],
+    ]);
+    expect(numbers.has('0:7')).toBe(false);
   });
 
   it('개요 문단은 번호와 개요 수준을 주고, 번호는 rhwp 개요 탐색 결과와 같다', () => {

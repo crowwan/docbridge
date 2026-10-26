@@ -62,6 +62,7 @@ const textLayoutSchema = z.object({
       text: z.string(),
       secIdx: z.number().optional(),
       paraIdx: z.number().optional(),
+      charStart: z.number().optional(),
       cellIdx: z.number().optional(),
     }),
   ),
@@ -94,13 +95,15 @@ function pageOf(doc: HwpDocument, section: number, paragraph: number): number {
 
 const positionKey = (section: number, paragraph: number) => `${section}:${paragraph}`;
 
+export type LayoutRun = z.infer<typeof textLayoutSchema>['runs'][number];
+
 // 자동 번호는 문서에 숫자로 저장되지 않고 렌더링 때 계산된다(rhwp-code-analysis 2-4).
 // getOutlineNavigation 은 개요 번호만 주므로, 쪽 글자 배치에서 문단 첫 글자 바로 앞에
 // 그려진 번호 글자를 읽는다. 번호 글자 자체에는 문단 위치가 붙지 않는다.
-function renderedNumbers(doc: HwpDocument): Map<string, string> {
+/** 쪽마다의 글자 배치(run 목록)에서 문단별 번호 문자열을 찾는다 */
+export function numbersFromLayout(pages: LayoutRun[][]): Map<string, string> {
   const numbers = new Map<string, string>();
-  for (let page = 0; page < doc.pageCount(); page += 1) {
-    const { runs } = parse(textLayoutSchema, doc.getPageTextLayout(page));
+  for (const runs of pages) {
     runs.forEach((run, i) => {
       const previous = runs[i - 1];
       if (
@@ -108,14 +111,25 @@ function renderedNumbers(doc: HwpDocument): Map<string, string> {
         previous.paraIdx !== undefined ||
         run.paraIdx === undefined ||
         run.secIdx === undefined ||
-        run.cellIdx !== undefined
+        run.cellIdx !== undefined ||
+        // 번호는 문단 첫 줄 앞에만 그려진다. 다음 쪽으로 이어지는 줄 앞의 머리말·쪽 번호는 번호가 아니다
+        run.charStart !== 0
       ) {
         return;
       }
-      numbers.set(positionKey(run.secIdx, run.paraIdx), previous.text);
+      const key = positionKey(run.secIdx, run.paraIdx);
+      if (!numbers.has(key)) numbers.set(key, previous.text);
     });
   }
   return numbers;
+}
+
+function renderedNumbers(doc: HwpDocument): Map<string, string> {
+  const pages: LayoutRun[][] = [];
+  for (let page = 0; page < doc.pageCount(); page += 1) {
+    pages.push(parse(textLayoutSchema, doc.getPageTextLayout(page)).runs);
+  }
+  return numbersFromLayout(pages);
 }
 
 function numberingOf(
