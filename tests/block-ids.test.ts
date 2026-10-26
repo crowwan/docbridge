@@ -77,6 +77,26 @@ describe('SPEC-001 블록 id (기술 검증)', () => {
     expect(renumbered?.kind === 'paragraph' ? renumbered.number : undefined).toBe('1.');
   });
 
+  it('문단을 넣고 지운 뒤에도 블록 위치로 찾은 id 가 같은 블록을 가리킨다', () => {
+    const ids = BlockIdTable.assign([
+      { kind: 'paragraph', section: 0, paragraph: 0 },
+      { kind: 'paragraph', section: 0, paragraph: 1 },
+      { kind: 'table', section: 0, paragraph: 2, controlIndex: 0 },
+    ]);
+    expect(ids.idOf({ kind: 'table', section: 0, paragraph: 2, controlIndex: 0 })).toBe('b3');
+
+    const inserted = ids.paragraphInserted(0, 1);
+
+    expect(ids.idOf({ kind: 'paragraph', section: 0, paragraph: 1 })).toBe(inserted);
+    expect(ids.idOf({ kind: 'table', section: 0, paragraph: 3, controlIndex: 0 })).toBe('b3');
+    expect(ids.idOf({ kind: 'table', section: 0, paragraph: 2, controlIndex: 0 })).toBeUndefined();
+
+    ids.paragraphDeleted(0, 0);
+
+    expect(ids.idOf({ kind: 'paragraph', section: 0, paragraph: 0 })).toBe(inserted);
+    expect(ids.idOf({ kind: 'table', section: 0, paragraph: 2, controlIndex: 0 })).toBe('b3');
+  });
+
   it('대응표를 고치지 않으면 문단을 넣은 뒤 id 가 다른 내용을 가리킨다', () => {
     const doc = openFixture('notice.hwpx');
     const before = extractBlocks(doc);
