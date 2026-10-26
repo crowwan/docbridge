@@ -4,12 +4,14 @@ import { HwpDocument } from '@rhwp/core';
 import { blockPositionSchema, type Block } from '../src/core/block-schema.ts';
 import { extractBlocks } from '../src/core/blocks.ts';
 import { findInBlocks } from '../src/core/find-text.ts';
+import { highlightTargets } from '../src/core/highlight-targets.ts';
 import { initRhwpForNode } from '../src/core/rhwp-node.ts';
 import type { RequestMessage } from '../src/shared/protocol.ts';
 
 export function rhwpViewerHandler(): (request: RequestMessage) => unknown {
   initRhwpForNode();
   let blocks: Block[] | undefined;
+  let doc: HwpDocument | undefined;
   const opened = () => {
     if (blocks === undefined) throw new Error('뷰어에 열린 문서가 없습니다');
     return blocks;
@@ -17,16 +19,24 @@ export function rhwpViewerHandler(): (request: RequestMessage) => unknown {
   return (request) => {
     switch (request.method) {
       case 'load_document': {
-        const doc = new HwpDocument(new Uint8Array(Buffer.from(request.params.data, 'base64')));
+        doc?.free();
+        doc = new HwpDocument(new Uint8Array(Buffer.from(request.params.data, 'base64')));
         blocks = extractBlocks(doc);
-        const pageCount = doc.pageCount();
-        doc.free();
-        return { pageCount, blocks: blocks.map((block) => blockPositionSchema.parse(block)) };
+        return { pageCount: doc.pageCount(), blocks: blocks.map((block) => blockPositionSchema.parse(block)) };
       }
       case 'get_blocks':
         return opened();
       case 'find_text':
         return findInBlocks(opened(), request.params.query);
+      case 'highlight': {
+        // 그리지는 않고, 뷰어와 같은 함수로 대상을 사각형으로 바꿔 검사한 뒤 뷰어와 같은 결과를 준다
+        const open = doc;
+        if (open === undefined) throw new Error('뷰어에 열린 문서가 없습니다');
+        const { pages, warnings } = highlightTargets(open, opened(), request.params.targets);
+        return { pages, ...(warnings.length === 0 ? {} : { warnings }) };
+      }
+      case 'clear_highlight':
+        return {};
     }
   };
 }

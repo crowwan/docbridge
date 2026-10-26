@@ -129,9 +129,18 @@ export class DocumentSession {
    * 뷰어가 없으면 스펙 문구와 마지막 파일 경로로, 뷰어는 있는데 열린 문서가 없으면(열기 실패 뒤) 문서 없음으로 실패한다
    */
   async requestViewer<M extends ViewerMethod>(method: M, params: ViewerParams<M>): Promise<ViewerResult<M>> {
+    return this.requestWithDocument(method, () => params);
+  }
+
+  /** requestViewer 와 같되, 입력을 지금 열린 문서(id 표)로 만든다. paramsFor 가 던지면(없는 id 등) 그 오류로 끝난다 */
+  async requestWithDocument<M extends ViewerMethod>(
+    method: M,
+    paramsFor: (document: OpenedDocument) => ViewerParams<M>,
+  ): Promise<ViewerResult<M>> {
     await this.ready();
     if (!this.bridge.hasViewer()) throw new Error(this.notConnectedMessage());
     if (this.current === undefined) throw new Error(NO_DOCUMENT);
+    const params = paramsFor(this.current);
     try {
       return await this.bridge.request(method, params);
     } catch (error) {

@@ -1,0 +1,34 @@
+/* docbridge 뷰어 디자인 토큰: 값의 유일한 기준. 역할과 이유는 docs/design.md */
+:root {
+  /* 색 */
+  --bg: #e9e9ec;
+  --surface: #ffffff;
+  --text: #1d1d1f;
+  --muted: #5f5f66;
+  /* 근거 하이라이트: 형광펜 노랑. 곱하기(multiply)로 겹쳐 글자가 흐려지지 않는다 */
+  --highlight: rgb(255 214 0 / 45%);
+  /* note: 문서(흰 종이·검은 글자)와 섞이지 않는 진한 꼬리표 */
+  --note-bg: #151515;
+  --note-fg: #ffffff;
+
+  /* 글자 */
+  --font-sans: system-ui, sans-serif;
+  --text-size: 14px;
+  --text-line-height: 1.5;
+  --title-size: 16px;
+  --note-font-size: 14px;
+  --note-line-height: 1.4;
+
+  /* 간격·크기 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-4: 16px;
+  --space-8: 32px;
+  --note-max-width: 280px;
+  --notice-max-width: 480px;
+
+  /* 반경·그림자 */
+  --radius-sm: 4px;
+  --radius: 8px;
+  --page-shadow: 0 1px 3px rgb(0 0 0 / 18%);
+}

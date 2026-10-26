@@ -8,7 +8,8 @@ import { errorMessage } from './errors.ts';
 
 /**
  * 하이라이트·찾기 공용 대상(#6 find_text 결과, #7 highlight 입력).
- * 글자 위치는 read_blocks 가 돌려주는 블록 text(표는 칸 안 문단을 \n 으로 이은 칸 text) 기준이다.
+ * 글자 위치는 read_blocks 가 돌려주는 블록 text(표는 칸 안 문단을 \n 으로 이은 칸 text) 안 유니코드 글자 위치다
+ * (JS 문자열 위치가 아니다. 이모지·확장 한자도 한 글자 — core/chars.ts).
  */
 export const textTargetSchema = z.object({
   /** 블록 id */
@@ -21,6 +22,19 @@ export const textTargetSchema = z.object({
   end: z.number().int().min(0).optional(),
 });
 export type TextTarget = z.infer<typeof textTargetSchema>;
+
+/** highlight note 의 최대 글자 수. 하이라이트 옆에 짧게 붙는 말이다 */
+export const NOTE_MAX_CHARS = 100;
+
+/** 서버 id 표가 기억하는 블록 위치(core/block-ids.ts BlockAnchor). 뷰어가 이것으로 자기 블록을 찾는다 */
+export const blockAnchorSchema = z.object({ section: z.number(), paragraph: z.number(), part: z.string() });
+
+export const highlightParamsSchema = z.object({
+  /** 서버가 id 를 위치로 바꿔 붙인 대상. 첫 대상으로 스크롤한다 */
+  targets: z.array(textTargetSchema.extend({ anchor: blockAnchorSchema })).min(1),
+  note: z.string().optional(),
+});
+export type AnchoredTarget = z.infer<typeof highlightParamsSchema>['targets'][number];
 
 /** 뷰어가 이 시간 안에 응답하지 않으면 요청을 실패로 끝낸다 */
 export const REQUEST_TIMEOUT_MS = 30_000;
@@ -45,6 +59,10 @@ export const viewerMethodSchemas = {
   get_blocks: { params: z.object({}), result: z.array(blockSchema) },
   /** 문단·표 칸에서 query 와 일치하는 위치 */
   find_text: { params: z.object({ query: z.string() }), result: z.array(textMatchSchema) },
+  /** 이전 하이라이트를 지우고 대상마다 하이라이트를 그린 뒤 첫 대상으로 스크롤한다. 결과는 하이라이트가 있는 모든 쪽(1부터, 오름차순)과 정확하지 않을 수 있는 대상 안내 */
+  highlight: { params: highlightParamsSchema, result: z.object({ pages: z.array(z.number()), warnings: z.array(z.string()).optional() }) },
+  /** 하이라이트를 모두 지운다 */
+  clear_highlight: { params: z.object({}), result: z.object({}) },
 } as const;
 
 type MethodSchemas = typeof viewerMethodSchemas;
@@ -59,6 +77,8 @@ export const parseViewerResult: { [M in ViewerMethod]: (result: unknown) => View
   load_document: (result) => viewerMethodSchemas.load_document.result.parse(result),
   get_blocks: (result) => viewerMethodSchemas.get_blocks.result.parse(result),
   find_text: (result) => viewerMethodSchemas.find_text.result.parse(result),
+  highlight: (result) => viewerMethodSchemas.highlight.result.parse(result),
+  clear_highlight: (result) => viewerMethodSchemas.clear_highlight.result.parse(result),
 };
 
 const requestSchema = <M extends ViewerMethod, P extends z.ZodType>(method: M, params: P) =>
@@ -69,6 +89,8 @@ const requestSchemas = {
   load_document: requestSchema('load_document', viewerMethodSchemas.load_document.params),
   get_blocks: requestSchema('get_blocks', viewerMethodSchemas.get_blocks.params),
   find_text: requestSchema('find_text', viewerMethodSchemas.find_text.params),
+  highlight: requestSchema('highlight', viewerMethodSchemas.highlight.params),
+  clear_highlight: requestSchema('clear_highlight', viewerMethodSchemas.clear_highlight.params),
 } satisfies { [M in ViewerMethod]: z.ZodObject };
 
 /** 뷰어가 요청을 읽는 스키마. 메서드마다 입력 모양이 다르다 */
@@ -76,6 +98,8 @@ export const requestMessageSchema = z.discriminatedUnion('method', [
   requestSchemas.load_document,
   requestSchemas.get_blocks,
   requestSchemas.find_text,
+  requestSchemas.highlight,
+  requestSchemas.clear_highlight,
 ]);
 export type RequestMessage = z.infer<typeof requestMessageSchema>;
 

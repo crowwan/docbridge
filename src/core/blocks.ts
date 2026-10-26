@@ -140,15 +140,19 @@ function numberingOf(heading: Heading | undefined, number: string | undefined): 
   };
 }
 
-function cellText(doc: HwpDocument, section: number, paragraph: number, control: number, cell: number): string {
+/** 표 칸 안 문단들의 글자. 칸 text 는 이것을 \n 으로 이은 것이다(하이라이트가 칸 안 위치를 문단으로 나눌 때도 쓴다) */
+export function cellParagraphTexts(doc: HwpDocument, section: number, paragraph: number, control: number, cell: number): string[] {
   const count = doc.getCellParagraphCount(section, paragraph, control, cell);
   const lines: string[] = [];
   for (let p = 0; p < count; p += 1) {
     const length = doc.getCellParagraphLength(section, paragraph, control, cell, p);
     lines.push(doc.getTextInCell(section, paragraph, control, cell, p, 0, length));
   }
-  return lines.join('\n');
+  return lines;
 }
+
+const cellText = (doc: HwpDocument, section: number, paragraph: number, control: number, cell: number) =>
+  cellParagraphTexts(doc, section, paragraph, control, cell).join('\n');
 
 function readTable(doc: HwpDocument, section: number, paragraph: number, controlIndex: number): TableBlock {
   const { rowCount, colCount, cellCount } = parse(

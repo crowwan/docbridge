@@ -194,6 +194,16 @@ describe('SPEC-001 블록 읽기 (read_blocks)', () => {
     });
   });
 
+  it('글자 수는 유니코드 글자로 세고, 자를 때 이모지·확장 한자를 반쪽 내지 않는다', () => {
+    const blocks = paragraphs(1, '😀𠀀'.repeat(READ_CHAR_LIMIT / 2 + 1));
+
+    const [read] = readBlocks(blocks, { ids: ['b1'] }).blocks;
+    const text = read?.kind === 'paragraph' ? read.text : '';
+
+    expect([...text]).toHaveLength(READ_CHAR_LIMIT);
+    expect(text).toBe('😀𠀀'.repeat(READ_CHAR_LIMIT / 2));
+  });
+
   it('큰 표 하나가 20,000자를 넘으면 들어가는 칸까지만 보낸다(칸마다 반복되는 라벨도 센다)', () => {
     // 칸마다 text 1,000자 + rowLabel 1,000자 = 2,000자, 30칸이면 60,000자
     const cells = Array.from({ length: 30 }, (_, i) => ({ row: i, col: 1, text: '가'.repeat(1_000), rowLabel: '나'.repeat(1_000) }));

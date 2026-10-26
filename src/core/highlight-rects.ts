@@ -2,7 +2,8 @@
 // rhwp 0.8.7 의 getSelectionRects 는 범위가 줄 첫 글자에서 시작하면 그 줄 사각형의 왼쪽을
 // 글자 시작이 아니라 단(column) 왼쪽 끝으로 준다. 그래서 가운데 정렬 줄, 번호 문단,
 // 내어쓰기 줄에서는 하이라이트가 글자 앞 빈 곳이나 번호까지 덮는다(#4 기술 검증에서 확인).
-// 줄마다 시작 글자의 캐럿 위치(getCursorRect)로 왼쪽 끝을 바로잡는다.
+// 줄마다 시작 글자의 캐럿 위치(getCursorRectOnLine)로 왼쪽 끝을 바로잡는다.
+// 여러 문단에 걸친 범위는 중간 문단 마지막 줄을 단 오른쪽 끝까지 주므로, 줄 끝 캐럿으로 오른쪽 끝도 바로잡는다.
 import type { HwpDocument } from '@rhwp/core';
 import { z } from 'zod';
 
@@ -46,8 +47,8 @@ interface ParagraphAccess {
   length(paragraph: number): number;
   lineInfo(paragraph: number, offset: number): string;
   caret(paragraph: number, offset: number): string;
-  /** 줄 시작 캐럿. 줄 경계 글자 위치는 앞 줄 끝으로도 읽히므로 줄 번호로 묻는다 */
-  lineStartCaret(paragraph: number, lineIndex: number): string;
+  /** 줄 시작(atEnd=false)·끝(atEnd=true) 캐럿. 줄 경계 글자 위치는 앞 줄 끝으로도 읽히므로 줄 번호로 묻는다 */
+  lineCaret(paragraph: number, lineIndex: number, atEnd: boolean): string;
 }
 
 function bodyAccess(doc: HwpDocument, section: number): ParagraphAccess {
@@ -56,7 +57,7 @@ function bodyAccess(doc: HwpDocument, section: number): ParagraphAccess {
     length: (p) => doc.getParagraphLength(section, p),
     lineInfo: (p, o) => doc.getLineInfo(section, p, o),
     caret: (p, o) => doc.getCursorRect(section, p, o),
-    lineStartCaret: (p, line) => doc.getCursorRectOnLine(section, p, line, false, BODY, 0, 0, 0),
+    lineCaret: (p, line, atEnd) => doc.getCursorRectOnLine(section, p, line, atEnd, BODY, 0, 0, 0),
   };
 }
 
@@ -69,45 +70,60 @@ function cellAccess(doc: HwpDocument, section: number, cell: CellLocation): Para
     lineInfo: (p, o) => doc.getLineInfoInCell(section, pp, ci, cellIndex, p, o),
     caret: (p, o) => doc.getCursorRectInCell(section, pp, ci, cellIndex, p, o),
     // 칸 경로면 rhwp 는 para_idx 를 쓰지 않고 칸 문맥(pp, ci, cellIndex, 칸 문단)만 본다 (rhwp def947c src/document_core/queries/cursor_nav.rs:492-517, 1058-1097)
-    lineStartCaret: (p, line) => doc.getCursorRectOnLine(section, p, line, false, pp, ci, cellIndex, p),
+    lineCaret: (p, line, atEnd) => doc.getCursorRectOnLine(section, p, line, atEnd, pp, ci, cellIndex, p),
   };
 }
 
-interface LineStart {
+interface LineSpan {
   paragraph: number;
-  offset: number;
   lineIndex: number;
   /** 범위가 이 줄 첫 글자부터 시작하는지 */
-  atLineStart: boolean;
+  fromLineStart: boolean;
+  /** 범위가 이 줄 끝을 지나 다음 문단으로 이어지는지(rhwp 는 이런 줄을 단 오른쪽 끝까지 칠한다) */
+  continuesToNextParagraph: boolean;
 }
 
-// 범위가 지나는 줄마다 그 줄에서 범위가 시작하는 자리를 getSelectionRects 와 같은 순서로 만든다
-function lineStarts(access: ParagraphAccess, range: TextRange): LineStart[] {
-  const starts: LineStart[] = [];
+// 범위가 지나는 줄마다 그 줄에서 범위가 차지하는 자리를 getSelectionRects 와 같은 순서로 만든다.
+// 범위 안 글자가 없는 문단(빈 문단, 끝 문단의 0 위치)은 rhwp 가 사각형을 주지 않으므로 줄에서 뺀다
+function lineSpans(access: ParagraphAccess, range: TextRange): LineSpan[] {
+  const spans: LineSpan[] = [];
   for (let paragraph = range.startParagraph; paragraph <= range.endParagraph; paragraph += 1) {
-    const end = paragraph === range.endParagraph ? range.endOffset : access.length(paragraph);
+    const isLast = paragraph === range.endParagraph;
+    const end = isLast ? range.endOffset : access.length(paragraph);
     let offset = paragraph === range.startParagraph ? range.startOffset : 0;
-    for (;;) {
+    while (offset < end) {
       const line = lineInfoSchema.parse(JSON.parse(access.lineInfo(paragraph, offset)));
-      starts.push({ paragraph, offset, lineIndex: line.lineIndex, atLineStart: offset === line.charStart });
-      if (line.charEnd >= end || line.charEnd <= offset) break;
+      const lastLineOfRange = line.charEnd >= end;
+      spans.push({
+        paragraph,
+        lineIndex: line.lineIndex,
+        fromLineStart: offset === line.charStart,
+        continuesToNextParagraph: lastLineOfRange && !isLast,
+      });
+      if (lastLineOfRange || line.charEnd <= offset) break;
       offset = line.charEnd;
     }
   }
-  return starts;
+  return spans;
 }
+
+const readCaret = (json: string) => caretSchema.parse(JSON.parse(json));
 
 export function selectionRects(doc: HwpDocument, range: TextRange): SelectionRect[] {
   const access = range.cell ? cellAccess(doc, range.section, range.cell) : bodyAccess(doc, range.section);
   const raw = rectsSchema.parse(JSON.parse(access.rawRects(range)));
-  const starts = lineStarts(access, range);
-  // 줄 수가 맞지 않으면(빈 문단 등) 바로잡지 않고 rhwp 값을 그대로 쓴다
-  if (starts.length !== raw.length) return raw;
+  const spans = lineSpans(access, range);
+  // 그래도 줄 수가 맞지 않으면 바로잡지 않고 rhwp 값을 그대로 쓴다
+  if (spans.length !== raw.length) return raw;
   return raw.map((rect, i) => {
-    const start = starts[i];
-    if (start === undefined || !start.atLineStart) return rect;
-    const caret = caretSchema.parse(JSON.parse(access.lineStartCaret(start.paragraph, start.lineIndex)));
-    return alignLeftToCaret(rect, caret);
+    const span = spans[i];
+    if (span === undefined) return rect;
+    let aligned = rect;
+    if (span.fromLineStart) aligned = alignLeftToCaret(aligned, readCaret(access.lineCaret(span.paragraph, span.lineIndex, false)));
+    if (span.continuesToNextParagraph) {
+      aligned = alignRightToCaret(aligned, readCaret(access.lineCaret(span.paragraph, span.lineIndex, true)));
+    }
+    return aligned;
   });
 }
 
@@ -116,4 +132,10 @@ export function alignLeftToCaret(rect: SelectionRect, caret: { pageIndex: number
   const right = rect.x + rect.width;
   if (caret.pageIndex !== rect.pageIndex || caret.x <= rect.x || caret.x >= right) return rect;
   return { ...rect, x: caret.x, width: right - caret.x };
+}
+
+/** 사각형 오른쪽을 줄 끝 글자 캐럿에 맞춘다. 캐럿이 사각형 안쪽일 때만 바꾼다 */
+export function alignRightToCaret(rect: SelectionRect, caret: { pageIndex: number; x: number }): SelectionRect {
+  if (caret.pageIndex !== rect.pageIndex || caret.x <= rect.x || caret.x >= rect.x + rect.width) return rect;
+  return { ...rect, width: caret.x - rect.x };
 }

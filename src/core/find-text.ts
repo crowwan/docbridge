@@ -1,8 +1,9 @@
 // 블록 안에서 글자 찾기. 뷰어가 열 때 뽑아 둔 블록에서 찾는다(UI 없는 순수 함수).
-// 범위는 블록(표는 칸) 텍스트 안 글자 위치다. 시작은 0부터, 끝은 포함하지 않는다.
+// 범위는 블록(표는 칸) 텍스트 안 글자 위치(유니코드 글자 단위, rhwp 와 같음)다. 시작은 0부터, 끝은 포함하지 않는다.
 // 표 칸 텍스트는 칸 안 문단을 \n 으로 이은 것이라 \n 도 한 글자로 센다.
 import { z } from 'zod';
 import { textBlockPositionSchema, type Block } from './block-schema.ts';
+import { charIndexes } from './chars.ts';
 
 /** 일치 앞뒤로 보여주는 글자 수 */
 export const CONTEXT_CHARS = 20;
@@ -20,16 +21,22 @@ export type TextMatch = z.infer<typeof textMatchSchema>;
 
 type TextMatchRange = Pick<TextMatch, 'start' | 'end' | 'before' | 'after'>;
 
-/** text 안에서 query 와 일치하는 곳을 앞에서부터 겹치지 않게 모두 찾는다 */
+/**
+ * text 안에서 query 와 일치하는 곳을 앞에서부터 겹치지 않게 모두 찾는다. 위치·앞뒤 글자는 유니코드 글자 단위(core/chars.ts).
+ * 문자열 검색 위치를 글자 위치 표로 바꿔서 text 길이에 비례해 끝난다
+ */
 function matchesIn(text: string, query: string): TextMatchRange[] {
   const found: TextMatchRange[] = [];
-  for (let start = text.indexOf(query); start !== -1; start = text.indexOf(query, start + query.length)) {
-    const end = start + query.length;
+  const chars = [...text];
+  const charAt = charIndexes(text);
+  for (let at = text.indexOf(query); at !== -1; at = text.indexOf(query, at + query.length)) {
+    const start = charAt[at] ?? 0;
+    const end = charAt[at + query.length] ?? chars.length;
     found.push({
       start,
       end,
-      before: text.slice(Math.max(0, start - CONTEXT_CHARS), start),
-      after: text.slice(end, end + CONTEXT_CHARS),
+      before: chars.slice(Math.max(0, start - CONTEXT_CHARS), start).join(''),
+      after: chars.slice(end, end + CONTEXT_CHARS).join(''),
     });
   }
   return found;

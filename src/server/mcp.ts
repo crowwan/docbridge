@@ -1,7 +1,10 @@
 // MCP 도구 등록. 도구는 문서 세션을 거쳐 뷰어와 이야기한다.
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { charLength } from '../core/chars.ts';
 import { errorMessage } from '../shared/errors.ts';
+import { NOTE_MAX_CHARS, textTargetSchema } from '../shared/protocol.ts';
+import { clearHighlight, highlight } from './highlight-tools.ts';
 import { findText, getOutline, readBlockContents } from './read-tools.ts';
 import { OUTLINE_LIMIT, READ_CHAR_LIMIT } from './reading.ts';
 import type { DocumentSession } from './session.ts';
@@ -57,10 +60,35 @@ export function createMcpServer(session: DocumentSession): McpServer {
     'find_text',
     {
       description:
-        '문단·표 칸에서 글자를 찾는다(대소문자·띄어쓰기 그대로). 일치마다 { id, cell?: { row, col }, start, end, before, after } — 표 칸이면 cell(0부터), start·end 는 read_blocks 의 블록 text(표는 칸 text) 안 글자 위치(0부터, end 미포함), before·after 는 앞뒤 20자. id·cell·start·end 는 highlight 대상으로 그대로 넘긴다',
+        '문단·표 칸에서 글자를 찾는다(대소문자·띄어쓰기 그대로). 일치마다 { id, cell?: { row, col }, start, end, before, after } — 표 칸이면 cell(0부터), start·end 는 read_blocks 의 블록 text(표는 칸 text) 안 유니코드 글자 위치(0부터, end 미포함. 이모지도 한 글자), before·after 는 앞뒤 20자. id·cell·start·end 는 highlight 대상으로 그대로 넘긴다',
       inputSchema: { query: z.string().min(1).describe('찾을 글자') },
     },
     ({ query }) => toolResult(() => findText(session, query)),
+  );
+
+  server.registerTool(
+    'highlight',
+    {
+      description:
+        '답의 근거를 뷰어에 하이라이트하고 첫 대상이 보이게 스크롤한다. 이전 하이라이트는 지운다. 대상마다 { id, cell?: { row, col }, start?, end? } — find_text 일치(before·after 뺀 것)를 그대로 넘기면 된다. start·end 가 없으면 블록 전체(표는 cell 이 없으면 표 전체, 누름틀은 값, 값이 비면 안내문). 첫 대상은 준 순서의 첫 대상이다. 결과 { highlighted, pages, warnings? } — highlighted 는 그린 대상 수, pages 는 하이라이트가 있는 모든 쪽(1부터, 중복 없이 오름차순, 쪽을 넘는 문단·표는 걸친 쪽 모두), warnings 는 그리긴 했지만 정확하지 않을 수 있는 대상 안내(예: 빈 누름틀의 안내문 자리를 못 찾아 누름틀 자리에 작은 표시로 대신함). warnings 가 있으면 사용자에게 그 위치가 대략적이라고 알린다',
+      inputSchema: {
+        targets: z.array(textTargetSchema).min(1).describe('하이라이트할 대상. 첫 대상으로 스크롤한다'),
+        note: z
+          .string()
+          .refine((note) => charLength(note.trim()) <= NOTE_MAX_CHARS, {
+            message: `note 는 앞뒤 공백을 빼고 ${NOTE_MAX_CHARS}자(유니코드 글자)까지입니다.`,
+          })
+          .optional()
+          .describe(`하이라이트 옆에 짧게 보일 말(${NOTE_MAX_CHARS}자까지)`),
+      },
+    },
+    ({ targets, note }) => toolResult(() => highlight(session, targets, note)),
+  );
+
+  server.registerTool(
+    'clear_highlight',
+    { description: '뷰어의 하이라이트와 note 를 모두 지운다', inputSchema: {} },
+    () => toolResult(() => clearHighlight(session)),
   );
 
   return server;

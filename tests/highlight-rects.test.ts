@@ -46,6 +46,25 @@ describe('SPEC-001 하이라이트 사각형 (기술 검증)', () => {
     expect(rects[0]?.width).toBeGreaterThan(0);
   });
 
+  it('빈 문단이 낀 여러 문단 범위도 줄마다 왼쪽을 첫 글자에 맞춘다(PR #10 리뷰 이월)', () => {
+    const doc = openFixture('application.hwpx');
+    // 문단 0 은 가운데 정렬 제목, 1·2 는 빈 문단, 3 은 본문
+    const rects = selectionRects(doc, { section: 0, startParagraph: 0, startOffset: 0, endParagraph: 3, endOffset: 24 });
+
+    expect(rects).toHaveLength(2);
+    expect(rects[0]?.x).toBeCloseTo(caretX(doc.getCursorRect(0, 0, 0)), 1);
+  });
+
+  it('범위가 다음 문단으로 이어지는 줄은 오른쪽 끝을 그 줄 마지막 글자에 맞춘다', () => {
+    const doc = openFixture('application.hwpx');
+    const rects = selectionRects(doc, { section: 0, startParagraph: 0, startOffset: 0, endParagraph: 3, endOffset: 24 });
+    const first = rects[0];
+    if (first === undefined) throw new Error('사각형이 없다');
+
+    const lineEnd = caretX(doc.getCursorRectOnLine(0, 0, 0, true, 0xffffffff, 0, 0, 0));
+    expect(first.x + first.width).toBeCloseTo(lineEnd, 1);
+  });
+
   it('캐럿이 사각형 오른쪽 끝이거나 그보다 오른쪽이면 사각형을 바꾸지 않는다(폭이 0 이하가 되지 않는다)', () => {
     const rect = { pageIndex: 0, x: 100, y: 10, width: 50, height: 13 };
     expect(alignLeftToCaret(rect, { pageIndex: 0, x: 150 })).toEqual(rect);
