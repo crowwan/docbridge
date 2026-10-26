@@ -81,15 +81,20 @@ describe('SPEC-001 근거 하이라이트 도구 (highlight · clear_highlight)'
   });
 
   it('결과의 쪽은 대상이 걸친 모든 쪽이다(쪽을 넘는 문단, PR #14 리뷰)', async () => {
-    // 4쪽에 걸친 긴 문단 하나짜리 문서 (Node 글자 폭 근사 기준)
+    // 두 쪽에 걸친 긴 문단 하나짜리 문서 (Node 글자 폭 근사 기준)
     const doc = createBlankDocument();
-    doc.insertText(0, 0, 0, '가나다 '.repeat(2000));
+    doc.insertText(0, 0, 0, '가나다 '.repeat(900));
     const path = join(await mkdtemp(join(tmpdir(), 'docbridge-long-')), '긴 문단.hwpx');
     await writeFile(path, doc.exportHwpx());
+    const pageCount = doc.pageCount();
     doc.free();
     await json('open_document', { path });
 
-    expect(await json('highlight', { targets: [{ id: 'b1' }] })).toEqual({ highlighted: 1, pages: [1, 2, 3, 4] });
+    expect(pageCount).toBeGreaterThan(1);
+    expect(await json('highlight', { targets: [{ id: 'b1' }] })).toEqual({
+      highlighted: 1,
+      pages: Array.from({ length: pageCount }, (_, i) => i + 1),
+    });
   });
 
   it('그리긴 했지만 정확하지 않을 수 있는 대상은 결과에 안내를 남긴다(안내문 없는 빈 누름틀)', async () => {

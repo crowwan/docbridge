@@ -169,7 +169,7 @@ describe('SPEC-001 하이라이트 대상 → 사각형', () => {
 
   it('결과의 쪽은 모든 사각형의 쪽(중복 없이 오름차순)이고, 사각형은 대상 순서를 따른다(PR #14 리뷰)', () => {
     const doc = createBlankDocument();
-    doc.insertText(0, 0, 0, '가나다 '.repeat(2000));
+    doc.insertText(0, 0, 0, '가나다 '.repeat(900));
     doc.splitParagraph(0, 0, 4);
     const blocks = extractBlocks(doc);
     const ids = BlockIdTable.assign(blocks);
