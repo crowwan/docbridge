@@ -1,0 +1,68 @@
+:root {
+  --bg: #e9e9ec;
+  --surface: #ffffff;
+  --text: #1d1d1f;
+  --muted: #5f5f66;
+  --highlight: rgb(255 214 0 / 45%);
+  --space-2: 8px;
+  --space-4: 16px;
+  --page-shadow: 0 1px 3px rgb(0 0 0 / 18%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 system-ui, sans-serif;
+}
+
+.toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  gap: var(--space-4);
+  align-items: baseline;
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface);
+  box-shadow: var(--page-shadow);
+}
+
+.toolbar h1 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.toolbar p {
+  margin: 0;
+  color: var(--muted);
+}
+
+#pages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  align-items: center;
+  padding: var(--space-4);
+}
+
+.page {
+  position: relative;
+  background: var(--surface);
+  box-shadow: var(--page-shadow);
+}
+
+.page canvas {
+  display: block;
+}
+
+.highlight {
+  position: absolute;
+  background: var(--highlight);
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}

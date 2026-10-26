@@ -3,7 +3,30 @@
   "version": "0.0.0",
   "private": true,
   "description": "Claude 채팅에서 한글(HWP/HWPX) 문서를 묻고 고치는 로컬 브리지",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
-    "build": "echo '빌드 대상 없음 (첫 구현 이슈에서 채운다)'"
+    "dev": "vite",
+    "build": "tsc -p tsconfig.server.json && vite build",
+    "start": "node dist/server/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "e2e": "npm run build && playwright test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@rhwp/core": "0.8.7",
+    "ws": "8.22.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "@types/node": "24.19.2",
+    "@types/ws": "8.18.2",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
   }
 }
