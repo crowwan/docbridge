@@ -85,7 +85,7 @@ docbridge 는 Claude 채팅(MCP stdio) ↔ 로컬 서버 ↔ 브라우저 뷰어
 | 표 | `getControls`(ctrlId `tbl`, list 0) → `getTableDimensions`·`getCellInfo`·`getTextInCell` | 된다. 칸마다 행·열·텍스트·같은 행 첫 칸. `getControls` 의 `para` 는 구역을 이어 붙인 문서 전체 번호이고, list 가 0 이 아니면 칸 안(표 안 표)이다 |
 | 누름틀 | `getFieldList`(fieldType `clickhere`) | 된다. 이름·안내문·값·표 안 여부 |
 | 개요 번호 | `getOutlineNavigation` | 된다. 단 **개요(Outline) 문단만** 준다 |
-| 문단 번호(Number) | `getPageTextLayout` 에서 문단 첫 글자 바로 앞에 그려진 번호 글자 | 된다. 번호 문자열은 문서에 저장되지 않고 렌더링 때 계산되므로, 화면에 그려진 값을 읽는다. 개요 번호도 같은 방법으로 읽고 `getOutlineNavigation` 과 같은지 테스트로 맞춰 본다 |
+| 문단 번호(Number) | `getPageTextLayout` 에서 문단 첫 줄 첫 run(`charStart` 0) 바로 앞에 그려진 번호 글자. 처음 찾은 값만 쓴다(다음 쪽 머리말·쪽 번호를 번호로 읽지 않게) | 된다. 번호 문자열은 문서에 저장되지 않고 렌더링 때 계산되므로, 화면에 그려진 값을 읽는다. 개요 번호도 같은 방법으로 읽고 `getOutlineNavigation` 과 같은지 테스트로 맞춰 본다 |
 | 직접 타이핑한 번호("1.") | — | 본문 텍스트에 그대로 들어간다. 번호 필드는 비어 있다. 실제 공문(기안문)은 대부분 이쪽이다 |
 
 - `getStructure` 는 개요/조문 트리를 주지만 문단 번호 문자열은 없어서 쓰지 않았다.
@@ -113,7 +113,7 @@ docbridge 는 Claude 채팅(MCP stdio) ↔ 로컬 서버 ↔ 브라우저 뷰어
 
 - `tests/server.test.ts`: MCP SDK `StdioClientTransport` 로 `node src/server/index.ts` 를 실제 하위 프로세스로 띄워 `ping` 도구를 부르면, 같은 프로세스의 WebSocket 에 토큰으로 붙은 클라이언트가 메시지를 받는다. 토큰이 없거나 틀리면 401 로 거부한다. 뷰어 페이지와 `.wasm`(`application/wasm`) 을 127.0.0.1 에서 내준다.
 - `e2e/served-viewer.spec.ts`: 서버가 내준 빌드된 뷰어 페이지에서 rhwp WASM 이 뜬다.
-- stdout 은 MCP 전용이고 로그는 stderr 로만 쓴다(`src/server/log.ts`). 빌드 결과(`node dist/server/index.js`)에 initialize 요청을 보내 정상 응답을 받는 것도 손으로 확인했다.
+- stdout 은 MCP 전용이고 로그는 stderr 로만 쓴다(`src/server/log.ts`). 뷰어 연결 하나의 오류(잘못된 WebSocket 프레임, 연결 끊김)는 그 연결만 정리하고 로그를 남긴다. 처리하지 않으면 처리 안 된 'error' 이벤트로 MCP 서버 프로세스 전체가 죽는다(PR #10 리뷰, 재현 테스트 `tests/server.test.ts`). 빌드 결과(`node dist/server/index.js`)에 initialize 요청을 보내 정상 응답을 받는 것도 손으로 확인했다.
 - Claude Desktop 에 실제 등록해 보는 것은 #8 에서 한다.
 
 ## 열린 질문 결론 (SPEC-001 에 반영)
