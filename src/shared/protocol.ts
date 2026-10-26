@@ -25,15 +25,22 @@ export const loadDocumentResultSchema = z.object({
   blocks: z.array(blockPositionSchema),
 });
 
-/** 서버가 뷰어에 부르는 메서드와 입력·결과 */
-export const viewerMethods = {
-  /** 문서를 열어 렌더링하고 블록을 추출한다. 이전 문서는 닫는다 */
-  load_document: { params: loadDocumentParamsSchema, result: loadDocumentResultSchema },
-} as const;
+export type LoadDocumentParams = z.infer<typeof loadDocumentParamsSchema>;
+export type LoadDocumentResult = z.infer<typeof loadDocumentResultSchema>;
 
-export type ViewerMethod = keyof typeof viewerMethods;
-export type ViewerParams<M extends ViewerMethod> = z.infer<(typeof viewerMethods)[M]['params']>;
-export type ViewerResult<M extends ViewerMethod> = z.infer<(typeof viewerMethods)[M]['result']>;
+/** 서버가 뷰어에 부르는 메서드와 입력·결과 */
+export interface ViewerMethods {
+  /** 문서를 열어 렌더링하고 블록을 추출한다. 이전 문서는 닫는다 */
+  load_document: { params: LoadDocumentParams; result: LoadDocumentResult };
+}
+export type ViewerMethod = keyof ViewerMethods;
+export type ViewerParams<M extends ViewerMethod> = ViewerMethods[M]['params'];
+export type ViewerResult<M extends ViewerMethod> = ViewerMethods[M]['result'];
+
+/** 서버가 뷰어 응답의 결과를 읽는 스키마 */
+export const viewerResultSchemas: { [M in ViewerMethod]: z.ZodType<ViewerResult<M>> } = {
+  load_document: loadDocumentResultSchema,
+};
 
 export const requestMessageSchema = z.object({
   type: z.literal('request'),

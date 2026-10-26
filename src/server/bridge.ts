@@ -1,11 +1,20 @@
 // 뷰어 페이지(HTTP)와 뷰어 연결(WebSocket)을 127.0.0.1 한 포트에서 같이 연다.
 import { randomUUID } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { extname, join, normalize } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
-import type { ServerMessage } from '../shared/protocol.ts';
+import {
+  RequestTracker,
+  responseMessageSchema,
+  viewerResultSchemas,
+  type RequestMessage,
+  type ViewerMethod,
+  type ViewerParams,
+  type ViewerResult,
+} from '../shared/protocol.ts';
 import { log } from './log.ts';
 
 const HOST = '127.0.0.1';
@@ -37,9 +46,26 @@ export interface Bridge {
   readonly port: number;
   readonly token: string;
   readonly viewerUrl: string;
+  /** 뷰어가 붙으면 'connected', 요청을 받던 뷰어가 끊기면 'disconnected' */
+  readonly events: EventEmitter<BridgeEvents>;
   viewerCount(): number;
-  broadcast(message: ServerMessage): void;
+  hasViewer(): boolean;
+  /** 마지막으로 붙은 뷰어에 요청을 보내고 응답을 기다린다. 뷰어가 없거나 도중에 끊기면 ViewerNotConnectedError */
+  request<M extends ViewerMethod>(method: M, params: ViewerParams<M>): Promise<ViewerResult<M>>;
   close(): Promise<void>;
+}
+
+export interface BridgeEvents {
+  connected: [];
+  disconnected: [];
+}
+
+/** 요청을 받을 뷰어가 없다. 사용자에게 보일 문구는 세션이 마지막 파일 경로와 함께 만든다 */
+export class ViewerNotConnectedError extends Error {
+  constructor() {
+    super('뷰어가 연결되어 있지 않습니다');
+    this.name = 'ViewerNotConnectedError';
+  }
 }
 
 function tokenOf(url: string | undefined): string | null {
@@ -105,7 +131,27 @@ export async function startBridge(options: BridgeOptions): Promise<Bridge> {
     void serveViewerFile(options.viewerDir, req, res);
   });
   const wss = new WebSocketServer({ noServer: true });
-  const viewers = new Set<WebSocket>();
+  const events = new EventEmitter<BridgeEvents>();
+  const tracker = new RequestTracker();
+  // 붙은 순서. 요청은 마지막에 붙은 뷰어(새로고침하면 새 연결)가 받는다
+  const viewers: WebSocket[] = [];
+  const activeViewer = () => viewers.at(-1);
+
+  const removeViewer = (ws: WebSocket) => {
+    const index = viewers.indexOf(ws);
+    if (index === -1) return;
+    const wasActive = index === viewers.length - 1;
+    viewers.splice(index, 1);
+    if (!wasActive) return;
+    tracker.failAll(new ViewerNotConnectedError());
+    events.emit('disconnected');
+  };
+
+  const receive = (data: unknown) => {
+    const parsed = responseMessageSchema.safeParse(JSON.parse(String(data)));
+    if (parsed.success) tracker.settle(parsed.data);
+    else log(`뷰어 메시지를 읽지 못했습니다: ${parsed.error.message}`);
+  };
 
   // 연결 하나의 오류(잘못된 프레임, 연결 끊김 등)가 'error' 이벤트로 새어 나가면
   // 듣는 곳이 없어 MCP 서버 프로세스 전체가 죽는다. 로그를 남기고 그 연결만 정리한다.
@@ -119,13 +165,21 @@ export async function startBridge(options: BridgeOptions): Promise<Bridge> {
       return;
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
-      viewers.add(ws);
-      ws.on('close', () => viewers.delete(ws));
+      viewers.push(ws);
+      ws.on('message', (data) => {
+        try {
+          receive(data);
+        } catch (error) {
+          log(`뷰어 메시지 처리 오류: ${String(error)}`);
+        }
+      });
+      ws.on('close', () => removeViewer(ws));
       ws.on('error', (error) => {
         log(`뷰어 WebSocket 오류: ${error.message}`);
-        viewers.delete(ws);
+        removeViewer(ws);
         ws.terminate();
       });
+      events.emit('connected');
     });
   });
 
@@ -136,12 +190,19 @@ export async function startBridge(options: BridgeOptions): Promise<Bridge> {
     port,
     token,
     viewerUrl: `http://${HOST}:${port}/?token=${token}`,
-    viewerCount: () => viewers.size,
-    broadcast(message) {
-      const data = JSON.stringify(message);
-      for (const ws of viewers) ws.send(data);
+    events,
+    viewerCount: () => viewers.length,
+    hasViewer: () => viewers.length > 0,
+    request(method, params) {
+      const viewer = activeViewer();
+      if (viewer === undefined) return Promise.reject(new ViewerNotConnectedError());
+      const { id, promise } = tracker.start(method, (result) => viewerResultSchemas[method].parse(result));
+      const message: RequestMessage = { type: 'request', id, method, params };
+      viewer.send(JSON.stringify(message));
+      return promise;
     },
     async close() {
+      tracker.failAll(new ViewerNotConnectedError());
       for (const ws of viewers) ws.terminate();
       await new Promise<void>((resolve) => wss.close(() => resolve()));
       await new Promise<void>((resolve, reject) => http.close((error) => (error ? reject(error) : resolve())));

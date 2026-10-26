@@ -3,6 +3,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { connect, createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PassThrough, type Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -10,14 +11,26 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { z } from 'zod';
 import { PORT_ATTEMPTS, startBridge, type Bridge } from '../src/server/bridge.ts';
+import { FakeViewer, paragraphBlocks } from './fake-viewer.ts';
+import { fixturePath } from './fixtures.ts';
 
 const serverEntry = fileURLToPath(new URL('../src/server/index.ts', import.meta.url));
-const pingResultSchema = z.object({ viewerUrl: z.string(), viewers: z.number() });
+const openResultSchema = z.object({ fileName: z.string(), pageCount: z.number(), viewerUrl: z.string() });
 const toolResultSchema = z.object({ content: z.array(z.object({ type: z.literal('text'), text: z.string() })) });
 
-async function callPing(client: Client) {
-  const result = toolResultSchema.parse(await client.callTool({ name: 'ping', arguments: {} }));
-  return pingResultSchema.parse(JSON.parse(result.content[0]?.text ?? ''));
+/** 서버가 stderr 에 남기는 "뷰어 주소: …" 줄에서 주소를 읽는다 */
+function viewerUrlFromLog(stderr: Readable): Promise<string> {
+  return new Promise((resolve) => {
+    let output = '';
+    const onData = (chunk: Buffer) => {
+      output += String(chunk);
+      const url = /뷰어 주소: (\S+)/.exec(output)?.[1];
+      if (url === undefined) return;
+      stderr.off('data', onData);
+      resolve(url);
+    };
+    stderr.on('data', onData);
+  });
 }
 
 function connectViewer(url: string): Promise<WebSocket> {
@@ -75,10 +88,7 @@ function portOf(server: Server): number {
   return address.port;
 }
 
-const nextMessage = (ws: WebSocket) =>
-  new Promise<unknown>((resolve) => ws.once('message', (data) => resolve(JSON.parse(String(data)))));
-
-describe('SPEC-001 MCP·뷰어 서버 동시 구동 (기술 검증)', () => {
+describe('SPEC-001 MCP·뷰어 서버', () => {
   let client: Client | undefined;
   let bridge: Bridge | undefined;
 
@@ -89,26 +99,32 @@ describe('SPEC-001 MCP·뷰어 서버 동시 구동 (기술 검증)', () => {
     bridge = undefined;
   });
 
-  it('stdio 로 띄운 MCP 서버의 도구를 부르면 같은 프로세스의 WebSocket 에 붙은 뷰어가 메시지를 받는다', async () => {
+  it('stdio 로 띄운 MCP 서버의 open_document 가 같은 프로세스의 WebSocket 에 붙은 뷰어에 문서를 보낸다', async () => {
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [serverEntry],
       env: { ...getDefaultEnvironment(), DOCBRIDGE_PORT: '0' },
       stderr: 'pipe',
     });
+    const stderr = transport.stderr;
+    if (!(stderr instanceof PassThrough)) throw new Error('stderr 를 읽을 수 없습니다');
+    const viewerUrl = viewerUrlFromLog(stderr);
     client = new Client({ name: 'docbridge-test', version: '0.0.0' });
     await client.connect(transport);
 
-    const first = await callPing(client);
-    expect(first.viewers).toBe(0);
-    expect(first.viewerUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/\?token=.+/);
+    const viewer = await FakeViewer.connect(await viewerUrl);
+    const opening = client.callTool({ name: 'open_document', arguments: { path: fixturePath('notice.hwpx') } });
+    const request = await viewer.nextRequest();
+    viewer.respond(request.id, { pageCount: 1, blocks: paragraphBlocks(14) });
+    const result = toolResultSchema.parse(await opening);
 
-    const viewer = await connectViewer(first.viewerUrl);
-    const received = nextMessage(viewer);
-    const second = await callPing(client);
-
-    expect(second.viewers).toBe(1);
-    expect(await received).toMatchObject({ type: 'ping' });
+    expect(request.params.fileName).toBe('notice.hwpx');
+    expect(openResultSchema.parse(JSON.parse(result.content[0]?.text ?? ''))).toEqual({
+      fileName: 'notice.hwpx',
+      pageCount: 1,
+      viewerUrl: await viewerUrl,
+    });
+    expect(await viewerUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/\?token=.+/);
     viewer.close();
   });
 
@@ -120,15 +136,16 @@ describe('SPEC-001 MCP·뷰어 서버 동시 구동 (기술 검증)', () => {
     expect(bridge.viewerCount()).toBe(0);
   });
 
-  it('한 연결이 잘못된 프레임을 보내도 서버는 살아 있고 다른 뷰어는 계속 메시지를 받는다', async () => {
+  it('한 연결이 잘못된 프레임을 보내도 서버는 살아 있고 다른 뷰어는 계속 요청을 받는다', async () => {
     bridge = await startBridge({ port: 0, viewerDir: tmpdir() });
-    const healthy = await connectViewer(bridge.viewerUrl);
+    const healthy = await FakeViewer.connect(bridge.viewerUrl);
 
     await sendMalformedFrame(bridge.port, bridge.token);
-    const received = nextMessage(healthy);
-    bridge.broadcast({ type: 'ping', at: 1 });
+    const answered = bridge.request('load_document', { fileName: 'a.hwpx', data: '' });
+    const request = await healthy.nextRequest();
+    healthy.respond(request.id, { pageCount: 1, blocks: [] });
 
-    expect(await received).toEqual({ type: 'ping', at: 1 });
+    expect(await answered).toEqual({ pageCount: 1, blocks: [] });
     expect(bridge.viewerCount()).toBe(1);
     healthy.close();
   });
