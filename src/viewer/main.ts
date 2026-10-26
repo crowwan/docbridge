@@ -113,6 +113,7 @@ function placeNote(pageEl: HTMLElement, rect: SelectionRect, text: string): void
 function paintHighlights(pageEls: HTMLElement[], targets: SelectionRect[][], note?: string): void {
   clearHighlights();
   let index = 0;
+  let firstBox: HTMLElement | undefined;
   for (const rects of targets) {
     for (const rect of rects) {
       const box = document.createElement('div');
@@ -123,14 +124,16 @@ function paintHighlights(pageEls: HTMLElement[], targets: SelectionRect[][], not
       box.style.width = `${rect.width * ZOOM}px`;
       box.style.height = `${rect.height * ZOOM}px`;
       pageEls[rect.pageIndex]?.append(box);
+      firstBox ??= box;
       index += 1;
     }
   }
   const first = targets[0]?.[0];
   const firstPage = first === undefined ? undefined : pageEls[first.pageIndex];
   if (first !== undefined && firstPage !== undefined && note !== undefined) placeNote(firstPage, first, note);
-  // 바로 옮긴다(부드러운 스크롤 없음): 도구 결과를 받았을 때 이미 그 자리가 보여야 한다
-  document.querySelector('.highlight')?.scrollIntoView({ block: 'center' });
+  // 첫 대상의 첫 사각형으로(문서 순서상 첫 사각형이 아니다). 바로 옮긴다(부드러운 스크롤 없음):
+  // 도구 결과를 받았을 때 이미 그 자리가 보여야 한다
+  firstBox?.scrollIntoView({ block: 'center' });
 }
 
 /** 대상을 모두 사각형으로 바꾼 뒤에 그린다. 하나라도 틀리면 이전 하이라이트를 그대로 두고 던진다 */

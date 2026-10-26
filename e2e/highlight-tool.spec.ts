@@ -161,6 +161,21 @@ test.describe('SPEC-001 근거 하이라이트 (서버가 내주는 뷰어)', ()
     await page.screenshot({ path: 'test-results/screens/highlight-tool-scrolled.png' });
   });
 
+  test('뒤쪽 대상을 먼저 주면 문서 순서가 아니라 첫 대상(과 note)이 보이도록 스크롤한다(PR #14 리뷰)', async ({ page }) => {
+    const opened = await session.open(fixturePath('report.hwpx'));
+    const outline = await getOutline(session);
+    const first = outline.blocks[0];
+    const last = outline.blocks.at(-1);
+    if (first === undefined || last === undefined) throw new Error('블록이 없다');
+
+    const result = await highlight(session, [{ id: last.id }, { id: first.id }], '마지막 블록');
+
+    expect(result.pages).toEqual([1, opened.pageCount]);
+    const lastRegion = page.getByRole('region', { name: `${opened.pageCount}쪽` });
+    await expect(lastRegion.locator('.highlight').first()).toBeInViewport();
+    await expect(page.getByRole('note')).toBeInViewport();
+  });
+
   test('대상 하나라도 틀리면 오류를 돌려주고 이전 하이라이트를 그대로 둔다', async ({ page }) => {
     await session.open(fixturePath('notice.hwpx'));
     await highlight(session, [{ id: 'b1' }], '제목');
