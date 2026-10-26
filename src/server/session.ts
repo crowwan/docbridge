@@ -15,6 +15,7 @@ export const MAX_FILE_BYTES = 50 * MB;
 /** 브라우저를 띄운 뒤 뷰어가 붙기를 기다리는 시간 */
 export const VIEWER_CONNECT_TIMEOUT_MS = 30_000;
 export const VIEWER_NOT_CONNECTED = '뷰어가 연결되어 있지 않습니다. open_document 로 다시 여세요.';
+export const NO_DOCUMENT = '열린 문서가 없습니다. open_document 로 문서를 여세요.';
 
 const OPENABLE_EXTENSIONS = ['.hwp', '.hwpx'];
 
@@ -117,9 +118,14 @@ export class DocumentSession {
     });
   }
 
-  /** 문서가 필요한 도구가 뷰어에 요청하는 공용 경로. 뷰어가 없으면 스펙 문구와 마지막 파일 경로로 실패한다 */
+  /**
+   * 문서가 필요한 도구가 뷰어에 요청하는 공용 경로.
+   * 뷰어가 없으면 스펙 문구와 마지막 파일 경로로, 뷰어는 있는데 열린 문서가 없으면(열기 실패 뒤) 문서 없음으로 실패한다
+   */
   async requestViewer<M extends ViewerMethod>(method: M, params: ViewerParams<M>): Promise<ViewerResult<M>> {
     await this.ready();
+    if (!this.bridge.hasViewer()) throw new Error(this.notConnectedMessage());
+    if (this.current === undefined) throw new Error(NO_DOCUMENT);
     try {
       return await this.bridge.request(method, params);
     } catch (error) {
@@ -138,6 +144,8 @@ export class DocumentSession {
       return await this.bridge.request('load_document', { fileName, data });
     } catch (error) {
       if (error instanceof ViewerNotConnectedError) throw new Error(this.notConnectedMessage());
+      // 뷰어는 이전 문서를 닫고 오류 화면을 보여준다. 서버도 열린 문서를 비워 맞춘다
+      this.current = undefined;
       // 뷰어(rhwp)가 문서를 읽지 못한 이유
       throw new Error(`문서를 열 수 없습니다: ${error instanceof Error ? error.message : String(error)}`);
     }

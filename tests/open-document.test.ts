@@ -24,6 +24,7 @@ const openResultSchema = z.object({
 });
 
 const NOT_CONNECTED = '뷰어가 연결되어 있지 않습니다. open_document 로 다시 여세요.';
+const NO_DOCUMENT = '열린 문서가 없습니다. open_document 로 문서를 여세요.';
 
 describe('SPEC-001 문서 열기 (open_document)', () => {
   let bridge: Bridge;
@@ -263,5 +264,24 @@ describe('SPEC-001 문서 열기 (open_document)', () => {
 
     expect(raced.document?.fileName).toBe('report.hwpx');
     expect(reloaded.history.at(-1)?.params.fileName).toBe('report.hwpx');
+  });
+
+  it('새 파일을 rhwp 가 읽지 못하면 서버도 열린 문서를 비우고, 새로고침해도 이전 문서를 되살리지 않는다', async () => {
+    const viewer = await connectViewer();
+    await Promise.all([session.open(fixturePath('notice.hwpx')), answerNextLoad(viewer, 1, 14)]);
+
+    const opening = session.open(fixturePath('report.hwpx'));
+    const request = await viewer.nextRequest();
+    viewer.fail(request.id, '손상된 파일입니다');
+    await expect(opening).rejects.toThrow('문서를 열 수 없습니다: 손상된 파일입니다');
+
+    expect(session.document).toBeUndefined();
+    await expect(session.requestViewer('load_document', { fileName: 'x.hwpx', data: '' })).rejects.toThrow(NO_DOCUMENT);
+
+    await closeViewer(viewer);
+    const reloaded = await connectViewer();
+    reloaded.autoRespond({ pageCount: 1, blocks: paragraphBlocks(14) });
+    await session.ready();
+    expect(reloaded.history).toEqual([]);
   });
 });
