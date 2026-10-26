@@ -4,10 +4,12 @@
 // - 둘 다 없거나 토큰이 거부되면 "docbridge 가 연 탭이 아닙니다" 화면
 import init, { HwpDocument } from '@rhwp/core';
 import wasmUrl from '@rhwp/core/rhwp_bg.wasm?url';
-import type { BlockPosition } from '../core/block-ids.ts';
-import { extractBlocks, type Block } from '../core/blocks.ts';
+import { blockPositionSchema, type Block } from '../core/block-schema.ts';
+import { extractBlocks } from '../core/blocks.ts';
+import { findInBlocks } from '../core/find-text.ts';
 import { selectionRects, type SelectionRect, type TextRange } from '../core/highlight-rects.ts';
-import { requestMessageSchema, type LoadDocumentResult, type ResponseMessage } from '../shared/protocol.ts';
+import { errorMessage } from '../shared/errors.ts';
+import { answerRequest, type LoadDocumentResult, type RequestMessage } from '../shared/protocol.ts';
 import type { RenderMetrics, ViewerApi } from './api.ts';
 
 const ZOOM = 1;
@@ -35,8 +37,6 @@ function showNotice(title: string, detail: string): void {
 function hideNotice(): void {
   if (noticeEl) noticeEl.hidden = true;
 }
-
-const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 // rhwp 는 줄바꿈 계산에 브라우저 글자 폭이 필요하다. WASM 초기화 전에 등록한다.
 function registerTextMeasure(): void {
@@ -104,6 +104,8 @@ const api: ViewerApi = {
 window.docbridge = api;
 
 let currentDoc: HwpDocument | undefined;
+/** 서버가 연 문서에서 뽑은 블록. 읽기 전용(v0.1)이라 열 때 한 번 뽑아 둔다 */
+let currentBlocks: Block[] | undefined;
 
 /** 문서를 열어 그린다. 이전 문서는 닫는다. rhwp 가 읽지 못하면 던진다 */
 function showDocument(bytes: Uint8Array, fileName: string): { doc: HwpDocument; parseMs: number; pageRenderMs: number[] } {
@@ -119,11 +121,6 @@ function showDocument(bytes: Uint8Array, fileName: string): { doc: HwpDocument; 
   return { doc, parseMs, pageRenderMs };
 }
 
-const positionOf = (block: Block): BlockPosition =>
-  block.kind === 'table'
-    ? { kind: 'table', section: block.section, paragraph: block.paragraph, controlIndex: block.controlIndex }
-    : { kind: block.kind, section: block.section, paragraph: block.paragraph };
-
 function base64ToBytes(data: string): Uint8Array {
   const binary = atob(data);
   const bytes = new Uint8Array(binary.length);
@@ -134,17 +131,40 @@ function base64ToBytes(data: string): Uint8Array {
 function loadDocument(fileName: string, data: string): LoadDocumentResult {
   try {
     const { doc } = showDocument(base64ToBytes(data), fileName);
-    return { pageCount: doc.pageCount(), blocks: extractBlocks(doc).map(positionOf) };
+    currentBlocks = extractBlocks(doc);
+    return { pageCount: doc.pageCount(), blocks: currentBlocks.map((block) => blockPositionSchema.parse(block)) };
   } catch (error) {
     currentDoc?.free();
     currentDoc = undefined;
+    currentBlocks = undefined;
     api.highlight = () => {
       throw new Error('문서가 열려 있지 않습니다');
     };
-    showNotice('문서를 열 수 없습니다', `${fileName}: ${errorText(error)}`);
+    showNotice('문서를 열 수 없습니다', `${fileName}: ${errorMessage(error)}`);
     setStatus('열 수 없음');
     throw error;
   }
+}
+
+function handleRequest(request: RequestMessage): unknown {
+  switch (request.method) {
+    case 'load_document':
+      return loadDocument(request.params.fileName, request.params.data);
+    case 'get_blocks':
+      return openedBlocks();
+    case 'find_text':
+      return findInBlocks(openedBlocks(), request.params.query);
+    default: {
+      // 메서드를 더하고 여기 처리를 빠뜨리면 컴파일 오류가 난다
+      const unhandled: never = request;
+      throw new Error(`처리하지 않는 요청입니다: ${String(unhandled)}`);
+    }
+  }
+}
+
+function openedBlocks(): Block[] {
+  if (currentBlocks === undefined) throw new Error('뷰어에 열린 문서가 없습니다. open_document 로 문서를 여세요.');
+  return currentBlocks;
 }
 
 const NOT_DOCBRIDGE_TAB = 'docbridge 가 연 탭이 아닙니다';
@@ -168,16 +188,8 @@ function connect(token: string): void {
     setStatus('연결이 끊겼습니다. Claude 채팅에서 open_document 로 다시 여세요.');
   });
   socket.addEventListener('message', (event) => {
-    const parsed = requestMessageSchema.safeParse(JSON.parse(String(event.data)));
-    if (!parsed.success) return;
-    const { id, params } = parsed.data;
-    let response: ResponseMessage;
-    try {
-      response = { type: 'response', id, ok: true, result: loadDocument(params.fileName, params.data) };
-    } catch (error) {
-      response = { type: 'response', id, ok: false, error: errorText(error) };
-    }
-    socket.send(JSON.stringify(response));
+    const response = answerRequest(String(event.data), handleRequest);
+    if (response !== undefined) socket.send(JSON.stringify(response));
   });
 }
 
@@ -209,4 +221,4 @@ async function start(): Promise<RenderMetrics> {
 }
 
 api.ready = start();
-api.ready.catch((error: unknown) => setStatus(`열 수 없습니다: ${errorText(error)}`));
+api.ready.catch((error: unknown) => setStatus(`열 수 없습니다: ${errorMessage(error)}`));

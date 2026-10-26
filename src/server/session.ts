@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { basename, extname, join, resolve } from 'node:path';
 import { BlockIdTable, type BlockPosition } from '../core/block-ids.ts';
 import type { LoadDocumentResult, ViewerMethod, ViewerParams, ViewerResult } from '../shared/protocol.ts';
+import { errorMessage } from '../shared/errors.ts';
 import { ViewerNotConnectedError, type Bridge } from './bridge.ts';
 import { log } from './log.ts';
 
@@ -152,7 +153,7 @@ export class DocumentSession {
       // 뷰어는 이전 문서를 닫고 오류 화면을 보여준다. 서버도 열린 문서를 비워 맞춘다
       this.current = undefined;
       // 뷰어(rhwp)가 문서를 읽지 못한 이유
-      throw new Error(`문서를 열 수 없습니다: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(`문서를 열 수 없습니다: ${errorMessage(error)}`);
     }
   }
 

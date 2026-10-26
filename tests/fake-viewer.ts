@@ -1,6 +1,6 @@
 // 테스트용 가짜 뷰어: 토큰 주소로 WebSocket 에 붙어 서버 요청을 받고, 원하는 결과로 응답한다.
 import { WebSocket } from 'ws';
-import { requestMessageSchema, type RequestMessage, type ViewerResult } from '../src/shared/protocol.ts';
+import { answerRequest, requestMessageSchema, type LoadDocumentParams, type RequestMessage, type ViewerResult } from '../src/shared/protocol.ts';
 
 export class FakeViewer {
   private readonly ws: WebSocket;
@@ -9,12 +9,18 @@ export class FakeViewer {
   /** 받은 요청 전부(순서대로) */
   readonly history: RequestMessage[] = [];
   private autoResult: ViewerResult<'load_document'> | undefined;
+  private handler: ((request: RequestMessage) => unknown) | undefined;
 
   private constructor(ws: WebSocket) {
     this.ws = ws;
     ws.on('message', (data) => {
       const request = requestMessageSchema.parse(JSON.parse(String(data)));
       this.history.push(request);
+      if (this.handler !== undefined) {
+        const response = answerRequest(String(data), this.handler);
+        if (response !== undefined) ws.send(JSON.stringify(response));
+        return;
+      }
       if (this.autoResult !== undefined) {
         this.respond(request.id, this.autoResult);
         return;
@@ -45,6 +51,11 @@ export class FakeViewer {
     this.autoResult = result;
   }
 
+  /** 이후 오는 요청을 handler 로 처리해 응답한다(던지면 오류 응답) */
+  serve(handler: (request: RequestMessage) => unknown): void {
+    this.handler = handler;
+  }
+
   respond(id: number, result: ViewerResult<'load_document'>): void {
     this.ws.send(JSON.stringify({ type: 'response', id, ok: true, result }));
   }
@@ -56,6 +67,12 @@ export class FakeViewer {
   close(): void {
     this.ws.close();
   }
+}
+
+/** load_document 요청의 입력. 다른 요청이면 테스트를 실패시킨다 */
+export function loadParams(request: RequestMessage | undefined): LoadDocumentParams {
+  if (request?.method !== 'load_document') throw new Error(`load_document 요청이 아닙니다: ${request?.method}`);
+  return request.params;
 }
 
 /** 블록 위치 n 개(문단만) — 가짜 뷰어 응답용 */

@@ -2,13 +2,9 @@
 // rhwp 의 문단 주소는 (구역, 문단) 위치 인덱스뿐이고 편집하면 뒤 번호가 밀린다
 // (rhwp-code-analysis 2-6). 그래서 문서를 열 때 블록마다 짧은 id 를 붙이고,
 // docbridge 가 문단을 넣거나 지울 때마다 대응표의 위치를 같이 옮긴다.
-import type { FieldBlock, ParagraphBlock, TableBlock } from './blocks.ts';
+import type { BlockPosition, TextBlockPosition } from './block-schema.ts';
 
-/** id 를 붙이는 데 필요한 블록 위치. 뷰어가 서버에 이것만 보낸다 */
-export type BlockPosition =
-  | Pick<ParagraphBlock, 'kind' | 'section' | 'paragraph'>
-  | Pick<TableBlock, 'kind' | 'section' | 'paragraph' | 'controlIndex'>
-  | Pick<FieldBlock, 'kind' | 'section' | 'paragraph'>;
+export type { BlockPosition } from './block-schema.ts';
 
 export interface BlockAnchor {
   section: number;
@@ -45,6 +41,8 @@ function anchorsOf(blocks: BlockPosition[]): BlockAnchor[] {
 export class BlockIdTable {
   private readonly anchors = new Map<string, BlockAnchor>();
   private nextNumber = 1;
+  /** 위치 키 → id 역맵. 처음 찾을 때 만들고 위치가 바뀌면(문단 넣기·지우기) 버린다 */
+  private idByKey: Map<string, string> | undefined;
 
   /** 문서를 열 때 블록마다 b1, b2 … 를 문서 순서대로 붙인다 */
   static assign(blocks: BlockPosition[]): BlockIdTable {
@@ -60,9 +58,19 @@ export class BlockIdTable {
     return this.anchors.get(id);
   }
 
+  /** 문단·표 블록 위치의 id. 누름틀은 같은 문단 안 순서가 필요해 label 로 붙인다 */
+  idOf(position: TextBlockPosition): string | undefined {
+    return this.idsByKey().get(anchorKey(anchorOf(position, 0)));
+  }
+
+  private idsByKey(): Map<string, string> {
+    this.idByKey ??= new Map([...this.anchors].map(([id, anchor]) => [anchorKey(anchor), id]));
+    return this.idByKey;
+  }
+
   /** 지금 문서에서 다시 뽑은 블록 목록에 id 를 붙여 돌려준다 */
   label<B extends BlockPosition>(blocks: B[]): Array<{ id: string | undefined; block: B }> {
-    const idByAnchor = new Map([...this.anchors].map(([id, anchor]) => [anchorKey(anchor), id]));
+    const idByAnchor = this.idsByKey();
     const anchors = anchorsOf(blocks);
     return blocks.map((block, i) => {
       const anchor = anchors[i];
@@ -73,6 +81,7 @@ export class BlockIdTable {
   /** 문단을 index 자리에 넣은 뒤: 그 자리부터 뒤 문단들의 위치를 하나씩 민다. 새 문단에 새 id 를 준다 */
   paragraphInserted(section: number, index: number): string {
     this.shift(section, index, 1);
+    this.idByKey = undefined;
     const id = `b${this.nextNumber}`;
     this.nextNumber += 1;
     this.anchors.set(id, { section, paragraph: index, part: 'text' });
@@ -85,6 +94,7 @@ export class BlockIdTable {
       if (anchor.section === section && anchor.paragraph === index) this.anchors.delete(id);
     }
     this.shift(section, index + 1, -1);
+    this.idByKey = undefined;
   }
 
   private shift(section: number, from: number, delta: number): void {

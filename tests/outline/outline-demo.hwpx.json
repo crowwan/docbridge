@@ -1,0 +1,311 @@
+{
+  "blockCount": 46,
+  "blocks": [
+    {
+      "id": "b1",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "총칙",
+      "number": "1.",
+      "outlineLevel": 1
+    },
+    {
+      "id": "b2",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "총칙 설명 문단 — 개요를 눌렀을 때 이 자리로 스크롤한다."
+    },
+    {
+      "id": "b3",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "총칙 보충 문단 — 방향키로 훑는 동안에는 화면이 움직이지 않아야 한다."
+    },
+    {
+      "id": "b4",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "목적",
+      "number": "가.",
+      "outlineLevel": 2
+    },
+    {
+      "id": "b5",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "목적 설명 문단 — 개요를 눌렀을 때 이 자리로 스크롤한다."
+    },
+    {
+      "id": "b6",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "목적 보충 문단 — 방향키로 훑는 동안에는 화면이 움직이지 않아야 한다."
+    },
+    {
+      "id": "b7",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "배경",
+      "number": "1)",
+      "outlineLevel": 3
+    },
+    {
+      "id": "b8",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "배경 설명 문단 — 개요를 눌렀을 때 이 자리로 스크롤한다."
+    },
+    {
+      "id": "b9",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "배경 보충 문단 — 방향키로 훑는 동안에는 화면이 움직이지 않아야 한다."
+    },
+    {
+      "id": "b10",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "적용 범위",
+      "number": "2)",
+      "outlineLevel": 3
+    },
+    {
+      "id": "b11",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "적용 범위 설명 문단 — 개요를 눌렀을 때 이 자리로 스크롤한다."
+    },
+    {
+      "id": "b12",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "적용 범위 보충 문단 — 방향키로 훑는 동안에는 화면이 움직이지 않아야 …"
+    },
+    {
+      "id": "b13",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "용어 정의",
+      "number": "나.",
+      "outlineLevel": 2
+    },
+    {
+      "id": "b14",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "용어 정의 설명 문단 — 개요를 눌렀을 때 이 자리로 스크롤한다."
+    },
+    {
+      "id": "b15",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "용어 정의 보충 문단 — 방향키로 훑는 동안에는 화면이 움직이지 않아야 …"
+    },
+    {
+      "id": "b16",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "본문 규정",
+      "number": "2.",
+      "outlineLevel": 1
+    },
+    {
+      "id": "b17",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "본문 규정 설명 문단 — 개요를 눌렀을 때 이 자리로 스크롤한다."
+    },
+    {
+      "id": "b18",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "본문 규정 보충 문단 — 방향키로 훑는 동안에는 화면이 움직이지 않아야 …"
+    },
+    {
+      "id": "b19",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "요구사항",
+      "number": "가.",
+      "outlineLevel": 2
+    },
+    {
+      "id": "b20",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "요구사항 설명 문단 — 개요를 눌렀을 때 이 자리로 스크롤한다."
+    },
+    {
+      "id": "b21",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "요구사항 보충 문단 — 방향키로 훑는 동안에는 화면이 움직이지 않아야 한…"
+    },
+    {
+      "id": "b22",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "기능 요구",
+      "number": "1)",
+      "outlineLevel": 3
+    },
+    {
+      "id": "b23",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "기능 요구 설명 문단 — 개요를 눌렀을 때 이 자리로 스크롤한다."
+    },
+    {
+      "id": "b24",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "기능 요구 보충 문단 — 방향키로 훑는 동안에는 화면이 움직이지 않아야 …"
+    },
+    {
+      "id": "b25",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "비기능 요구",
+      "number": "2)",
+      "outlineLevel": 3
+    },
+    {
+      "id": "b26",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "비기능 요구 설명 문단 — 개요를 눌렀을 때 이 자리로 스크롤한다."
+    },
+    {
+      "id": "b27",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "비기능 요구 보충 문단 — 방향키로 훑는 동안에는 화면이 움직이지 않아야…"
+    },
+    {
+      "id": "b28",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "제약 조건",
+      "number": "나.",
+      "outlineLevel": 2
+    },
+    {
+      "id": "b29",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "제약 조건 설명 문단 — 개요를 눌렀을 때 이 자리로 스크롤한다."
+    },
+    {
+      "id": "b30",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "제약 조건 보충 문단 — 방향키로 훑는 동안에는 화면이 움직이지 않아야 …"
+    },
+    {
+      "id": "b31",
+      "kind": "paragraph",
+      "page": 3,
+      "text": "표가 낀 구간",
+      "number": "3.",
+      "outlineLevel": 1
+    },
+    {
+      "id": "b32",
+      "kind": "paragraph",
+      "page": 3,
+      "text": "표가 낀 구간 설명 문단 — 개요를 눌렀을 때 이 자리로 스크롤한다."
+    },
+    {
+      "id": "b33",
+      "kind": "paragraph",
+      "page": 3,
+      "text": "표가 낀 구간 보충 문단 — 방향키로 훑는 동안에는 화면이 움직이지 않아…"
+    },
+    {
+      "id": "b34",
+      "kind": "table",
+      "page": 3,
+      "text": "표 셀 번호 문단"
+    },
+    {
+      "id": "b35",
+      "kind": "paragraph",
+      "page": 3,
+      "text": "표 뒤 하위 개요",
+      "number": "가.",
+      "outlineLevel": 2
+    },
+    {
+      "id": "b36",
+      "kind": "paragraph",
+      "page": 3,
+      "text": "표 뒤 하위 개요 설명 문단 — 개요를 눌렀을 때 이 자리로 스크롤한다."
+    },
+    {
+      "id": "b37",
+      "kind": "paragraph",
+      "page": 3,
+      "text": "표 뒤 하위 개요 보충 문단 — 방향키로 훑는 동안에는 화면이 움직이지 …"
+    },
+    {
+      "id": "b38",
+      "kind": "paragraph",
+      "page": 3,
+      "text": "부칙",
+      "number": "5.",
+      "outlineLevel": 1
+    },
+    {
+      "id": "b39",
+      "kind": "paragraph",
+      "page": 3,
+      "text": "부칙 설명 문단 — 개요를 눌렀을 때 이 자리로 스크롤한다."
+    },
+    {
+      "id": "b40",
+      "kind": "paragraph",
+      "page": 3,
+      "text": "부칙 보충 문단 — 방향키로 훑는 동안에는 화면이 움직이지 않아야 한다."
+    },
+    {
+      "id": "b41",
+      "kind": "paragraph",
+      "page": 3,
+      "text": "시행일",
+      "number": "가.",
+      "outlineLevel": 2
+    },
+    {
+      "id": "b42",
+      "kind": "paragraph",
+      "page": 3,
+      "text": "시행일 설명 문단 — 개요를 눌렀을 때 이 자리로 스크롤한다."
+    },
+    {
+      "id": "b43",
+      "kind": "paragraph",
+      "page": 3,
+      "text": "시행일 보충 문단 — 방향키로 훑는 동안에는 화면이 움직이지 않아야 한다…"
+    },
+    {
+      "id": "b44",
+      "kind": "paragraph",
+      "page": 3,
+      "text": "경과 조치",
+      "number": "나.",
+      "outlineLevel": 2
+    },
+    {
+      "id": "b45",
+      "kind": "paragraph",
+      "page": 3,
+      "text": "경과 조치 설명 문단 — 개요를 눌렀을 때 이 자리로 스크롤한다."
+    },
+    {
+      "id": "b46",
+      "kind": "paragraph",
+      "page": 3,
+      "text": "경과 조치 보충 문단 — 방향키로 훑는 동안에는 화면이 움직이지 않아야 …"
+    }
+  ]
+}

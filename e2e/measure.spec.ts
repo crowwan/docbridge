@@ -26,7 +26,7 @@ interface Row {
 }
 
 test.describe('SPEC-001 렌더링 측정 (기술 검증)', () => {
-  test('문서마다 WASM 로딩·파싱·쪽 렌더링 시간을 잰다', async ({ browser }) => {
+  test('문서마다 WASM 로딩·파싱·쪽 렌더링 시간을 잰다', async ({ browser, baseURL }) => {
     test.setTimeout(120_000);
     const rows: Row[] = [];
     for (const fixture of [...FIXTURES, ...extra]) {
@@ -54,7 +54,7 @@ test.describe('SPEC-001 렌더링 측정 (기술 검증)', () => {
     const coldWasmInitMs: number[] = [];
     for (let i = 0; i < RUNS; i += 1) {
       const fresh = await chromium.launch();
-      const page = await fresh.newPage({ baseURL: 'http://127.0.0.1:7792' });
+      const page = await fresh.newPage({ baseURL });
       coldWasmInitMs.push(round((await openFixture(page, 'notice.hwpx')).wasmInitMs));
       await fresh.close();
     }

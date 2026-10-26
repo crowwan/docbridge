@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { extractBlocks, numbersFromLayout, type Block, type ParagraphBlock, type TableBlock } from '../src/core/blocks.ts';
+import { extractBlocks, numbersForParagraphs, numbersFromLayout, type Block, type LayoutRun, type ParagraphBlock, type TableBlock } from '../src/core/blocks.ts';
+import { findInBlocks } from '../src/core/find-text.ts';
 import { createBlankDocument } from '../src/core/rhwp-node.ts';
 import { openFixture } from './fixtures.ts';
 
@@ -111,6 +112,120 @@ describe('SPEC-001 블록 추출 (기술 검증)', () => {
     const fromHwp = extractBlocks(openFixture('notice.hwp'));
     const fromHwpx = extractBlocks(openFixture('notice.hwpx'));
     expect(fromHwp).toEqual(fromHwpx);
+  });
+
+  it('번호 문단이 없는 문서는 쪽 글자 배치를 읽지 않는다', () => {
+    const doc = openFixture('application.hwpx');
+    const layout = vi.spyOn(doc, 'getPageTextLayout');
+
+    const blocks = paragraphs(extractBlocks(doc));
+
+    expect(blocks.some((b) => b.number !== undefined)).toBe(false);
+    expect(layout).not.toHaveBeenCalled();
+  });
+
+  it('쪽 글자 배치는 번호·개요 문단이 시작하는 쪽만 읽는다', () => {
+    const doc = createBlankDocument();
+    doc.insertText(0, 0, 0, '번호 없는 첫 문단');
+    doc.splitParagraph(0, 0, doc.getParagraphLength(0, 0));
+    doc.insertText(0, 1, 0, '둘째 쪽 번호 문단');
+    doc.insertPageBreak(0, 1, 0);
+    const numberingId = doc.ensureDefaultNumbering();
+    const last = doc.getParagraphCount(0) - 1;
+    doc.applyParaFormat(0, last, JSON.stringify({ headType: 'Number', paraLevel: 0, numberingId }));
+    const layout = vi.spyOn(doc, 'getPageTextLayout');
+
+    const blocks = paragraphs(extractBlocks(doc));
+
+    expect(doc.pageCount()).toBe(2);
+    expect(blocks.map((b) => [b.page, b.number])).toEqual([
+      [1, undefined],
+      [2, '1.'],
+    ]);
+    expect(layout.mock.calls).toEqual([[1]]);
+  });
+
+  it('번호가 문단 시작 쪽이 아니라 다음 쪽에 그려졌으면 다음 쪽에서 찾는다', () => {
+    // 쪽 나눔으로 시작하는 문단은 시작 위치(getPageOfPosition)가 앞 쪽인데 번호는 다음 쪽 머리에 그려진다
+    const pages: LayoutRun[][] = [
+      [{ text: '앞 문단', secIdx: 0, paraIdx: 0, charStart: 0 }],
+      [
+        { text: '2.' },
+        { text: '쪽 나눔 뒤 번호 문단', secIdx: 0, paraIdx: 1, charStart: 0 },
+      ],
+      [{ text: '셋째 쪽', secIdx: 0, paraIdx: 2, charStart: 0 }],
+    ];
+    const read: number[] = [];
+
+    const numbers = numbersForParagraphs([{ key: '0:1', page: 0 }], pages.length, (page) => {
+      read.push(page);
+      return pages[page] ?? [];
+    });
+
+    expect(numbers.get('0:1')).toBe('2.');
+    expect(read).toEqual([0, 1]);
+  });
+
+  it('시작 쪽에서 번호를 찾으면 다음 쪽은 읽지 않고, 같은 쪽은 한 번만 읽는다', () => {
+    const pages: LayoutRun[][] = [
+      [
+        { text: '1.' },
+        { text: '첫 번호 문단', secIdx: 0, paraIdx: 0, charStart: 0 },
+        { text: '2.' },
+        { text: '둘째 번호 문단', secIdx: 0, paraIdx: 1, charStart: 0 },
+      ],
+      [{ text: '다음 쪽', secIdx: 0, paraIdx: 2, charStart: 0 }],
+    ];
+    const read: number[] = [];
+
+    const numbers = numbersForParagraphs(
+      [
+        { key: '0:0', page: 0 },
+        { key: '0:1', page: 0 },
+      ],
+      pages.length,
+      (page) => {
+        read.push(page);
+        return pages[page] ?? [];
+      },
+    );
+
+    expect([...numbers]).toEqual([
+      ['0:0', '1.'],
+      ['0:1', '2.'],
+    ]);
+    expect(read).toEqual([0]);
+  });
+
+  it('구역 나누기 표식이 든 문단 뒤의 표도 실제 구역·문단 위치로 찾는다', () => {
+    // getSectionStarts 는 구역 정의(SectionDef) 표식 기준이라 구역이 하나여도 [0, 1] 을 준다.
+    // 표 위치(getControls 의 para)는 실제 구역의 문단 수를 이어 붙인 번호라 그것으로 나누면 안 된다
+    const doc = createBlankDocument();
+    doc.insertText(0, 0, 0, '첫 문단입니다');
+    doc.splitParagraph(0, 0, 7);
+    doc.insertText(0, 1, 0, '둘째 문단');
+    doc.breakAtCursor(0, 1, 0, 'section');
+    doc.createTable(0, doc.getParagraphCount(0) - 1, 0, 2, 2);
+
+    expect(doc.getSectionCount()).toBe(1);
+    expect(doc.getSectionStarts()).toBe('[0,1]');
+    expect(tables(extractBlocks(doc)).map((t) => [t.section, t.paragraph])).toEqual([[0, 2]]);
+  });
+
+  it('머리말·꼬리말·각주는 블록으로 내보내지 않고 찾기에도 나오지 않는다', () => {
+    const doc = createBlankDocument();
+    doc.insertText(0, 0, 0, '본문 문단');
+    doc.createHeaderFooter(0, true, 0);
+    doc.insertTextInHeaderFooter(0, true, 0, 0, 0, '머리말 글자');
+    doc.createHeaderFooter(0, false, 0);
+    doc.insertTextInHeaderFooter(0, false, 0, 0, 0, '꼬리말 글자');
+    const footnote = z.object({ controlIdx: z.number() }).parse(JSON.parse(doc.insertFootnote(0, 0, 2)));
+    doc.insertTextInFootnote(0, 0, footnote.controlIdx, 0, 0, '각주 글자');
+
+    const blocks = extractBlocks(doc);
+
+    expect(blocks.map((b) => (b.kind === 'paragraph' ? b.text : b.kind))).toEqual(['본문 문단']);
+    expect(findInBlocks(blocks, '글자')).toEqual([]);
   });
 
   it('여러 쪽 문서에서 블록마다 쪽 번호를 준다', () => {

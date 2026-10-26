@@ -8,3 +8,6 @@ coverage/
 test-results/
 playwright-report/
 e2e-results/
+
+# 병렬 에이전트(executor)가 만드는 worktree
+.claude/worktrees/

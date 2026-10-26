@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BlockIdTable } from '../src/core/block-ids.ts';
+import { blockPositionSchema } from '../src/core/block-schema.ts';
 import { extractBlocks, type Block } from '../src/core/blocks.ts';
 import { openFixture } from './fixtures.ts';
 
@@ -29,6 +30,14 @@ describe('SPEC-001 블록 id (기술 검증)', () => {
     const labeled = BlockIdTable.assign(blocks).label(blocks);
     expect(labeled.slice(0, 3).map(({ id }) => id)).toEqual(['b1', 'b2', 'b3']);
     expect(labeled.every(({ id }) => id !== undefined)).toBe(true);
+  });
+
+  it('블록에서 id 를 붙일 위치만 뽑는다(표는 컨트롤 번호까지)', () => {
+    const blocks = extractBlocks(openFixture('notice.hwpx'));
+    const positions = blocks.map((block) => blockPositionSchema.parse(block));
+    expect(positions[0]).toEqual({ kind: 'paragraph', section: 0, paragraph: 0 });
+    expect(positions.find((p) => p.kind === 'table')).toEqual({ kind: 'table', section: 0, paragraph: 11, controlIndex: 0 });
+    expect(positions.find((p) => p.kind === 'field')).toEqual({ kind: 'field', section: 0, paragraph: 1 });
   });
 
   it('문단을 넣어도 기존 블록의 id 는 같은 내용을 가리킨다', () => {
@@ -66,6 +75,26 @@ describe('SPEC-001 블록 id (기술 검증)', () => {
     // 자동 번호는 렌더링 때 다시 계산되므로 다음 번호 문단이 1. 이 된다
     const renumbered = afterBlocks.find((b) => b.kind === 'paragraph' && b.text.startsWith('하반기'));
     expect(renumbered?.kind === 'paragraph' ? renumbered.number : undefined).toBe('1.');
+  });
+
+  it('문단을 넣고 지운 뒤에도 블록 위치로 찾은 id 가 같은 블록을 가리킨다', () => {
+    const ids = BlockIdTable.assign([
+      { kind: 'paragraph', section: 0, paragraph: 0 },
+      { kind: 'paragraph', section: 0, paragraph: 1 },
+      { kind: 'table', section: 0, paragraph: 2, controlIndex: 0 },
+    ]);
+    expect(ids.idOf({ kind: 'table', section: 0, paragraph: 2, controlIndex: 0 })).toBe('b3');
+
+    const inserted = ids.paragraphInserted(0, 1);
+
+    expect(ids.idOf({ kind: 'paragraph', section: 0, paragraph: 1 })).toBe(inserted);
+    expect(ids.idOf({ kind: 'table', section: 0, paragraph: 3, controlIndex: 0 })).toBe('b3');
+    expect(ids.idOf({ kind: 'table', section: 0, paragraph: 2, controlIndex: 0 })).toBeUndefined();
+
+    ids.paragraphDeleted(0, 0);
+
+    expect(ids.idOf({ kind: 'paragraph', section: 0, paragraph: 0 })).toBe(inserted);
+    expect(ids.idOf({ kind: 'table', section: 0, paragraph: 2, controlIndex: 0 })).toBe('b3');
   });
 
   it('대응표를 고치지 않으면 문단을 넣은 뒤 id 가 다른 내용을 가리킨다', () => {

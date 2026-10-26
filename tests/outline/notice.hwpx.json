@@ -1,0 +1,96 @@
+{
+  "blockCount": 14,
+  "blocks": [
+    {
+      "id": "b1",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "가나다구청"
+    },
+    {
+      "id": "b2",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "수신  "
+    },
+    {
+      "id": "b3",
+      "kind": "field",
+      "page": 1,
+      "text": "",
+      "name": "수신"
+    },
+    {
+      "id": "b4",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "(경유)"
+    },
+    {
+      "id": "b5",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "제목  2026년 하반기 주민 안전교육 일정 안내"
+    },
+    {
+      "id": "b6",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "관련: 가나다구청 안전총괄과-1234(2026. 9. 1.)",
+      "number": "1."
+    },
+    {
+      "id": "b7",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "하반기 주민 안전교육을 아래와 같이 실시하오니 각 동 주민센터에서는 주민…",
+      "number": "2."
+    },
+    {
+      "id": "b8",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "교육 대상: 관내 주민 누구나",
+      "number": "가."
+    },
+    {
+      "id": "b9",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "교육 내용: 화재 대피 요령, 심폐소생술 실습",
+      "number": "나."
+    },
+    {
+      "id": "b10",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "신청 방법: 동 주민센터 방문 또는 전화 신청",
+      "number": "다."
+    },
+    {
+      "id": "b11",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "회신 기한: 2026. 11. 14.(금)까지 참석 인원을 회신하여 주시…",
+      "number": "3."
+    },
+    {
+      "id": "b12",
+      "kind": "table",
+      "page": 1,
+      "text": "구분 | 일정 | 장소 | 1회차 | 11. 20.(목) 14:00 | …"
+    },
+    {
+      "id": "b13",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "붙임  교육 신청서 1부.  끝."
+    },
+    {
+      "id": "b14",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "가나다구청장"
+    }
+  ]
+}

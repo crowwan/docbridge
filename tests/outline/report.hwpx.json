@@ -1,0 +1,269 @@
+{
+  "blockCount": 39,
+  "blocks": [
+    {
+      "id": "b1",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "2026년 공공도서관 이용 현황 보고"
+    },
+    {
+      "id": "b2",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "개요",
+      "number": "1.",
+      "outlineLevel": 1
+    },
+    {
+      "id": "b3",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "이 보고서는 관내 공공도서관 다섯 곳의 2026년 1~3분기 이용 현황을…",
+      "number": "가.",
+      "outlineLevel": 2
+    },
+    {
+      "id": "b4",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "이 보고서는 관내 공공도서관 다섯 곳의 2026년 1~3분기 이용 현황을…"
+    },
+    {
+      "id": "b5",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "대출 권수, 방문자 수, 프로그램 참여 인원을 분기별로 비교하였다.",
+      "number": "나.",
+      "outlineLevel": 2
+    },
+    {
+      "id": "b6",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "대출 권수, 방문자 수, 프로그램 참여 인원을 분기별로 비교하였다. 세부…"
+    },
+    {
+      "id": "b7",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "이용 현황",
+      "number": "2.",
+      "outlineLevel": 1
+    },
+    {
+      "id": "b8",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "3분기 방문자는 전 분기보다 8% 늘었고, 대출 권수는 4% 늘었다.",
+      "number": "가.",
+      "outlineLevel": 2
+    },
+    {
+      "id": "b9",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "3분기 방문자는 전 분기보다 8% 늘었고, 대출 권수는 4% 늘었다. 세…"
+    },
+    {
+      "id": "b10",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "어린이 열람실 이용이 가장 크게 늘었으며, 방학 기간 프로그램의 영향으로…",
+      "number": "나.",
+      "outlineLevel": 2
+    },
+    {
+      "id": "b11",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "어린이 열람실 이용이 가장 크게 늘었으며, 방학 기간 프로그램의 영향으로…"
+    },
+    {
+      "id": "b12",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "분기별 비교",
+      "number": "3.",
+      "outlineLevel": 1
+    },
+    {
+      "id": "b13",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "아래 표는 분기별 주요 지표이다. 단위는 천 명, 천 권이다.",
+      "number": "가.",
+      "outlineLevel": 2
+    },
+    {
+      "id": "b14",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "아래 표는 분기별 주요 지표이다. 단위는 천 명, 천 권이다. 세부 내용…"
+    },
+    {
+      "id": "b15",
+      "kind": "table",
+      "page": 1,
+      "text": "지표 | 1분기 | 2분기 | 3분기 | 방문자 | 412 | 398 |…"
+    },
+    {
+      "id": "b16",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "개선 과제",
+      "number": "4.",
+      "outlineLevel": 1
+    },
+    {
+      "id": "b17",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "주말 운영 시간을 한 시간 늘리는 방안을 검토한다.",
+      "number": "가.",
+      "outlineLevel": 2
+    },
+    {
+      "id": "b18",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "주말 운영 시간을 한 시간 늘리는 방안을 검토한다. 세부 내용은 붙임 자…"
+    },
+    {
+      "id": "b19",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "전자책 대출 안내를 강화하여 비대면 이용을 늘린다.",
+      "number": "나.",
+      "outlineLevel": 2
+    },
+    {
+      "id": "b20",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "전자책 대출 안내를 강화하여 비대면 이용을 늘린다. 세부 내용은 붙임 자…"
+    },
+    {
+      "id": "b21",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "노후 열람석 교체 예산을 내년도 본예산에 반영한다.",
+      "number": "다.",
+      "outlineLevel": 2
+    },
+    {
+      "id": "b22",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "노후 열람석 교체 예산을 내년도 본예산에 반영한다. 세부 내용은 붙임 자…"
+    },
+    {
+      "id": "b23",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "향후 계획",
+      "number": "5.",
+      "outlineLevel": 1
+    },
+    {
+      "id": "b24",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "4분기 실적을 더해 연간 보고서를 2027년 1월에 낸다.",
+      "number": "가.",
+      "outlineLevel": 2
+    },
+    {
+      "id": "b25",
+      "kind": "paragraph",
+      "page": 1,
+      "text": "4분기 실적을 더해 연간 보고서를 2027년 1월에 낸다. 세부 내용은 …"
+    },
+    {
+      "id": "b26",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "이용자 만족도 조사를 11월 중에 실시한다.",
+      "number": "나.",
+      "outlineLevel": 2
+    },
+    {
+      "id": "b27",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "이용자 만족도 조사를 11월 중에 실시한다. 세부 내용은 붙임 자료를 참…"
+    },
+    {
+      "id": "b28",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "참고 1. 도서관별 세부 수치는 분기 보고서 원자료와 같다. 이 문단은 …"
+    },
+    {
+      "id": "b29",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "참고 2. 도서관별 세부 수치는 분기 보고서 원자료와 같다. 이 문단은 …"
+    },
+    {
+      "id": "b30",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "참고 3. 도서관별 세부 수치는 분기 보고서 원자료와 같다. 이 문단은 …"
+    },
+    {
+      "id": "b31",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "참고 4. 도서관별 세부 수치는 분기 보고서 원자료와 같다. 이 문단은 …"
+    },
+    {
+      "id": "b32",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "참고 5. 도서관별 세부 수치는 분기 보고서 원자료와 같다. 이 문단은 …"
+    },
+    {
+      "id": "b33",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "참고 6. 도서관별 세부 수치는 분기 보고서 원자료와 같다. 이 문단은 …"
+    },
+    {
+      "id": "b34",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "참고 7. 도서관별 세부 수치는 분기 보고서 원자료와 같다. 이 문단은 …"
+    },
+    {
+      "id": "b35",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "참고 8. 도서관별 세부 수치는 분기 보고서 원자료와 같다. 이 문단은 …"
+    },
+    {
+      "id": "b36",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "참고 9. 도서관별 세부 수치는 분기 보고서 원자료와 같다. 이 문단은 …"
+    },
+    {
+      "id": "b37",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "참고 10. 도서관별 세부 수치는 분기 보고서 원자료와 같다. 이 문단은…"
+    },
+    {
+      "id": "b38",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "참고 11. 도서관별 세부 수치는 분기 보고서 원자료와 같다. 이 문단은…"
+    },
+    {
+      "id": "b39",
+      "kind": "paragraph",
+      "page": 2,
+      "text": "참고 12. 도서관별 세부 수치는 분기 보고서 원자료와 같다. 이 문단은…"
+    }
+  ]
+}
