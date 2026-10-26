@@ -85,7 +85,7 @@ docbridge 는 Claude 채팅(MCP stdio) ↔ 로컬 서버 ↔ 브라우저 뷰어
 | 표 | `getControls`(ctrlId `tbl`, list 0) → `getTableDimensions`·`getCellInfo`·`getTextInCell` | 된다. 칸마다 행·열·텍스트·같은 행 첫 칸. `getControls` 의 `para` 는 구역을 이어 붙인 문서 전체 번호이고, list 가 0 이 아니면 칸 안(표 안 표)이다 |
 | 누름틀 | `getFieldList`(fieldType `clickhere`) | 된다. 이름·안내문·값·표 안 여부 |
 | 개요 번호 | `getOutlineNavigation` | 된다. 단 **개요(Outline) 문단만** 준다 |
-| 문단 번호(Number) | `getPageTextLayout` 에서 문단 첫 줄 첫 run(`charStart` 0) 바로 앞에 그려진 번호 글자. 처음 찾은 값만 쓴다(다음 쪽 머리말·쪽 번호를 번호로 읽지 않게). 글자 배치는 번호 문단이 시작하는 쪽만 읽는다(#6) | 된다. 번호 문자열은 문서에 저장되지 않고 렌더링 때 계산되므로, 화면에 그려진 값을 읽는다. 개요 번호도 같은 방법으로 읽고 `getOutlineNavigation` 과 같은지 테스트로 맞춰 본다 |
+| 문단 번호(Number) | `getPageTextLayout` 에서 문단 첫 줄 첫 run(`charStart` 0) 바로 앞에 그려진 번호 글자. 처음 찾은 값만 쓴다(다음 쪽 머리말·쪽 번호를 번호로 읽지 않게). 글자 배치는 번호 문단이 시작하는 쪽만 읽고, 못 찾으면 다음 쪽도 본다(#6) | 된다. 번호 문자열은 문서에 저장되지 않고 렌더링 때 계산되므로, 화면에 그려진 값을 읽는다. 개요 번호도 같은 방법으로 읽고 `getOutlineNavigation` 과 같은지 테스트로 맞춰 본다 |
 | 직접 타이핑한 번호("1.") | — | 본문 텍스트에 그대로 들어간다. 번호 필드는 비어 있다. 실제 공문(기안문)은 대부분 이쪽이다 |
 
 - `getStructure` 는 개요/조문 트리를 주지만 문단 번호 문자열은 없어서 쓰지 않았다.

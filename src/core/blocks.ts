@@ -81,12 +81,42 @@ export function numbersFromLayout(pages: LayoutRun[][]): Map<string, string> {
   return numbers;
 }
 
-/** 쪽 글자 배치는 쪽마다 큰 JSON 이라, 번호 문단이 시작하는 쪽(0부터)만 읽는다 */
-function renderedNumbers(doc: HwpDocument, pageIndexes: Set<number>): Map<string, string> {
-  const pages = [...pageIndexes]
-    .sort((a, b) => a - b)
-    .map((page) => parse(textLayoutSchema, doc.getPageTextLayout(page)).runs);
-  return numbersFromLayout(pages);
+/** 번호를 찾을 문단: 위치 키와 문단이 시작하는 쪽(0부터) */
+export interface NumberedParagraph {
+  key: string;
+  page: number;
+}
+
+/**
+ * 번호 문단마다 번호 문자열을 찾는다. 쪽 글자 배치는 쪽마다 큰 JSON 이라 필요한 쪽만, 쪽마다 한 번만 읽는다.
+ * 시작 쪽에서 먼저 찾고, 없으면 다음 쪽도 본다. 쪽 나눔·조판 부호로 시작하거나 쪽 경계에 걸린 문단은
+ * 시작 위치(getPageOfPosition) 쪽과 번호가 그려진 쪽이 다를 수 있다(PR #12 리뷰).
+ */
+export function numbersForParagraphs(
+  wanted: NumberedParagraph[],
+  pageCount: number,
+  readPage: (page: number) => LayoutRun[],
+): Map<string, string> {
+  const byPage = new Map<number, Map<string, string>>();
+  const numbersOn = (page: number) => {
+    const cached = byPage.get(page);
+    if (cached) return cached;
+    const found = numbersFromLayout([readPage(page)]);
+    byPage.set(page, found);
+    return found;
+  };
+  const numbers = new Map<string, string>();
+  for (const { key, page } of wanted) {
+    for (const candidate of [page, page + 1]) {
+      if (candidate >= pageCount) break;
+      const number = numbersOn(candidate).get(key);
+      if (number !== undefined) {
+        numbers.set(key, number);
+        break;
+      }
+    }
+  }
+  return numbers;
 }
 
 /** 자동 번호 문단의 머리 모양. 번호가 없는 문단이면 undefined */
@@ -209,8 +239,12 @@ export function extractBlocks(doc: HwpDocument): Block[] {
       body.push({ section, paragraph, block, heading: headingOf(doc, section, paragraph) });
     }
   }
-  const numberPages = new Set(body.flatMap(({ block, heading }) => (block && heading ? [block.page - 1] : [])));
-  const numbers = renderedNumbers(doc, numberPages);
+  const wanted = body.flatMap(({ section, paragraph, block, heading }) =>
+    block && heading ? [{ key: positionKey(section, paragraph), page: block.page - 1 }] : [],
+  );
+  const numbers = numbersForParagraphs(wanted, doc.pageCount(), (page) =>
+    parse(textLayoutSchema, doc.getPageTextLayout(page)).runs,
+  );
   return body.flatMap(({ section, paragraph, block, heading }) => {
     const key = positionKey(section, paragraph);
     return [

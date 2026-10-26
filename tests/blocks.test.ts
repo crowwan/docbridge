@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { extractBlocks, numbersFromLayout, type Block, type ParagraphBlock, type TableBlock } from '../src/core/blocks.ts';
+import { extractBlocks, numbersForParagraphs, numbersFromLayout, type Block, type LayoutRun, type ParagraphBlock, type TableBlock } from '../src/core/blocks.ts';
 import { findInBlocks } from '../src/core/find-text.ts';
 import { createBlankDocument } from '../src/core/rhwp-node.ts';
 import { openFixture } from './fixtures.ts';
@@ -143,6 +143,58 @@ describe('SPEC-001 블록 추출 (기술 검증)', () => {
       [2, '1.'],
     ]);
     expect(layout.mock.calls).toEqual([[1]]);
+  });
+
+  it('번호가 문단 시작 쪽이 아니라 다음 쪽에 그려졌으면 다음 쪽에서 찾는다', () => {
+    // 쪽 나눔으로 시작하는 문단은 시작 위치(getPageOfPosition)가 앞 쪽인데 번호는 다음 쪽 머리에 그려진다
+    const pages: LayoutRun[][] = [
+      [{ text: '앞 문단', secIdx: 0, paraIdx: 0, charStart: 0 }],
+      [
+        { text: '2.' },
+        { text: '쪽 나눔 뒤 번호 문단', secIdx: 0, paraIdx: 1, charStart: 0 },
+      ],
+      [{ text: '셋째 쪽', secIdx: 0, paraIdx: 2, charStart: 0 }],
+    ];
+    const read: number[] = [];
+
+    const numbers = numbersForParagraphs([{ key: '0:1', page: 0 }], pages.length, (page) => {
+      read.push(page);
+      return pages[page] ?? [];
+    });
+
+    expect(numbers.get('0:1')).toBe('2.');
+    expect(read).toEqual([0, 1]);
+  });
+
+  it('시작 쪽에서 번호를 찾으면 다음 쪽은 읽지 않고, 같은 쪽은 한 번만 읽는다', () => {
+    const pages: LayoutRun[][] = [
+      [
+        { text: '1.' },
+        { text: '첫 번호 문단', secIdx: 0, paraIdx: 0, charStart: 0 },
+        { text: '2.' },
+        { text: '둘째 번호 문단', secIdx: 0, paraIdx: 1, charStart: 0 },
+      ],
+      [{ text: '다음 쪽', secIdx: 0, paraIdx: 2, charStart: 0 }],
+    ];
+    const read: number[] = [];
+
+    const numbers = numbersForParagraphs(
+      [
+        { key: '0:0', page: 0 },
+        { key: '0:1', page: 0 },
+      ],
+      pages.length,
+      (page) => {
+        read.push(page);
+        return pages[page] ?? [];
+      },
+    );
+
+    expect([...numbers]).toEqual([
+      ['0:0', '1.'],
+      ['0:1', '2.'],
+    ]);
+    expect(read).toEqual([0]);
   });
 
   it('구역 나누기 표식이 든 문단 뒤의 표도 실제 구역·문단 위치로 찾는다', () => {

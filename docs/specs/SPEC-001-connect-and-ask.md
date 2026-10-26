@@ -133,7 +133,7 @@ GO 기준: 5개 문서 모두 렌더링되고, 하이라이트가 글자 위에 
 - 테스트용 문서는 개인정보 없는 공개 양식으로 `fixtures/` 에 둔다(중첩 표·표 안 그림·직인·각주·수식이 없는 것부터).
 - 하이라이트 자동 테스트는 Playwright 로 뷰어를 띄우고 오버레이 요소의 위치를 `getSelectionRects` 결과와 비교하고, 캔버스의 글자 잉크가 사각형 안에 있는지 본다.
 - rhwp 0.8.7 `getSelectionRects` 는 범위가 줄 첫 글자에서 시작하면 사각형 왼쪽을 단 왼쪽 끝으로 준다(가운데 정렬·번호·내어쓰기 줄에서 글자 밖까지 칠해짐). 줄마다 `getCursorRectOnLine` 으로 왼쪽을 바로잡는다(`src/core/highlight-rects.ts`, ADR 001).
-- 문단 번호(Number) 문자열은 API 가 따로 없어 쪽 글자 배치(`getPageTextLayout`)에서 문단 첫 글자 앞에 그려진 번호를 읽는다. 개요 번호는 `getOutlineNavigation` 과 같은 값이다(`src/core/blocks.ts`). 글자 배치는 번호·개요 문단이 시작하는 쪽만 읽는다.
+- 문단 번호(Number) 문자열은 API 가 따로 없어 쪽 글자 배치(`getPageTextLayout`)에서 문단 첫 글자 앞에 그려진 번호를 읽는다. 개요 번호는 `getOutlineNavigation` 과 같은 값이다(`src/core/blocks.ts`). 글자 배치는 번호·개요 문단이 시작하는 쪽만 읽고, 거기서 못 찾으면 다음 쪽도 본다(쪽 나눔으로 시작하는 문단).
 - 표 위치(`getControls` 의 `para`)는 구역을 이어 붙인 문단 번호라 구역 첫 문단 번호를 `getParagraphCount` 합으로 구한다. `getSectionStarts` 는 구역 정의 표식이 든 문단까지 구역 시작으로 세서(구역 하나에 `[0,1]`) 쓰지 않는다(#6).
 - 블록은 뷰어가 문서를 열 때 한 번 뽑아 들고 있고(읽기 전용), `get_outline`·`read_blocks` 는 뷰어에서 블록 전문을 받아 서버가 id 를 붙이고 고르고 자른다. `find_text` 는 뷰어가 찾아 블록 위치를 주고 서버가 id 로 바꾼다.
 - rhwp 버전을 올릴 때 fixture 별 `get_outline` 결과를 `tests/outline/*.json` 과 비교한다(쪽 번호는 Node 근사 기준).
