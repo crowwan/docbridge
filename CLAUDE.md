@@ -49,7 +49,7 @@ node scripts/make-fixtures.ts   # fixtures/ 의 생성 문서 다시 만들기
 ```
 src/
   server/      MCP 서버 진입점(index.ts), 도구 등록(mcp.ts), 문서 세션(session.ts: 마지막 파일·id 표·뷰어 요청 공용 경로),
-               HTTP·WebSocket(bridge.ts: 토큰·포트·요청 전달), 브라우저 열기(browser.ts), stderr 로그
+               HTTP·WebSocket(bridge.ts: 토큰·포트·요청 전달), 포트 설정(port.ts), 브라우저 열기(browser.ts), stderr 로그
   shared/      서버 ↔ 뷰어 요청/응답 프로토콜(protocol.ts: 메시지 스키마·요청 id·타임아웃)
   core/        rhwp 어댑터 — 블록 추출(blocks.ts), 블록 id 대응표(block-ids.ts),
                하이라이트 사각형(highlight-rects.ts), Node 용 초기화(rhwp-node.ts)

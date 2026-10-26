@@ -5,14 +5,16 @@ import { startBridge } from './bridge.ts';
 import { openInBrowser } from './browser.ts';
 import { log } from './log.ts';
 import { createMcpServer } from './mcp.ts';
+import { portFromEnv } from './port.ts';
 import { DocumentSession } from './session.ts';
 
-/** 사용 중이면 7791, 7792 … 로 넘어간다(bridge.ts PORT_ATTEMPTS) */
-const DEFAULT_PORT = 7790;
-
-// 비어 있으면 기본 포트. Number('') 는 0(아무 포트)이 되므로 따로 거른다
-const portSetting = process.env['DOCBRIDGE_PORT'];
-const port = portSetting === undefined || portSetting.trim() === '' ? DEFAULT_PORT : Number(portSetting);
+let port: number;
+try {
+  port = portFromEnv(process.env['DOCBRIDGE_PORT']);
+} catch (error) {
+  log(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
 // 빌드 결과 기준 dist/server/index.js → dist/viewer
 const viewerDir = fileURLToPath(new URL('../viewer/', import.meta.url));
 
