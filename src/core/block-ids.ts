@@ -27,6 +27,12 @@ function anchorOf(block: BlockPosition, partIndex: number): BlockAnchor {
 
 const anchorKey = ({ section, paragraph, part }: BlockAnchor) => `${section}:${paragraph}:${part}`;
 
+/** 블록 목록에서 이 위치에 있는 블록의 순서. 없으면 -1 (뷰어가 서버 id 표의 위치를 자기 블록으로 찾을 때) */
+export function indexOfAnchor(blocks: BlockPosition[], anchor: BlockAnchor): number {
+  const key = anchorKey(anchor);
+  return anchorsOf(blocks).findIndex((candidate) => anchorKey(candidate) === key);
+}
+
 /** 블록 목록의 각 블록 위치. 누름틀은 같은 문단 안에서 몇 번째인지로 가른다 */
 function anchorsOf(blocks: BlockPosition[]): BlockAnchor[] {
   const fieldCount = new Map<string, number>();
