@@ -111,7 +111,7 @@ docbridge 는 Claude 채팅(MCP stdio) ↔ 로컬 서버 ↔ 브라우저 뷰어
 
 ### MCP + HTTP·WebSocket 동시 구동
 
-- `tests/server.test.ts`: MCP SDK `StdioClientTransport` 로 `node src/server/index.ts` 를 실제 하위 프로세스로 띄워 `ping` 도구를 부르면, 같은 프로세스의 WebSocket 에 토큰으로 붙은 클라이언트가 메시지를 받는다. 토큰이 없거나 틀리면 401 로 거부한다. 뷰어 페이지와 `.wasm`(`application/wasm`) 을 127.0.0.1 에서 내준다.
+- `tests/server.test.ts`: MCP SDK `StdioClientTransport` 로 `node src/server/index.ts` 를 실제 하위 프로세스로 띄워 도구를 부르면(검증 때는 `ping`, #5 부터 `open_document`), 같은 프로세스의 WebSocket 에 토큰으로 붙은 클라이언트가 요청을 받는다. 토큰이 없거나 틀리면 401 로 거부한다. 뷰어 페이지와 `.wasm`(`application/wasm`) 을 127.0.0.1 에서 내준다.
 - `e2e/served-viewer.spec.ts`: 서버가 내준 빌드된 뷰어 페이지에서 rhwp WASM 이 뜬다.
 - stdout 은 MCP 전용이고 로그는 stderr 로만 쓴다(`src/server/log.ts`). 뷰어 연결 하나의 오류(잘못된 WebSocket 프레임, 연결 끊김)는 그 연결만 정리하고 로그를 남긴다. 처리하지 않으면 처리 안 된 'error' 이벤트로 MCP 서버 프로세스 전체가 죽는다(PR #10 리뷰, 재현 테스트 `tests/server.test.ts`). 빌드 결과(`node dist/server/index.js`)에 initialize 요청을 보내 정상 응답을 받는 것도 손으로 확인했다.
 - Claude Desktop 에 실제 등록해 보는 것은 #8 에서 한다.

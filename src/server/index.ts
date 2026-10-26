@@ -2,19 +2,26 @@
 import { fileURLToPath } from 'node:url';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { startBridge } from './bridge.ts';
+import { openInBrowser } from './browser.ts';
 import { log } from './log.ts';
 import { createMcpServer } from './mcp.ts';
+import { portFromEnv } from './port.ts';
+import { DocumentSession } from './session.ts';
 
-const DEFAULT_PORT = 7790;
-
-const port = Number(process.env['DOCBRIDGE_PORT'] ?? DEFAULT_PORT);
+let port: number;
+try {
+  port = portFromEnv(process.env['DOCBRIDGE_PORT']);
+} catch (error) {
+  log(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
 // 빌드 결과 기준 dist/server/index.js → dist/viewer
 const viewerDir = fileURLToPath(new URL('../viewer/', import.meta.url));
 
 const bridge = await startBridge({ port, viewerDir });
 log(`뷰어 주소: ${bridge.viewerUrl}`);
 
-const server = createMcpServer(bridge);
+const server = createMcpServer(new DocumentSession(bridge, { openBrowser: openInBrowser }));
 await server.connect(new StdioServerTransport());
 
 process.stdin.on('close', () => {

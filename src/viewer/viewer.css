@@ -6,6 +6,8 @@
   --highlight: rgb(255 214 0 / 45%);
   --space-2: 8px;
   --space-4: 16px;
+  --space-8: 32px;
+  --radius: 8px;
   --page-shadow: 0 1px 3px rgb(0 0 0 / 18%);
 }
 
@@ -65,4 +67,28 @@ body {
   background: var(--highlight);
   mix-blend-mode: multiply;
   pointer-events: none;
+}
+
+.notice {
+  max-width: 480px;
+  margin: var(--space-8) auto;
+  padding: var(--space-4);
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--page-shadow);
+}
+
+.notice[hidden] {
+  display: none;
+}
+
+.notice h2 {
+  margin: 0 0 var(--space-2);
+  font-size: 16px;
+}
+
+.notice p {
+  margin: 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
 }

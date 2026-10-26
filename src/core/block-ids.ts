@@ -2,7 +2,13 @@
 // rhwp 의 문단 주소는 (구역, 문단) 위치 인덱스뿐이고 편집하면 뒤 번호가 밀린다
 // (rhwp-code-analysis 2-6). 그래서 문서를 열 때 블록마다 짧은 id 를 붙이고,
 // docbridge 가 문단을 넣거나 지울 때마다 대응표의 위치를 같이 옮긴다.
-import type { Block } from './blocks.ts';
+import type { FieldBlock, ParagraphBlock, TableBlock } from './blocks.ts';
+
+/** id 를 붙이는 데 필요한 블록 위치. 뷰어가 서버에 이것만 보낸다 */
+export type BlockPosition =
+  | Pick<ParagraphBlock, 'kind' | 'section' | 'paragraph'>
+  | Pick<TableBlock, 'kind' | 'section' | 'paragraph' | 'controlIndex'>
+  | Pick<FieldBlock, 'kind' | 'section' | 'paragraph'>;
 
 export interface BlockAnchor {
   section: number;
@@ -11,7 +17,7 @@ export interface BlockAnchor {
   part: string;
 }
 
-function anchorOf(block: Block, partIndex: number): BlockAnchor {
+function anchorOf(block: BlockPosition, partIndex: number): BlockAnchor {
   const { section, paragraph } = block;
   switch (block.kind) {
     case 'paragraph':
@@ -26,7 +32,7 @@ function anchorOf(block: Block, partIndex: number): BlockAnchor {
 const anchorKey = ({ section, paragraph, part }: BlockAnchor) => `${section}:${paragraph}:${part}`;
 
 /** 블록 목록의 각 블록 위치. 누름틀은 같은 문단 안에서 몇 번째인지로 가른다 */
-function anchorsOf(blocks: Block[]): BlockAnchor[] {
+function anchorsOf(blocks: BlockPosition[]): BlockAnchor[] {
   const fieldCount = new Map<string, number>();
   return blocks.map((block) => {
     const at = `${block.section}:${block.paragraph}`;
@@ -41,7 +47,7 @@ export class BlockIdTable {
   private nextNumber = 1;
 
   /** 문서를 열 때 블록마다 b1, b2 … 를 문서 순서대로 붙인다 */
-  static assign(blocks: Block[]): BlockIdTable {
+  static assign(blocks: BlockPosition[]): BlockIdTable {
     const table = new BlockIdTable();
     for (const anchor of anchorsOf(blocks)) {
       table.anchors.set(`b${table.nextNumber}`, anchor);
@@ -55,7 +61,7 @@ export class BlockIdTable {
   }
 
   /** 지금 문서에서 다시 뽑은 블록 목록에 id 를 붙여 돌려준다 */
-  label(blocks: Block[]): Array<{ id: string | undefined; block: Block }> {
+  label<B extends BlockPosition>(blocks: B[]): Array<{ id: string | undefined; block: B }> {
     const idByAnchor = new Map([...this.anchors].map(([id, anchor]) => [anchorKey(anchor), id]));
     const anchors = anchorsOf(blocks);
     return blocks.map((block, i) => {
