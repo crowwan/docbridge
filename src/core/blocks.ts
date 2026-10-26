@@ -81,26 +81,32 @@ export function numbersFromLayout(pages: LayoutRun[][]): Map<string, string> {
   return numbers;
 }
 
-function renderedNumbers(doc: HwpDocument): Map<string, string> {
-  const pages: LayoutRun[][] = [];
-  for (let page = 0; page < doc.pageCount(); page += 1) {
-    pages.push(parse(textLayoutSchema, doc.getPageTextLayout(page)).runs);
-  }
+/** 쪽 글자 배치는 쪽마다 큰 JSON 이라, 번호 문단이 시작하는 쪽(0부터)만 읽는다 */
+function renderedNumbers(doc: HwpDocument, pageIndexes: Set<number>): Map<string, string> {
+  const pages = [...pageIndexes]
+    .sort((a, b) => a - b)
+    .map((page) => parse(textLayoutSchema, doc.getPageTextLayout(page)).runs);
   return numbersFromLayout(pages);
 }
 
-function numberingOf(
-  doc: HwpDocument,
-  section: number,
-  paragraph: number,
-  numbers: Map<string, string>,
-): Pick<ParagraphBlock, 'number' | 'outlineLevel'> {
+/** 자동 번호 문단의 머리 모양. 번호가 없는 문단이면 undefined */
+interface Heading {
+  outline: boolean;
+  /** 0부터 */
+  level: number;
+}
+
+function headingOf(doc: HwpDocument, section: number, paragraph: number): Heading | undefined {
   const { headType, paraLevel } = parse(paraPropertiesSchema, doc.getParaPropertiesAt(section, paragraph));
-  if (headType !== 'Number' && headType !== 'Outline') return {};
-  const number = numbers.get(positionKey(section, paragraph));
+  if (headType !== 'Number' && headType !== 'Outline') return undefined;
+  return { outline: headType === 'Outline', level: paraLevel };
+}
+
+function numberingOf(heading: Heading | undefined, number: string | undefined): Pick<ParagraphBlock, 'number' | 'outlineLevel'> {
+  if (heading === undefined) return {};
   return {
     ...(number === undefined ? {} : { number }),
-    ...(headType === 'Outline' ? { outlineLevel: paraLevel + 1 } : {}),
+    ...(heading.outline ? { outlineLevel: heading.level + 1 } : {}),
   };
 }
 
@@ -139,6 +145,8 @@ function readTable(doc: HwpDocument, section: number, paragraph: number, control
 
 // getControls 의 para 는 구역을 이어 붙인 문서 전체 문단 번호다.
 // list 0 이 본문이고, 그 밖의 list 는 표 칸·글상자 안이다(표 안 표는 바깥 표 블록에 속한다).
+// 구역 첫 문단 번호는 getParagraphCount 합으로 구한다. getSectionStarts 는 구역 정의(SectionDef) 표식이
+// 든 문단까지 구역 시작으로 세서(구역 하나에 [0, 1] 이 나올 수 있다) 이 번호와 맞지 않는다(#6, 테스트).
 function tablesByParagraph(doc: HwpDocument): Map<string, number[]> {
   const sectionStarts: number[] = [];
   let total = 0;
@@ -177,31 +185,38 @@ function fieldsByParagraph(doc: HwpDocument): Map<string, FieldBlock[]> {
   return fields;
 }
 
+interface BodyParagraph {
+  section: number;
+  paragraph: number;
+  /** 글자가 없는 문단(표만 품은 문단 등)이면 undefined */
+  block: ParagraphBlock | undefined;
+  heading: Heading | undefined;
+}
+
 /** 본문 문단·표·누름틀을 문서 순서대로 돌려준다. 글자가 없는 문단은 블록으로 내보내지 않는다. */
 export function extractBlocks(doc: HwpDocument): Block[] {
-  const numbers = renderedNumbers(doc);
   const tables = tablesByParagraph(doc);
   const fields = fieldsByParagraph(doc);
-  const blocks: Block[] = [];
+  const body: BodyParagraph[] = [];
   for (let section = 0; section < doc.getSectionCount(); section += 1) {
     for (let paragraph = 0; paragraph < doc.getParagraphCount(section); paragraph += 1) {
       const text = paragraphText(doc, section, paragraph);
-      if (text.trim().length > 0) {
-        blocks.push({
-          kind: 'paragraph',
-          section,
-          paragraph,
-          page: pageOf(doc, section, paragraph),
-          text,
-          ...numberingOf(doc, section, paragraph, numbers),
-        });
+      if (text.trim().length === 0) {
+        body.push({ section, paragraph, block: undefined, heading: undefined });
+        continue;
       }
-      const key = positionKey(section, paragraph);
-      for (const controlIndex of tables.get(key) ?? []) {
-        blocks.push(readTable(doc, section, paragraph, controlIndex));
-      }
-      blocks.push(...(fields.get(key) ?? []));
+      const block: ParagraphBlock = { kind: 'paragraph', section, paragraph, page: pageOf(doc, section, paragraph), text };
+      body.push({ section, paragraph, block, heading: headingOf(doc, section, paragraph) });
     }
   }
-  return blocks;
+  const numberPages = new Set(body.flatMap(({ block, heading }) => (block && heading ? [block.page - 1] : [])));
+  const numbers = renderedNumbers(doc, numberPages);
+  return body.flatMap(({ section, paragraph, block, heading }) => {
+    const key = positionKey(section, paragraph);
+    return [
+      ...(block ? [{ ...block, ...numberingOf(heading, numbers.get(key)) }] : []),
+      ...(tables.get(key) ?? []).map((controlIndex) => readTable(doc, section, paragraph, controlIndex)),
+      ...(fields.get(key) ?? []),
+    ];
+  });
 }

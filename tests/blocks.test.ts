@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { extractBlocks, numbersFromLayout, type Block, type ParagraphBlock, type TableBlock } from '../src/core/blocks.ts';
 import { createBlankDocument } from '../src/core/rhwp-node.ts';
@@ -111,6 +111,52 @@ describe('SPEC-001 블록 추출 (기술 검증)', () => {
     const fromHwp = extractBlocks(openFixture('notice.hwp'));
     const fromHwpx = extractBlocks(openFixture('notice.hwpx'));
     expect(fromHwp).toEqual(fromHwpx);
+  });
+
+  it('번호 문단이 없는 문서는 쪽 글자 배치를 읽지 않는다', () => {
+    const doc = openFixture('application.hwpx');
+    const layout = vi.spyOn(doc, 'getPageTextLayout');
+
+    const blocks = paragraphs(extractBlocks(doc));
+
+    expect(blocks.some((b) => b.number !== undefined)).toBe(false);
+    expect(layout).not.toHaveBeenCalled();
+  });
+
+  it('쪽 글자 배치는 번호·개요 문단이 시작하는 쪽만 읽는다', () => {
+    const doc = createBlankDocument();
+    doc.insertText(0, 0, 0, '번호 없는 첫 문단');
+    doc.splitParagraph(0, 0, doc.getParagraphLength(0, 0));
+    doc.insertText(0, 1, 0, '둘째 쪽 번호 문단');
+    doc.insertPageBreak(0, 1, 0);
+    const numberingId = doc.ensureDefaultNumbering();
+    const last = doc.getParagraphCount(0) - 1;
+    doc.applyParaFormat(0, last, JSON.stringify({ headType: 'Number', paraLevel: 0, numberingId }));
+    const layout = vi.spyOn(doc, 'getPageTextLayout');
+
+    const blocks = paragraphs(extractBlocks(doc));
+
+    expect(doc.pageCount()).toBe(2);
+    expect(blocks.map((b) => [b.page, b.number])).toEqual([
+      [1, undefined],
+      [2, '1.'],
+    ]);
+    expect(layout.mock.calls).toEqual([[1]]);
+  });
+
+  it('구역 나누기 표식이 든 문단 뒤의 표도 실제 구역·문단 위치로 찾는다', () => {
+    // getSectionStarts 는 구역 정의(SectionDef) 표식 기준이라 구역이 하나여도 [0, 1] 을 준다.
+    // 표 위치(getControls 의 para)는 실제 구역의 문단 수를 이어 붙인 번호라 그것으로 나누면 안 된다
+    const doc = createBlankDocument();
+    doc.insertText(0, 0, 0, '첫 문단입니다');
+    doc.splitParagraph(0, 0, 7);
+    doc.insertText(0, 1, 0, '둘째 문단');
+    doc.breakAtCursor(0, 1, 0, 'section');
+    doc.createTable(0, doc.getParagraphCount(0) - 1, 0, 2, 2);
+
+    expect(doc.getSectionCount()).toBe(1);
+    expect(doc.getSectionStarts()).toBe('[0,1]');
+    expect(tables(extractBlocks(doc)).map((t) => [t.section, t.paragraph])).toEqual([[0, 2]]);
   });
 
   it('여러 쪽 문서에서 블록마다 쪽 번호를 준다', () => {
