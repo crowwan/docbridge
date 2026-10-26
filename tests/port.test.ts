@@ -20,3 +20,15 @@ describe('SPEC-001 뷰어 서버 포트 설정 (DOCBRIDGE_PORT)', () => {
     expect(() => portFromEnv(value)).toThrow(`DOCBRIDGE_PORT 가 올바른 포트 번호가 아닙니다: ${value}`);
   });
 });
+
+describe('E2E 개발 서버 포트 설정 (DOCBRIDGE_E2E_PORT)', () => {
+  it('값이 없거나 비어 있으면 그 변수의 기본 포트를 쓴다', () => {
+    expect(portFromEnv(undefined, 'DOCBRIDGE_E2E_PORT', 7792)).toBe(7792);
+    expect(portFromEnv('', 'DOCBRIDGE_E2E_PORT', 7792)).toBe(7792);
+    expect(portFromEnv('7794', 'DOCBRIDGE_E2E_PORT', 7792)).toBe(7794);
+  });
+
+  it('숫자가 아니면 그 변수 이름으로 분명한 오류를 낸다', () => {
+    expect(() => portFromEnv('abc', 'DOCBRIDGE_E2E_PORT', 7792)).toThrow('DOCBRIDGE_E2E_PORT 가 올바른 포트 번호가 아닙니다: abc');
+  });
+});
