@@ -4,7 +4,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, extname, join, resolve } from 'node:path';
-import { BlockIdTable } from '../core/block-ids.ts';
+import { BlockIdTable, type BlockPosition } from '../core/block-ids.ts';
 import type { LoadDocumentResult, ViewerMethod, ViewerParams, ViewerResult } from '../shared/protocol.ts';
 import { ViewerNotConnectedError, type Bridge } from './bridge.ts';
 import { log } from './log.ts';
@@ -25,8 +25,12 @@ export interface OpenedDocument {
   fileName: string;
   pageCount: number;
   blockCount: number;
+  /** 열 때 뷰어가 준 블록 위치. 새로고침 때 파일이 바뀌었는지 가린다 */
+  blocks: BlockPosition[];
   ids: BlockIdTable;
 }
+
+const samePositions = (a: BlockPosition[], b: BlockPosition[]) => JSON.stringify(a) === JSON.stringify(b);
 
 export interface OpenResult {
   fileName: string;
@@ -112,6 +116,7 @@ export class DocumentSession {
         fileName,
         pageCount: loaded.pageCount,
         blockCount: loaded.blocks.length,
+        blocks: loaded.blocks,
         ids: BlockIdTable.assign(loaded.blocks),
       };
       return { fileName, pageCount: loaded.pageCount, blockCount: loaded.blocks.length, viewerUrl: this.bridge.viewerUrl };
@@ -179,10 +184,27 @@ export class DocumentSession {
   /** 줄 안에서만 부른다. 줄을 기다리는 사이 다른 문서를 열었으면 보내지 않는다 */
   private async reload(document: OpenedDocument): Promise<void> {
     if (this.current !== document) return;
+    let bytes: Uint8Array;
     try {
-      const bytes = await readDocumentFile(document.path, this.readFile);
+      bytes = await readDocumentFile(document.path, this.readFile);
+    } catch (error) {
+      // 파일이 사라졌거나 더는 열 수 없다. 이전 id 표를 들고 있을 이유가 없다
+      log(`새로고침: 파일을 다시 읽지 못해 열린 문서를 비웁니다: ${String(error)}`);
+      this.current = undefined;
+      return;
+    }
+    try {
       const loaded = await this.load(document.fileName, bytes);
-      this.current = { ...document, pageCount: loaded.pageCount, blockCount: loaded.blocks.length };
+      // 파일이 바뀌어 블록 위치가 달라졌으면 옛 id 표는 다른 블록을 가리킨다
+      const changed = !samePositions(document.blocks, loaded.blocks);
+      if (changed) log(`새로고침: ${document.fileName} 이 바뀌어 블록 id 를 새로 붙입니다`);
+      this.current = {
+        ...document,
+        pageCount: loaded.pageCount,
+        blockCount: loaded.blocks.length,
+        blocks: loaded.blocks,
+        ids: changed ? BlockIdTable.assign(loaded.blocks) : document.ids,
+      };
     } catch (error) {
       log(`새로고침한 뷰어에 문서를 다시 띄우지 못했습니다: ${String(error)}`);
     }

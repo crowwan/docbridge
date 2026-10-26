@@ -1,5 +1,5 @@
 import { once } from 'node:events';
-import { copyFile, mkdtemp, readFile, truncate, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, readFile, rm, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -282,6 +282,37 @@ describe('SPEC-001 문서 열기 (open_document)', () => {
     const reloaded = await connectViewer();
     reloaded.autoRespond({ pageCount: 1, blocks: paragraphBlocks(14) });
     await session.ready();
+    expect(reloaded.history).toEqual([]);
+  });
+
+  it('새로고침 때 파일이 바뀌어 블록 위치가 달라졌으면 블록 id 를 새로 붙인다', async () => {
+    const first = await connectViewer();
+    await Promise.all([session.open(fixturePath('notice.hwpx')), answerNextLoad(first, 1, 14)]);
+    const idsBefore = session.document?.ids;
+
+    await closeViewer(first);
+    const reloaded = await connectViewer();
+    reloaded.autoRespond({ pageCount: 1, blocks: paragraphBlocks(15) });
+    await session.ready();
+
+    expect(session.document?.ids).not.toBe(idsBefore);
+    expect(session.document?.blockCount).toBe(15);
+    expect(session.document?.ids.label(paragraphBlocks(15)).map(({ id }) => id).at(-1)).toBe('b15');
+  });
+
+  it('새로고침 때 파일이 사라졌으면 열린 문서를 비우고 뷰어에 보내지 않는다', async () => {
+    const path = join(await mkdtemp(join(tmpdir(), 'docbridge-gone-')), '공문.hwpx');
+    await copyFile(fixturePath('notice.hwpx'), path);
+    const first = await connectViewer();
+    await Promise.all([session.open(path), answerNextLoad(first, 1, 14)]);
+
+    await closeViewer(first);
+    await rm(path);
+    const reloaded = await connectViewer();
+    reloaded.autoRespond({ pageCount: 1, blocks: paragraphBlocks(14) });
+    await session.ready();
+
+    expect(session.document).toBeUndefined();
     expect(reloaded.history).toEqual([]);
   });
 });
