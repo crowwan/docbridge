@@ -131,4 +131,15 @@ describe('SPEC-001 MCP·뷰어 서버 동시 구동 (기술 검증)', () => {
     expect(await page.text()).toContain('뷰어');
     expect(wasm.headers.get('content-type')).toBe('application/wasm');
   });
+
+  it('이름에 한글·공백이 든 정적 파일도 인코딩된 주소로 내준다', async () => {
+    const viewerDir = await mkdtemp(join(tmpdir(), 'docbridge-viewer-'));
+    await writeFile(join(viewerDir, '한글 파일.js'), 'export {}');
+    bridge = await startBridge({ port: 0, viewerDir });
+
+    const response = await fetch(`http://127.0.0.1:${bridge.port}/${encodeURIComponent('한글 파일.js')}`);
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('export {}');
+  });
 });

@@ -41,7 +41,15 @@ function tokenOf(url: string | undefined): string | null {
 }
 
 async function serveViewerFile(viewerDir: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const pathname = new URL(req.url ?? '/', `http://${HOST}`).pathname;
+  const encoded = new URL(req.url ?? '/', `http://${HOST}`).pathname;
+  let pathname: string;
+  try {
+    // 브라우저는 한글·공백 파일 이름을 %XX 로 보낸다. 디스크 이름과 맞추려면 풀어야 한다
+    pathname = decodeURIComponent(encoded);
+  } catch {
+    res.writeHead(400).end();
+    return;
+  }
   const relative = normalize(pathname === '/' ? '/index.html' : pathname);
   if (relative.includes('..')) {
     res.writeHead(400).end();
