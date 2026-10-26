@@ -20,16 +20,41 @@
 
 ## 스택
 
-- Web (TS). 로컬 MCP 서버(stdio) + 127.0.0.1 WebSocket + 브라우저 뷰어(@rhwp/core 직접 사용) — 세부는 첫 스펙·ADR 에서 확정
+- Web (TS, Node 24). 로컬 MCP 서버(stdio, `@modelcontextprotocol/sdk`) + 같은 프로세스의 127.0.0.1 HTTP·WebSocket(`ws`, 기본 포트 7790) + 브라우저 뷰어(Vite, `@rhwp/core` 0.8.7 고정 직접 사용) — 결정과 측정값: `docs/decisions/001-stack-and-rhwp.md`
+- `any`·타입 단언(`as`) 금지(`as const` 는 허용). rhwp 가 돌려주는 JSON 문자열은 zod 스키마로 읽는다
+- 상대 import 는 `.ts` 확장자까지 쓴다(Node 가 TS 를 바로 실행하고, 빌드 때 `.js` 로 바뀐다)
+- stdout 은 MCP 전용. 서버 로그는 `src/server/log.ts`(stderr)로만 쓴다
+- 포트 3000 금지: 서버 7790, 뷰어 개발 서버 7791, E2E 개발 서버 7792
 - 조사 자료: `docs/research/`
 
 ## 실행
 
 ```bash
-# 빌드 / 테스트 / 실행 명령
+npm ci                 # 의존성 설치 (Node 24)
+npm run dev            # 뷰어 개발 서버 http://127.0.0.1:7791/?fixture=notice.hwpx
+npm run build          # 서버(tsc → dist/server) + 뷰어(vite → dist/viewer)
+npm start              # MCP 서버(stdio) + 뷰어 서버(7790). DOCBRIDGE_PORT 로 포트 변경
+npm run typecheck
+npm test               # Vitest: 블록 추출·블록 id·하이라이트 계산·서버 통합 (CI)
+npm run e2e            # 빌드 후 Playwright: 렌더링·하이라이트·측정 (로컬 전용, CI 에 없음)
+node scripts/make-fixtures.ts   # fixtures/ 의 생성 문서 다시 만들기
 ```
+
+- 처음 E2E 를 돌릴 때 `npx playwright install chromium`
+- 측정 결과는 `e2e-results/metrics.json`, 스크린샷은 `test-results/screens/` (둘 다 git 에 넣지 않음)
 
 ## 폴더 구조
 
 ```
+src/
+  server/      MCP 서버 진입점(index.ts), 도구 등록(mcp.ts), HTTP·WebSocket(bridge.ts), stderr 로그
+  shared/      서버 ↔ 뷰어 WebSocket 메시지 타입
+  core/        rhwp 어댑터 — 블록 추출(blocks.ts), 블록 id 대응표(block-ids.ts),
+               하이라이트 사각형(highlight-rects.ts), Node 용 초기화(rhwp-node.ts)
+  viewer/      브라우저 뷰어(Vite root). Canvas 렌더링 + 하이라이트 오버레이
+tests/         Vitest (Node 에서 rhwp WASM 을 직접 띄움)
+e2e/           Playwright (렌더링·하이라이트·측정·서버가 내주는 뷰어)
+fixtures/      테스트용 문서와 출처(README.md)
+scripts/       fixtures 생성 스크립트
+docs/          PRD, 스펙, ADR(decisions/), 조사 자료(research/), QA 체크리스트
 ```
