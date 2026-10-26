@@ -8,6 +8,7 @@ import { blockPositionSchema, type Block } from '../core/block-schema.ts';
 import { extractBlocks } from '../core/blocks.ts';
 import { findInBlocks } from '../core/find-text.ts';
 import { selectionRects, type SelectionRect, type TextRange } from '../core/highlight-rects.ts';
+import { errorMessage } from '../shared/errors.ts';
 import { answerRequest, type LoadDocumentResult, type RequestMessage } from '../shared/protocol.ts';
 import type { RenderMetrics, ViewerApi } from './api.ts';
 
@@ -36,8 +37,6 @@ function showNotice(title: string, detail: string): void {
 function hideNotice(): void {
   if (noticeEl) noticeEl.hidden = true;
 }
-
-const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 // rhwp 는 줄바꿈 계산에 브라우저 글자 폭이 필요하다. WASM 초기화 전에 등록한다.
 function registerTextMeasure(): void {
@@ -141,7 +140,7 @@ function loadDocument(fileName: string, data: string): LoadDocumentResult {
     api.highlight = () => {
       throw new Error('문서가 열려 있지 않습니다');
     };
-    showNotice('문서를 열 수 없습니다', `${fileName}: ${errorText(error)}`);
+    showNotice('문서를 열 수 없습니다', `${fileName}: ${errorMessage(error)}`);
     setStatus('열 수 없음');
     throw error;
   }
@@ -222,4 +221,4 @@ async function start(): Promise<RenderMetrics> {
 }
 
 api.ready = start();
-api.ready.catch((error: unknown) => setStatus(`열 수 없습니다: ${errorText(error)}`));
+api.ready.catch((error: unknown) => setStatus(`열 수 없습니다: ${errorMessage(error)}`));

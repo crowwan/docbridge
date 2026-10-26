@@ -1,6 +1,7 @@
 // MCP 도구 등록. 도구는 문서 세션을 거쳐 뷰어와 이야기한다.
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { errorMessage } from '../shared/errors.ts';
 import { findText, getOutline, readBlockContents } from './read-tools.ts';
 import { OUTLINE_LIMIT, READ_CHAR_LIMIT } from './reading.ts';
 import type { DocumentSession } from './session.ts';
@@ -12,7 +13,7 @@ async function toolResult(run: () => Promise<unknown>) {
   try {
     return text(JSON.stringify(await run()));
   } catch (error) {
-    return { ...text(error instanceof Error ? error.message : String(error)), isError: true };
+    return { ...text(errorMessage(error)), isError: true };
   }
 }
 

@@ -4,6 +4,7 @@
 import { z } from 'zod';
 import { blockPositionSchema, blockSchema } from '../core/block-schema.ts';
 import { textMatchSchema } from '../core/find-text.ts';
+import { errorMessage } from './errors.ts';
 
 /**
  * 하이라이트·찾기 공용 대상(#6 find_text 결과, #7 highlight 입력).
@@ -114,7 +115,7 @@ export function answerRequest(raw: string, handle: (request: RequestMessage) => 
   try {
     return { type: 'response', id, ok: true, result: handle(parsed.data) };
   } catch (error) {
-    return { type: 'response', id, ok: false, error: error instanceof Error ? error.message : String(error) };
+    return { type: 'response', id, ok: false, error: errorMessage(error) };
   }
 }
 
