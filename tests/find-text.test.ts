@@ -64,6 +64,15 @@ describe('SPEC-001 글자 찾기 (find_text)', () => {
     ]);
   });
 
+  it('범위와 앞뒤 글자는 유니코드 글자 단위다(블록 앞에 이모지·확장 한자가 있어도 rhwp 글자 위치와 같다)', () => {
+    const text = `😀𠀀${'가'.repeat(19)}😀회신😀${'나'.repeat(19)}𠀀`;
+    const [match] = findInBlocks([paragraph(0, text)], '회신');
+
+    expect(match).toMatchObject({ start: 22, end: 24 });
+    expect(match?.before).toBe(`${'가'.repeat(19)}😀`);
+    expect(match?.after).toBe(`😀${'나'.repeat(19)}`);
+  });
+
   it('누름틀 블록은 따로 찾지 않는다(값은 누름틀이 든 문단·칸 텍스트에 들어 있다)', () => {
     const field: Block = {
       kind: 'field',

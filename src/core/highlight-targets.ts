@@ -1,10 +1,10 @@
 // 하이라이트 대상(블록 id + 칸 + 글자 범위)을 쪽 위 사각형으로 바꾼다.
-// 글자 위치는 read_blocks 가 주는 블록 text(표는 칸 안 문단을 \n 으로 이은 칸 text) 기준의 JS 문자열 위치(UTF-16)다.
-// rhwp 의 글자 위치는 유니코드 글자(code point) 단위라서, 한글은 같지만 이모지 같은 BMP 밖 글자 뒤에서는 달라진다.
-// 그래서 rhwp 에 넘기기 전에 글자 단위로 바꾼다.
+// 글자 위치는 read_blocks 가 주는 블록 text(표는 칸 안 문단을 \n 으로 이은 칸 text) 안 유니코드 글자 위치(core/chars.ts)라
+// rhwp 글자 위치와 단위가 같다.
 import type { HwpDocument } from '@rhwp/core';
 import { z } from 'zod';
 import type { Block, FieldBlock, TableBlock } from './block-schema.ts';
+import { charLength } from './chars.ts';
 import { selectionRects, type CellLocation, type SelectionRect } from './highlight-rects.ts';
 
 /** 하이라이트 대상에서 블록을 찾은 뒤 남는 것 (shared/protocol.ts 의 TextTarget 과 같은 모양) */
@@ -37,16 +37,14 @@ const layoutSchema = z.object({
 
 const parse = <T>(schema: z.ZodType<T>, json: string): T => schema.parse(JSON.parse(json));
 
-/** JS 문자열 위치(UTF-16) → rhwp 글자 위치(code point) */
-const charIndex = (text: string, utf16Index: number) => [...text.slice(0, utf16Index)].length;
-
 /** 대상의 start·end 를 검사해 [시작, 끝) 으로. 둘 다 없으면 전체 */
 function spanIn(target: TargetSpan, text: string, where: string): { start: number; end: number } {
+  const length = charLength(text);
   const start = target.start ?? 0;
-  const end = target.end ?? text.length;
-  if (start >= end || end > text.length) {
+  const end = target.end ?? length;
+  if (start >= end || end > length) {
     throw new Error(
-      `${where}: 글자 범위가 맞지 않습니다(start ${start}, end ${end}, 글자 수 ${text.length}). 0 ≤ start < end ≤ 글자 수로 주세요.`,
+      `${where}: 글자 범위가 맞지 않습니다(start ${start}, end ${end}, 글자 수 ${length}). 0 ≤ start < end ≤ 글자 수로 주세요.`,
     );
   }
   return { start, end };
@@ -97,7 +95,7 @@ function tableRects(doc: HwpDocument, block: TableBlock, target: TargetSpan): Se
   const location: CellLocation = { parentParagraph: block.paragraph, controlIndex: block.controlIndex, cellIndex };
   const paragraphs = cellParagraphTexts(doc, block, cellIndex);
   const text = paragraphs.join('\n');
-  if (text.length === 0 && target.start === undefined && target.end === undefined) {
+  if (charLength(text) === 0 && target.start === undefined && target.end === undefined) {
     // 빈 칸 전체: 글자가 없으니 칸 자리를 칠한다
     return cellBoxes(doc, block).filter((box) => box.cellIndex === cellIndex);
   }
@@ -122,15 +120,16 @@ function cellParagraphTexts(doc: HwpDocument, block: TableBlock, cellIndex: numb
   );
 }
 
-/** 칸 text(문단을 \n 으로 이음) 안 위치 → 칸 문단 번호와 그 문단 안 rhwp 글자 위치 */
-export function cellPosition(paragraphs: string[], utf16Index: number): { paragraph: number; offset: number } {
-  let rest = utf16Index;
+/** 칸 text(문단을 \n 으로 이음) 안 글자 위치 → 칸 문단 번호와 그 문단 안 글자 위치 */
+export function cellPosition(paragraphs: string[], index: number): { paragraph: number; offset: number } {
+  let rest = index;
   for (const [paragraph, text] of paragraphs.entries()) {
-    if (rest <= text.length) return { paragraph, offset: charIndex(text, rest) };
-    rest -= text.length + 1;
+    const length = charLength(text);
+    if (rest <= length) return { paragraph, offset: rest };
+    rest -= length + 1;
   }
   const last = paragraphs.length - 1;
-  return { paragraph: last, offset: [...(paragraphs[last] ?? '')].length };
+  return { paragraph: last, offset: charLength(paragraphs[last] ?? '') };
 }
 
 function fieldRects(doc: HwpDocument, blocks: Block[], blockIndex: number, block: FieldBlock, target: TargetSpan): SelectionRect[] {
@@ -158,9 +157,9 @@ function fieldRects(doc: HwpDocument, blocks: Block[], blockIndex: number, block
     section: block.section,
     ...(cell === undefined ? {} : { cell }),
     startParagraph: paragraph,
-    startOffset: field.startCharIdx + charIndex(block.value, start),
+    startOffset: field.startCharIdx + start,
     endParagraph: paragraph,
-    endOffset: field.startCharIdx + charIndex(block.value, end),
+    endOffset: field.startCharIdx + end,
   });
 }
 
@@ -200,9 +199,9 @@ export function targetRects(doc: HwpDocument, blocks: Block[], blockIndex: numbe
       rects = selectionRects(doc, {
         section: block.section,
         startParagraph: block.paragraph,
-        startOffset: charIndex(block.text, start),
+        startOffset: start,
         endParagraph: block.paragraph,
-        endOffset: charIndex(block.text, end),
+        endOffset: end,
       });
       break;
     }

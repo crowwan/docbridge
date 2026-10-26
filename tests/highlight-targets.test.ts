@@ -56,11 +56,11 @@ describe('SPEC-001 하이라이트 대상 → 사각형', () => {
     );
   });
 
-  it('BMP 밖 글자(이모지) 뒤 범위는 rhwp 글자 위치로 바꿔 고른다', () => {
+  it('글자 위치는 유니코드 글자 단위라 BMP 밖 글자(이모지·확장 한자) 뒤에서도 rhwp 위치와 같다', () => {
     const doc = createBlankDocument();
-    doc.insertText(0, 0, 0, '가😀나다');
-    // JS 문자열에서 "나다" 는 3~5, rhwp 글자 위치로는 2~4
-    expect(rectsOf(doc, paragraphAt(0), { start: 3, end: 5 })).toEqual(
+    doc.insertText(0, 0, 0, '𠀀😀나다');
+    // "나다" 는 글자 위치 2~4 (JS 문자열 위치로는 4~6)
+    expect(rectsOf(doc, paragraphAt(0), { start: 2, end: 4 })).toEqual(
       selectionRects(doc, { section: 0, startParagraph: 0, startOffset: 2, endParagraph: 0, endOffset: 4 }),
     );
   });
@@ -140,6 +140,9 @@ describe('SPEC-001 하이라이트 대상 → 사각형', () => {
     );
     expect(() => rectsOf(doc, paragraphAt(0), { start: 3, end: 3 })).toThrow('글자 범위가 맞지 않습니다');
     expect(() => rectsOf(doc, isTable, { cell: { row: 0, col: 0 }, end: 99 })).toThrow('b1 칸(0,0): 글자 범위가 맞지 않습니다');
+    const emoji = createBlankDocument();
+    emoji.insertText(0, 0, 0, '𠀀😀나다');
+    expect(() => rectsOf(emoji, paragraphAt(0), { start: 0, end: 5 })).toThrow('글자 수 4');
   });
 
   it('표에 없는 칸, 표가 아닌 블록의 cell, cell 없는 표 범위는 오류다', () => {
@@ -156,5 +159,6 @@ describe('SPEC-001 하이라이트 대상 → 사각형', () => {
     expect(cellPosition(paragraphs, 4)).toEqual({ paragraph: 1, offset: 0 });
     expect(cellPosition(paragraphs, 5)).toEqual({ paragraph: 2, offset: 0 });
     expect(cellPosition(paragraphs, 9)).toEqual({ paragraph: 2, offset: 4 });
+    expect(cellPosition(['😀가', '나'], 3)).toEqual({ paragraph: 1, offset: 0 });
   });
 });
