@@ -127,6 +127,13 @@ describe('SPEC-001 근거 하이라이트 도구 (highlight · clear_highlight)'
     expect(highlightRequests()).toHaveLength(0);
   });
 
+  it('note 길이는 앞뒤 공백을 뗀 유니코드 글자로 센다(이모지 60자·앞뒤 공백이 붙은 100자는 통과)', async () => {
+    await json('highlight', { targets: [{ id: 'b1' }], note: '😀'.repeat(60) });
+    await json('highlight', { targets: [{ id: 'b1' }], note: `  ${'가'.repeat(NOTE_MAX_CHARS)}  ` });
+
+    expect(highlightRequests().map((request) => request.params.note)).toEqual(['😀'.repeat(60), '가'.repeat(NOTE_MAX_CHARS)]);
+  });
+
   it('note 가 공백뿐이면 note 없이 그린다', async () => {
     await json('highlight', { targets: [{ id: 'b1' }], note: '   ' });
     expect(highlightRequests().at(-1)?.params).not.toHaveProperty('note');

@@ -1,6 +1,7 @@
 // MCP 도구 등록. 도구는 문서 세션을 거쳐 뷰어와 이야기한다.
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { charLength } from '../core/chars.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { NOTE_MAX_CHARS, textTargetSchema } from '../shared/protocol.ts';
 import { clearHighlight, highlight } from './highlight-tools.ts';
@@ -72,7 +73,13 @@ export function createMcpServer(session: DocumentSession): McpServer {
         '답의 근거를 뷰어에 하이라이트하고 첫 대상이 보이게 스크롤한다. 이전 하이라이트는 지운다. 대상마다 { id, cell?: { row, col }, start?, end? } — find_text 일치(before·after 뺀 것)를 그대로 넘기면 된다. start·end 가 없으면 블록 전체(표는 cell 이 없으면 표 전체, 누름틀은 값, 값이 비면 안내문). 결과는 그린 대상 수와 하이라이트가 있는 쪽',
       inputSchema: {
         targets: z.array(textTargetSchema).min(1).describe('하이라이트할 대상. 첫 대상으로 스크롤한다'),
-        note: z.string().max(NOTE_MAX_CHARS).optional().describe(`하이라이트 옆에 짧게 보일 말(${NOTE_MAX_CHARS}자까지)`),
+        note: z
+          .string()
+          .refine((note) => charLength(note.trim()) <= NOTE_MAX_CHARS, {
+            message: `note 는 앞뒤 공백을 빼고 ${NOTE_MAX_CHARS}자(유니코드 글자)까지입니다.`,
+          })
+          .optional()
+          .describe(`하이라이트 옆에 짧게 보일 말(${NOTE_MAX_CHARS}자까지)`),
       },
     },
     ({ targets, note }) => toolResult(() => highlight(session, targets, note)),
