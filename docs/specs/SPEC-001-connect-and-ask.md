@@ -1,9 +1,9 @@
 ---
 id: SPEC-001
 title: 연결과 묻기
-status: approved       # draft | approved | in-progress | done | dropped
+status: in-progress    # draft | approved | in-progress | done | dropped
 milestone: v0.1
-issue:
+issue: "#3"
 prototype:
 updated: 2026-10-26
 ---
@@ -126,3 +126,4 @@ GO 기준: 5개 문서 모두 렌더링되고, 하이라이트가 글자 위에 
 |---|---|
 | 2026-10-26 | 초안 |
 | 2026-10-26 | 승인 (PoC 라 대화로 바로 진행, 리뷰함 생략) |
+| 2026-10-26 | 이슈 분해: #3 (하위 #4 기술 검증, #5 연결, #6 읽기 도구, #7 하이라이트, #8 Desktop 확인) |
