@@ -33,10 +33,11 @@
 npm ci                 # 의존성 설치 (Node 24)
 npm run dev            # 뷰어 개발 서버 http://127.0.0.1:7791/?fixture=notice.hwpx
 npm run build          # 서버(tsc → dist/server) + 뷰어(vite → dist/viewer)
-npm start              # MCP 서버(stdio) + 뷰어 서버(7790). DOCBRIDGE_PORT 로 포트 변경
+npm start              # 빌드 결과 실행: MCP 서버(stdio) + 뷰어 서버(7790, 사용 중이면 7799 까지 다음 포트).
+                       # = node dist/server/index.js. DOCBRIDGE_PORT 로 시작 포트 변경
 npm run typecheck
-npm test               # Vitest: 블록 추출·블록 id·하이라이트 계산·서버 통합 (CI)
-npm run e2e            # 빌드 후 Playwright: 렌더링·하이라이트·측정 (로컬 전용, CI 에 없음)
+npm test               # Vitest: 블록 추출·블록 id·하이라이트 계산·요청/응답·open_document(가짜 뷰어)·서버 통합 (CI)
+npm run e2e            # 빌드 후 Playwright: 렌더링·하이라이트·측정·문서 열기·토큰 거부 (로컬 전용, CI 에 없음)
 node scripts/make-fixtures.ts   # fixtures/ 의 생성 문서 다시 만들기
 ```
 
@@ -47,13 +48,14 @@ node scripts/make-fixtures.ts   # fixtures/ 의 생성 문서 다시 만들기
 
 ```
 src/
-  server/      MCP 서버 진입점(index.ts), 도구 등록(mcp.ts), HTTP·WebSocket(bridge.ts), stderr 로그
-  shared/      서버 ↔ 뷰어 WebSocket 메시지 타입
+  server/      MCP 서버 진입점(index.ts), 도구 등록(mcp.ts), 문서 세션(session.ts: 마지막 파일·id 표·뷰어 요청 공용 경로),
+               HTTP·WebSocket(bridge.ts: 토큰·포트·요청 전달), 브라우저 열기(browser.ts), stderr 로그
+  shared/      서버 ↔ 뷰어 요청/응답 프로토콜(protocol.ts: 메시지 스키마·요청 id·타임아웃)
   core/        rhwp 어댑터 — 블록 추출(blocks.ts), 블록 id 대응표(block-ids.ts),
                하이라이트 사각형(highlight-rects.ts), Node 용 초기화(rhwp-node.ts)
   viewer/      브라우저 뷰어(Vite root). Canvas 렌더링 + 하이라이트 오버레이
 tests/         Vitest (Node 에서 rhwp WASM 을 직접 띄움)
-e2e/           Playwright (렌더링·하이라이트·측정·서버가 내주는 뷰어)
+e2e/           Playwright (렌더링·하이라이트·측정·서버가 내주는 뷰어·문서 열기)
 fixtures/      테스트용 문서와 출처(README.md)
 scripts/       fixtures 생성 스크립트
 docs/          PRD, 스펙, ADR(decisions/), 조사 자료(research/), QA 체크리스트
