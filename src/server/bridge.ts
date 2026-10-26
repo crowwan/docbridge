@@ -10,7 +10,6 @@ import {
   RequestTracker,
   responseMessageSchema,
   viewerResultSchemas,
-  type RequestMessage,
   type ViewerMethod,
   type ViewerParams,
   type ViewerResult,
@@ -195,8 +194,8 @@ export async function startBridge(options: BridgeOptions): Promise<Bridge> {
       const viewer = activeViewer();
       if (viewer === undefined) return Promise.reject(new ViewerNotConnectedError());
       const { id, promise } = tracker.start(method, (result) => viewerResultSchemas[method].parse(result));
-      const message: RequestMessage = { type: 'request', id, method, params };
-      viewer.send(JSON.stringify(message));
+      // 뷰어는 requestMessageSchema(메서드별 판별 유니언)로 읽는다
+      viewer.send(JSON.stringify({ type: 'request', id, method, params }));
       return promise;
     },
     async close() {

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { REQUEST_TIMEOUT_MS, RequestTracker } from '../src/shared/protocol.ts';
+import { answerRequest, REQUEST_TIMEOUT_MS, RequestTracker, type RequestMessage } from '../src/shared/protocol.ts';
 
 const numberResult = (result: unknown) => z.number().parse(result);
 
@@ -60,5 +60,42 @@ describe('SPEC-001 서버↔뷰어 요청/응답', () => {
 
     await expect(request.promise).rejects.toThrow('끊김');
     expect(tracker.pendingCount()).toBe(0);
+  });
+});
+
+describe('SPEC-001 뷰어의 요청 처리', () => {
+  const request = (method: string, params: unknown) => JSON.stringify({ type: 'request', id: 7, method, params });
+  const methodOf = (message: RequestMessage) => message.method;
+
+  it('요청을 메서드별 입력 모양으로 읽어 처리하고 같은 id 로 응답한다', () => {
+    const response = answerRequest(request('load_document', { fileName: '공문.hwpx', data: '' }), methodOf);
+    expect(response).toEqual({ type: 'response', id: 7, ok: true, result: 'load_document' });
+  });
+
+  it('모르는 메서드의 요청에도 같은 id 의 오류로 응답한다(서버가 타임아웃까지 기다리지 않게)', () => {
+    const response = answerRequest(request('rotate_page', {}), methodOf);
+    expect(response).toEqual({
+      type: 'response',
+      id: 7,
+      ok: false,
+      error: '뷰어가 읽을 수 없는 요청입니다(rotate_page). docbridge 를 다시 띄우고 뷰어 탭을 새로고침하세요.',
+    });
+  });
+
+  it('입력 모양이 메서드와 맞지 않는 요청에도 오류로 응답한다', () => {
+    const response = answerRequest(request('load_document', { query: '회신' }), methodOf);
+    expect(response).toMatchObject({ id: 7, ok: false });
+  });
+
+  it('처리하다 난 오류는 그 이유로 응답한다', () => {
+    const response = answerRequest(request('load_document', { fileName: 'a.hwpx', data: '' }), () => {
+      throw new Error('손상된 파일입니다');
+    });
+    expect(response).toEqual({ type: 'response', id: 7, ok: false, error: '손상된 파일입니다' });
+  });
+
+  it('요청 모양이 아닌 메시지에는 응답하지 않는다', () => {
+    expect(answerRequest('{"hello":1}', methodOf)).toBeUndefined();
+    expect(answerRequest('not json', methodOf)).toBeUndefined();
   });
 });

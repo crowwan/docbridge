@@ -7,7 +7,7 @@ import wasmUrl from '@rhwp/core/rhwp_bg.wasm?url';
 import { blockPositionSchema } from '../core/block-schema.ts';
 import { extractBlocks } from '../core/blocks.ts';
 import { selectionRects, type SelectionRect, type TextRange } from '../core/highlight-rects.ts';
-import { requestMessageSchema, type LoadDocumentResult, type ResponseMessage } from '../shared/protocol.ts';
+import { answerRequest, type LoadDocumentResult, type RequestMessage } from '../shared/protocol.ts';
 import type { RenderMetrics, ViewerApi } from './api.ts';
 
 const ZOOM = 1;
@@ -142,6 +142,13 @@ function loadDocument(fileName: string, data: string): LoadDocumentResult {
   }
 }
 
+function handleRequest(request: RequestMessage): unknown {
+  switch (request.method) {
+    case 'load_document':
+      return loadDocument(request.params.fileName, request.params.data);
+  }
+}
+
 const NOT_DOCBRIDGE_TAB = 'docbridge 가 연 탭이 아닙니다';
 const NOT_DOCBRIDGE_DETAIL = 'Claude 채팅에서 open_document 로 문서를 열면 docbridge 가 이 뷰어를 새로 띄웁니다.';
 
@@ -163,16 +170,8 @@ function connect(token: string): void {
     setStatus('연결이 끊겼습니다. Claude 채팅에서 open_document 로 다시 여세요.');
   });
   socket.addEventListener('message', (event) => {
-    const parsed = requestMessageSchema.safeParse(JSON.parse(String(event.data)));
-    if (!parsed.success) return;
-    const { id, params } = parsed.data;
-    let response: ResponseMessage;
-    try {
-      response = { type: 'response', id, ok: true, result: loadDocument(params.fileName, params.data) };
-    } catch (error) {
-      response = { type: 'response', id, ok: false, error: errorText(error) };
-    }
-    socket.send(JSON.stringify(response));
+    const response = answerRequest(String(event.data), handleRequest);
+    if (response !== undefined) socket.send(JSON.stringify(response));
   });
 }
 

@@ -19,29 +19,29 @@ export const loadDocumentResultSchema = z.object({
   blocks: z.array(blockPositionSchema),
 });
 
-export type LoadDocumentParams = z.infer<typeof loadDocumentParamsSchema>;
-export type LoadDocumentResult = z.infer<typeof loadDocumentResultSchema>;
-
-/** 서버가 뷰어에 부르는 메서드와 입력·결과 */
-export interface ViewerMethods {
+/** 서버가 뷰어에 부르는 메서드와 입력·결과 스키마 */
+export const viewerMethodSchemas = {
   /** 문서를 열어 렌더링하고 블록을 추출한다. 이전 문서는 닫는다 */
-  load_document: { params: LoadDocumentParams; result: LoadDocumentResult };
-}
-export type ViewerMethod = keyof ViewerMethods;
-export type ViewerParams<M extends ViewerMethod> = ViewerMethods[M]['params'];
-export type ViewerResult<M extends ViewerMethod> = ViewerMethods[M]['result'];
+  load_document: { params: loadDocumentParamsSchema, result: loadDocumentResultSchema },
+} as const;
 
-/** 서버가 뷰어 응답의 결과를 읽는 스키마 */
+type MethodSchemas = typeof viewerMethodSchemas;
+export type ViewerMethod = keyof MethodSchemas;
+export type ViewerParams<M extends ViewerMethod> = z.infer<MethodSchemas[M]['params']>;
+export type ViewerResult<M extends ViewerMethod> = z.infer<MethodSchemas[M]['result']>;
+export type LoadDocumentParams = ViewerParams<'load_document'>;
+export type LoadDocumentResult = ViewerResult<'load_document'>;
+
+/** 서버가 뷰어 응답의 결과를 읽는 스키마(메서드 M 의 결과 타입으로) */
 export const viewerResultSchemas: { [M in ViewerMethod]: z.ZodType<ViewerResult<M>> } = {
-  load_document: loadDocumentResultSchema,
+  load_document: viewerMethodSchemas.load_document.result,
 };
 
-export const requestMessageSchema = z.object({
-  type: z.literal('request'),
-  id: z.number(),
-  method: z.literal('load_document'),
-  params: loadDocumentParamsSchema,
-});
+const requestSchema = <M extends ViewerMethod>(method: M) =>
+  z.object({ type: z.literal('request'), id: z.number(), method: z.literal(method), params: viewerMethodSchemas[method].params });
+
+/** 뷰어가 요청을 읽는 스키마. 메서드마다 입력 모양이 다르다(메서드를 더하면 여기에도 더한다) */
+export const requestMessageSchema = z.discriminatedUnion('method', [requestSchema('load_document')]);
 export type RequestMessage = z.infer<typeof requestMessageSchema>;
 
 export const responseMessageSchema = z.union([
@@ -49,6 +49,35 @@ export const responseMessageSchema = z.union([
   z.object({ type: z.literal('response'), id: z.number(), ok: z.literal(false), error: z.string() }),
 ]);
 export type ResponseMessage = z.infer<typeof responseMessageSchema>;
+
+const unknownRequestSchema = z.object({ id: z.number(), method: z.string() });
+
+/**
+ * 뷰어가 받은 메시지를 handle 로 처리해 돌려보낼 응답을 만든다.
+ * 메서드를 모르거나 입력이 맞지 않아도 id 가 있으면 오류로 응답한다(조용히 버리면 서버가 타임아웃까지 기다린다).
+ * 요청 모양이 아니면 undefined
+ */
+export function answerRequest(raw: string, handle: (request: RequestMessage) => unknown): ResponseMessage | undefined {
+  let data: unknown;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  const parsed = requestMessageSchema.safeParse(data);
+  if (!parsed.success) {
+    const loose = unknownRequestSchema.safeParse(data);
+    if (!loose.success) return undefined;
+    const { id, method } = loose.data;
+    return { type: 'response', id, ok: false, error: `뷰어가 읽을 수 없는 요청입니다(${method}). docbridge 를 다시 띄우고 뷰어 탭을 새로고침하세요.` };
+  }
+  const { id } = parsed.data;
+  try {
+    return { type: 'response', id, ok: true, result: handle(parsed.data) };
+  } catch (error) {
+    return { type: 'response', id, ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
 
 export const timeoutMessage = (method: string, timeoutMs: number) =>
   `뷰어가 ${timeoutMs / 1000}초 안에 응답하지 않았습니다(${method}). 뷰어 탭을 확인하고 다시 시도하세요.`;
