@@ -133,7 +133,7 @@ describe('SPEC-001 MCP·뷰어 서버', () => {
     const base = `http://127.0.0.1:${bridge.port}/`;
     await expect(connectViewer(base)).rejects.toThrow(/401/);
     await expect(connectViewer(`${base}?token=wrong`)).rejects.toThrow(/401/);
-    expect(bridge.viewerCount()).toBe(0);
+    expect(bridge.hasViewer()).toBe(false);
   });
 
   it('한 연결이 잘못된 프레임을 보내도 서버는 살아 있고 다른 뷰어는 계속 요청을 받는다', async () => {
@@ -146,7 +146,7 @@ describe('SPEC-001 MCP·뷰어 서버', () => {
     healthy.respond(request.id, { pageCount: 1, blocks: [] });
 
     expect(await answered).toEqual({ pageCount: 1, blocks: [] });
-    expect(bridge.viewerCount()).toBe(1);
+    expect(bridge.hasViewer()).toBe(true);
     healthy.close();
   });
 

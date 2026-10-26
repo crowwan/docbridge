@@ -95,7 +95,7 @@ test.describe('SPEC-001 토큰 없는 연결 (서버가 내주는 뷰어)', () =
       await page.goto(`http://127.0.0.1:${bridge.port}/${query}`);
 
       await expect(page.getByRole('heading', { name: 'docbridge 가 연 탭이 아닙니다' })).toBeVisible();
-      expect(bridge.viewerCount()).toBe(0);
+      expect(bridge.hasViewer()).toBe(false);
       await page.screenshot({ path: `test-results/screens/not-docbridge-tab${query === '' ? '' : '-wrong-token'}.png` });
     });
   }

@@ -48,7 +48,6 @@ export interface Bridge {
   readonly viewerUrl: string;
   /** 뷰어가 붙으면 'connected', 요청을 받던 뷰어가 끊기면 'disconnected' */
   readonly events: EventEmitter<BridgeEvents>;
-  viewerCount(): number;
   hasViewer(): boolean;
   /** 마지막으로 붙은 뷰어에 요청을 보내고 응답을 기다린다. 뷰어가 없거나 도중에 끊기면 ViewerNotConnectedError */
   request<M extends ViewerMethod>(method: M, params: ViewerParams<M>): Promise<ViewerResult<M>>;
@@ -191,7 +190,6 @@ export async function startBridge(options: BridgeOptions): Promise<Bridge> {
     token,
     viewerUrl: `http://${HOST}:${port}/?token=${token}`,
     events,
-    viewerCount: () => viewers.length,
     hasViewer: () => viewers.length > 0,
     request(method, params) {
       const viewer = activeViewer();

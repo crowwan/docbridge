@@ -122,11 +122,3 @@ export class RequestTracker {
     return this.pending.size;
   }
 }
-
-// 기술 검증(#4)의 연결 확인용 메시지
-export interface PingMessage {
-  type: 'ping';
-  at: number;
-}
-
-export type ServerMessage = PingMessage | RequestMessage;
