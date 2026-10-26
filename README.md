@@ -47,8 +47,17 @@ npm run build
 ### Claude Code
 
 ```bash
-claude mcp add docbridge -- node /절대/경로/docbridge/dist/server/index.js
+claude mcp add docbridge -s user -- node /절대/경로/docbridge/dist/server/index.js
 ```
+
+- `-s user` 는 모든 프로젝트에서 쓰게 등록합니다. 빼면 지금 프로젝트에서만 씁니다.
+- nvm 을 쓰면 `node` 대신 `which node` 결과(절대 경로)를 넣습니다.
+- 등록은 새 세션부터 적용됩니다(`/mcp` 로 연결 상태 확인).
+- Claude Code 가 파일을 직접 읽으려 하면 "docbridge 로 열어줘"라고 하면 됩니다.
+
+### 함께 쓸 때
+
+Claude Desktop 과 Claude Code 를 동시에 쓰면 docbridge 가 각각 따로 뜹니다(포트 7790, 7791 …). 뷰어 탭도 따로라서, 한쪽에서 연 문서는 다른 쪽에서 보이지 않습니다.
 
 ## 사용
 
