@@ -25,6 +25,17 @@ function anchorOf(block: Block, partIndex: number): BlockAnchor {
 
 const anchorKey = ({ section, paragraph, part }: BlockAnchor) => `${section}:${paragraph}:${part}`;
 
+/** 블록 목록의 각 블록 위치. 누름틀은 같은 문단 안에서 몇 번째인지로 가른다 */
+function anchorsOf(blocks: Block[]): BlockAnchor[] {
+  const fieldCount = new Map<string, number>();
+  return blocks.map((block) => {
+    const at = `${block.section}:${block.paragraph}`;
+    const partIndex = fieldCount.get(at) ?? 0;
+    if (block.kind === 'field') fieldCount.set(at, partIndex + 1);
+    return anchorOf(block, partIndex);
+  });
+}
+
 export class BlockIdTable {
   private readonly anchors = new Map<string, BlockAnchor>();
   private nextNumber = 1;
@@ -32,12 +43,8 @@ export class BlockIdTable {
   /** 문서를 열 때 블록마다 b1, b2 … 를 문서 순서대로 붙인다 */
   static assign(blocks: Block[]): BlockIdTable {
     const table = new BlockIdTable();
-    const fieldCount = new Map<string, number>();
-    for (const block of blocks) {
-      const at = `${block.section}:${block.paragraph}`;
-      const partIndex = fieldCount.get(at) ?? 0;
-      if (block.kind === 'field') fieldCount.set(at, partIndex + 1);
-      table.anchors.set(`b${table.nextNumber}`, anchorOf(block, partIndex));
+    for (const anchor of anchorsOf(blocks)) {
+      table.anchors.set(`b${table.nextNumber}`, anchor);
       table.nextNumber += 1;
     }
     return table;
@@ -50,12 +57,10 @@ export class BlockIdTable {
   /** 지금 문서에서 다시 뽑은 블록 목록에 id 를 붙여 돌려준다 */
   label(blocks: Block[]): Array<{ id: string | undefined; block: Block }> {
     const idByAnchor = new Map([...this.anchors].map(([id, anchor]) => [anchorKey(anchor), id]));
-    const fieldCount = new Map<string, number>();
-    return blocks.map((block) => {
-      const at = `${block.section}:${block.paragraph}`;
-      const partIndex = fieldCount.get(at) ?? 0;
-      if (block.kind === 'field') fieldCount.set(at, partIndex + 1);
-      return { id: idByAnchor.get(anchorKey(anchorOf(block, partIndex))), block };
+    const anchors = anchorsOf(blocks);
+    return blocks.map((block, i) => {
+      const anchor = anchors[i];
+      return { id: anchor === undefined ? undefined : idByAnchor.get(anchorKey(anchor)), block };
     });
   }
 
