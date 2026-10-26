@@ -8,8 +8,10 @@ import type { DocumentSession } from './session.ts';
 export interface HighlightResult {
   /** 그린 대상 수 */
   highlighted: number;
-  /** 하이라이트가 있는 쪽(1부터, 오름차순). 첫 대상 쪽으로 스크롤했다 */
+  /** 하이라이트가 있는 모든 쪽(1부터, 오름차순). 첫 대상으로 스크롤했다 */
   pages: number[];
+  /** 그리긴 했지만 정확하지 않을 수 있는 대상(예: 빈 누름틀 안내문 자리를 못 찾음) */
+  warnings?: string[];
 }
 
 function anchored(ids: BlockIdTable, targets: TextTarget[]): AnchoredTarget[] {
@@ -23,11 +25,15 @@ function anchored(ids: BlockIdTable, targets: TextTarget[]): AnchoredTarget[] {
 
 export async function highlight(session: DocumentSession, targets: TextTarget[], note?: string): Promise<HighlightResult> {
   const trimmed = note?.trim() ?? '';
-  const { pages } = await session.requestWithDocument('highlight', (document) => ({
+  const { pages, warnings } = await session.requestWithDocument('highlight', (document) => ({
     targets: anchored(document.ids, targets),
     ...(trimmed === '' ? {} : { note: trimmed }),
   }));
-  return { highlighted: targets.length, pages: [...new Set(pages)].sort((a, b) => a - b) };
+  return {
+    highlighted: targets.length,
+    pages: [...new Set(pages)].sort((a, b) => a - b),
+    ...(warnings === undefined || warnings.length === 0 ? {} : { warnings }),
+  };
 }
 
 export async function clearHighlight(session: DocumentSession): Promise<{ cleared: true }> {

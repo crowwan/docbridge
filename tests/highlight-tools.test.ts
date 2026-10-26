@@ -1,9 +1,12 @@
 import { once } from 'node:events';
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { createBlankDocument } from '../src/core/rhwp-node.ts';
 import { startBridge, type Bridge } from '../src/server/bridge.ts';
 import { createMcpServer } from '../src/server/mcp.ts';
 import { DocumentSession } from '../src/server/session.ts';
@@ -75,6 +78,34 @@ describe('SPEC-001 근거 하이라이트 도구 (highlight · clear_highlight)'
     const targets = matches.map(({ before: _before, after: _after, ...target }) => target);
 
     expect(await json('highlight', { targets: [...targets, { id: 'b3' }] })).toEqual({ highlighted: 2, pages: [1] });
+  });
+
+  it('결과의 쪽은 대상이 걸친 모든 쪽이다(쪽을 넘는 문단, PR #14 리뷰)', async () => {
+    // 4쪽에 걸친 긴 문단 하나짜리 문서 (Node 글자 폭 근사 기준)
+    const doc = createBlankDocument();
+    doc.insertText(0, 0, 0, '가나다 '.repeat(2000));
+    const path = join(await mkdtemp(join(tmpdir(), 'docbridge-long-')), '긴 문단.hwpx');
+    await writeFile(path, doc.exportHwpx());
+    doc.free();
+    await json('open_document', { path });
+
+    expect(await json('highlight', { targets: [{ id: 'b1' }] })).toEqual({ highlighted: 1, pages: [1, 2, 3, 4] });
+  });
+
+  it('그리긴 했지만 정확하지 않을 수 있는 대상은 결과에 안내를 남긴다(안내문 없는 빈 누름틀)', async () => {
+    const doc = createBlankDocument();
+    doc.insertText(0, 0, 0, '수신 ');
+    doc.insertClickHereField(0, 0, 3, '', '', '수신', true);
+    const path = join(await mkdtemp(join(tmpdir(), 'docbridge-field-')), '빈 누름틀.hwpx');
+    await writeFile(path, doc.exportHwpx());
+    doc.free();
+    await json('open_document', { path });
+
+    expect(await json('highlight', { targets: [{ id: 'b2' }] })).toEqual({
+      highlighted: 1,
+      pages: [1],
+      warnings: ['b2: 빈 누름틀의 안내문 자리를 찾지 못해 누름틀 자리에 글자 하나 크기로 표시했습니다.'],
+    });
   });
 
   it('없는 블록 id 가 있으면 그 id 를 알려주고 아무것도 그리지 않는다', async () => {

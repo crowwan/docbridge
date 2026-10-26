@@ -5,12 +5,11 @@
 // - 둘 다 없거나 토큰이 거부되면 "docbridge 가 연 탭이 아닙니다" 화면
 import init, { HwpDocument } from '@rhwp/core';
 import wasmUrl from '@rhwp/core/rhwp_bg.wasm?url';
-import { indexOfAnchor } from '../core/block-ids.ts';
 import { blockPositionSchema, type Block } from '../core/block-schema.ts';
 import { extractBlocks } from '../core/blocks.ts';
 import { findInBlocks } from '../core/find-text.ts';
 import { selectionRects, type SelectionRect } from '../core/highlight-rects.ts';
-import { targetRects } from '../core/highlight-targets.ts';
+import { highlightTargets } from '../core/highlight-targets.ts';
 import { errorMessage } from '../shared/errors.ts';
 import {
   answerRequest,
@@ -137,13 +136,13 @@ function paintHighlights(pageEls: HTMLElement[], targets: SelectionRect[][], not
 }
 
 /** 대상을 모두 사각형으로 바꾼 뒤에 그린다. 하나라도 틀리면 이전 하이라이트를 그대로 두고 던진다 */
-function highlightTargets(params: ViewerParams<'highlight'>): ViewerResult<'highlight'> {
+function paintTargets(params: ViewerParams<'highlight'>): ViewerResult<'highlight'> {
   const doc = currentDoc;
   const blocks = openedBlocks();
   if (doc === undefined) throw new Error(NO_VIEWER_DOCUMENT);
-  const targets = params.targets.map((target) => targetRects(doc, blocks, indexOfAnchor(blocks, target.anchor), target));
-  paintHighlights(currentPageEls, targets, params.note);
-  return { pages: targets.map((rects) => (rects[0]?.pageIndex ?? 0) + 1) };
+  const { rects, pages, warnings } = highlightTargets(doc, blocks, params.targets);
+  paintHighlights(currentPageEls, rects, params.note);
+  return { pages, ...(warnings.length === 0 ? {} : { warnings }) };
 }
 
 const api: ViewerApi = {
@@ -214,7 +213,7 @@ function handleRequest(request: RequestMessage): unknown {
     case 'find_text':
       return findInBlocks(openedBlocks(), request.params.query);
     case 'highlight':
-      return highlightTargets(request.params);
+      return paintTargets(request.params);
     case 'clear_highlight':
       clearHighlights();
       return {};

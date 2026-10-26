@@ -27,10 +27,19 @@ function anchorOf(block: BlockPosition, partIndex: number): BlockAnchor {
 
 const anchorKey = ({ section, paragraph, part }: BlockAnchor) => `${section}:${paragraph}:${part}`;
 
-/** 블록 목록에서 이 위치에 있는 블록의 순서. 없으면 -1 (뷰어가 서버 id 표의 위치를 자기 블록으로 찾을 때) */
-export function indexOfAnchor(blocks: BlockPosition[], anchor: BlockAnchor): number {
-  const key = anchorKey(anchor);
-  return anchorsOf(blocks).findIndex((candidate) => anchorKey(candidate) === key);
+/**
+ * 블록 목록의 위치 → 순서 찾기. 뷰어가 서버 id 표의 위치(anchor)로 자기 블록을 찾을 때 쓴다.
+ * 위치 표는 한 번만 만들어 두고 여러 번 찾는다(요청 하나에 한 번 만든다)
+ */
+export function blockIndexByAnchor(blocks: BlockPosition[]): (anchor: BlockAnchor) => number | undefined {
+  const indexByKey = new Map(anchorsOf(blocks).map((anchor, index) => [anchorKey(anchor), index]));
+  return (anchor) => indexByKey.get(anchorKey(anchor));
+}
+
+/** 누름틀 위치의 "같은 문단 안 몇 번째 누름틀"(0부터). 누름틀 위치가 아니면 undefined */
+export function fieldOrdinal(anchor: BlockAnchor): number | undefined {
+  const match = /^field:(\d+)$/.exec(anchor.part);
+  return match?.[1] === undefined ? undefined : Number(match[1]);
 }
 
 /** 블록 목록의 각 블록 위치. 누름틀은 같은 문단 안에서 몇 번째인지로 가른다 */

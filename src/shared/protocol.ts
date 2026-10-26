@@ -59,8 +59,8 @@ export const viewerMethodSchemas = {
   get_blocks: { params: z.object({}), result: z.array(blockSchema) },
   /** 문단·표 칸에서 query 와 일치하는 위치 */
   find_text: { params: z.object({ query: z.string() }), result: z.array(textMatchSchema) },
-  /** 이전 하이라이트를 지우고 대상마다 하이라이트를 그린 뒤 첫 대상으로 스크롤한다. 결과는 대상마다 첫 사각형의 쪽(1부터) */
-  highlight: { params: highlightParamsSchema, result: z.object({ pages: z.array(z.number()) }) },
+  /** 이전 하이라이트를 지우고 대상마다 하이라이트를 그린 뒤 첫 대상으로 스크롤한다. 결과는 하이라이트가 있는 모든 쪽(1부터, 오름차순)과 정확하지 않을 수 있는 대상 안내 */
+  highlight: { params: highlightParamsSchema, result: z.object({ pages: z.array(z.number()), warnings: z.array(z.string()).optional() }) },
   /** 하이라이트를 모두 지운다 */
   clear_highlight: { params: z.object({}), result: z.object({}) },
 } as const;
