@@ -44,15 +44,19 @@ Claude 채팅 ──stdio── docbridge MCP 서버 ──WebSocket── 브�
 | `open_document` | `path` (로컬 파일 경로, `~/` 가능) | 연결된 뷰어가 없으면 기본 브라우저로 뷰어 주소를 연다(30초 안에 뷰어가 붙지 않으면 뷰어 주소와 함께 오류). 이미 연결된 뷰어가 있으면 새 탭을 열지 않고 그 탭의 문서를 바꾼다. 문서를 띄우고 문서 요약(파일 이름, 쪽 수, 블록 수)과 뷰어 주소를 돌려준다 |
 | `get_outline` | 선택 `from`(블록 id, 이어 받기) | `{ blockCount, blocks, more? }`. `blocks` 는 문서 순서대로 `{ id, kind, page, text, number?, outlineLevel?, name? }` — `kind` 는 `paragraph`(문단)·`table`(표)·`field`(누름틀), `page` 는 1부터인 쪽, `text` 는 앞 40자(넘으면 끝에 `…`, 표는 칸 텍스트를 ` \| ` 로 이은 것, 누름틀은 값), 자동 번호면 `number`(번호 문자열), 개요 문단이면 `outlineLevel`(1부터), 누름틀이면 `name`. 한 번에 500블록 |
 | `read_blocks` | `ids`(블록 id 목록) 또는 `fromPage`·`toPage`(1부터, `toPage` 없으면 한 쪽) + 선택 `from`(쪽 범위 안에서 이 id 부터). 둘 다 주거나 둘 다 없으면 오류 | `{ blocks, more? }`. `ids` 면 준 순서(중복 제거), 쪽 범위면 문서 순서. 문단 `{ id, kind, page, text, number?, outlineLevel? }`, 표 `{ id, kind, page, rowCount, colCount, cells }` — `cells` 는 칸마다 `{ row, col, text, rowLabel }`(`행,열` 은 0부터, `text` 는 칸 안 문단을 `\n` 으로 이은 것, `rowLabel` 은 같은 행 첫 칸 텍스트), 누름틀 `{ id, kind, page, name, guide, value, inTable }`. 잘린 블록은 `truncated: true` |
-| `find_text` | `query`(1자 이상, 글자 그대로 비교) | `{ query, matchCount, matches }`. 일치마다 `{ id, row?, col?, start, end, before, after }` — 표 칸 안이면 칸 `row`·`col`, `start`·`end` 는 블록(표는 칸) 텍스트 안 글자 위치(0부터, `end` 는 포함하지 않음), `before`·`after` 는 앞뒤 20자. 앞에서부터 겹치지 않게 모두 찾는다. 문단·표 칸에서 찾고 누름틀 블록은 따로 찾지 않는다(누름틀 값은 그 누름틀이 든 문단·칸 텍스트에 들어 있다) |
-| `highlight` | 블록 `id` 목록 또는 범위 목록 — 범위는 `find_text` 일치와 같은 `{ id, start, end }`(문단)·`{ id, row, col, start, end }`(표 칸), 선택 `note` | 뷰어에 하이라이트를 그리고 첫 대상으로 스크롤한다. 이전 하이라이트는 지운다 |
+| `find_text` | `query`(1자 이상, 글자 그대로 비교) | `{ query, matchCount, matches }`. 일치마다 하이라이트 대상 `TextTarget`(아래 블록 절, `start`·`end` 채움) + `before`·`after`(앞뒤 20자) — `{ id, cell?: { row, col }, start, end, before, after }`, 표 칸 안이면 `cell`. 앞에서부터 겹치지 않게 모두 찾는다. 문단·표 칸에서 찾고 누름틀 블록은 따로 찾지 않는다(누름틀 값은 그 누름틀이 든 문단·칸 텍스트에 들어 있다) |
+| `highlight` | 대상(`TextTarget`) 목록, 선택 `note` | 뷰어에 하이라이트를 그리고 첫 대상으로 스크롤한다. 이전 하이라이트는 지운다 |
 | `clear_highlight` | 없음 | 하이라이트를 모두 지운다 |
 
 ### 블록
 
 - 블록 = Claude 에게 보여주는 단위. 본문 문단 하나, 표 하나(칸은 표 안의 `행,열`), 누름틀 하나. 문서 순서는 문단 → 그 문단에 놓인 표 → 그 문단(또는 그 문단의 표 칸)에 든 누름틀.
 - 글자가 없는 빈 문단(줄 띄우기용)은 블록으로 내보내지 않는다.
-- 블록 안 글자 위치(범위)는 블록 텍스트 안 위치다. 문단은 문단 텍스트, 표는 칸 텍스트(칸 안 문단을 `\n` 으로 이은 것, `\n` 도 한 글자)를 기준으로 0부터 센다. `find_text` 결과를 `highlight` 에 그대로 넘긴다.
+- 하이라이트·찾기 공용 대상 `TextTarget` = `{ id, cell?: { row, col }, start?, end? }` (`src/shared/protocol.ts` `textTargetSchema`).
+  - `id`: 블록 id. `cell`: 표 블록일 때 칸(0부터), 표 블록인데 없으면 표 전체.
+  - `start`·`end`: 블록 텍스트 안 글자 위치, 0부터, `start` 포함·`end` 미포함. 둘 다 없으면 블록(칸) 전체.
+  - 블록 텍스트 = `read_blocks` 가 돌려주는 그 블록의 `text` 와 같은 문자열. 칸은 칸 안 문단을 `\n` 으로 이은 문자열(칸의 `text`, `\n` 도 한 글자).
+  - `find_text` 결과에서 `before`·`after` 를 뺀 것을 `highlight` 에 그대로 넘긴다.
 - 자동 번호 문자열은 뷰어가 그린 번호를 그대로 준다(개요 번호·문단 번호 모두). 번호를 직접 타이핑한 문단은 번호가 본문 텍스트에 들어 있고 번호 문자열은 비어 있다.
 - `id` 는 docbridge 가 문서를 열 때 블록마다 문서 순서대로 부여하는 짧은 문자열이다(`b12` 처럼). 서버가 id → 문서 위치(구역·문단·문단 안 표/누름틀 순서) 대응표를 기억하고, docbridge 명령으로 문단을 넣거나 지우면 대응표의 위치를 같이 옮긴다. 그래서 SPEC-002 에서 문단을 넣고 지워도 id 가 바뀌지 않는다. 문서 파일 안에는 id 를 심지 않는다. 같은 파일을 다시 열면 새로 부여한다.
 - 머리말·꼬리말·각주는 v0.1 에서 블록으로 내보내지 않는다.
@@ -143,4 +147,4 @@ GO 기준: 5개 문서 모두 렌더링되고, 하이라이트가 글자 위에 
 | 2026-10-26 | 기술 검증(#4) GO 반영: 블록 id 는 서버 대응표, 브라우저는 뷰어 없을 때만 자동으로 띄움, `.hwp` 열기 포함, 빈 문단 제외·번호 문자열·하이라이트 보정 기술 메모 (ADR 001) |
 | 2026-10-26 | 연결과 열기(#5): 포트 10개(7790~7799) 시도, 파일 50MB 상한, 뷰어 응답·연결 대기 30초, 열기 오류 문구, 미연결 오류에 "마지막 파일:" 경로 형식, 새로고침 중 요청 대기 |
 | 2026-10-26 | PR #11 리뷰: rhwp 열기 실패 시 서버도 열린 문서를 비우고 "열린 문서가 없습니다" 오류, 새로고침 때 파일이 바뀌면 id 새로 부여·사라지면 문서 비움, DOCBRIDGE_PORT 검사 |
-| 2026-10-26 | 읽기 도구(#6): `get_outline`·`read_blocks`·`find_text` 입력·출력 형식(도구 표), 블록 안 글자 위치 기준, 범위 형식 `{ id, row?, col?, start, end }` 를 `highlight` 입력과 맞춤, 누름틀은 찾기 대상에서 뺌, 잘림 안내 `more.next`·한 블록이 20,000자를 넘을 때, 없는 id 문구 |
+| 2026-10-26 | 읽기 도구(#6): `get_outline`·`read_blocks`·`find_text` 입력·출력 형식(도구 표), 블록 안 글자 위치 기준, 하이라이트·찾기 공용 대상 `TextTarget`(`{ id, cell?, start?, end? }`, #7 과 맞춤), 누름틀은 찾기 대상에서 뺌, 잘림 안내 `more.next`·한 블록이 20,000자를 넘을 때, 없는 id 문구 |

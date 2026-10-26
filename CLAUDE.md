@@ -43,6 +43,7 @@ node scripts/make-fixtures.ts   # fixtures/ 의 생성 문서 다시 만들기
 ```
 
 - 처음 E2E 를 돌릴 때 `npx playwright install chromium`
+- E2E 개발 서버 포트(기본 7792)는 `DOCBRIDGE_E2E_PORT` 로 바꾼다(워크트리 여러 개를 동시에 돌릴 때). 서버 쪽 E2E 는 빈 포트(0)를 쓴다
 - 측정 결과는 `e2e-results/metrics.json`, 스크린샷은 `test-results/screens/` (둘 다 git 에 넣지 않음)
 
 ## 폴더 구조
