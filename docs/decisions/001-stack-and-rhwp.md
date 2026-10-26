@@ -40,7 +40,7 @@ docbridge 는 Claude 채팅(MCP stdio) ↔ 로컬 서버 ↔ 브라우저 뷰어
 ### rhwp 사용 방식
 
 - `@rhwp/core` 를 직접 쓴다. `@rhwp/editor`(iframe) 는 임의 범위 하이라이트·문단 이동 RPC 가 없어서(조사 문서 3장) 쓰지 않는다. PRD 의 열린 질문 "에디터를 붙일지, core 위 최소 뷰어" 는 **core 위 최소 뷰어**로 닫는다.
-- 버전은 `package.json` 에 `0.8.7` 로 고정한다(`^` 없음). 0.8.2→0.8.7 처럼 버전마다 추출 결과가 바뀐 사례가 있어서(이슈 분석 문서), 올릴 때는 이 레포의 단위 테스트(fixture 기대값)와 E2E 를 회귀 세트로 다시 돌린다.
+- 버전은 `package.json` 에 `0.8.7` 로 고정한다(`^` 없음). 0.8.2→0.8.7 처럼 버전마다 추출 결과가 바뀐 사례가 있어서(이슈 분석 문서), 올릴 때는 이 레포의 단위 테스트(fixture 별 `get_outline` 기대 JSON `tests/outline/` 포함, #6)와 E2E 를 회귀 세트로 다시 돌린다.
 - rhwp 의 동작이 우리 기대와 다르면 docbridge 쪽 어댑터(`src/core/`)에서 보정하고, 포크·패치하지 않는다. 아래 하이라이트 보정이 그 첫 사례다.
 - 렌더링은 `renderPageToCanvas(page, canvas, devicePixelRatio)`. WASM 초기화 전에 `globalThis.measureTextWidth` 를 Canvas `measureText` 로 등록해야 한다(rhwp README 필수 설정).
 - Node(테스트·스크립트)에서는 `initSync` 로 같은 WASM 을 띄우고 글자 폭을 근사한다. 그래서 Node 의 쪽 나눔은 브라우저와 다르다(`report.hwpx`: Node 5쪽, Chromium 2쪽). 쪽 번호는 뷰어 값을 기준으로 한다.
@@ -85,10 +85,11 @@ docbridge 는 Claude 채팅(MCP stdio) ↔ 로컬 서버 ↔ 브라우저 뷰어
 | 표 | `getControls`(ctrlId `tbl`, list 0) → `getTableDimensions`·`getCellInfo`·`getTextInCell` | 된다. 칸마다 행·열·텍스트·같은 행 첫 칸. `getControls` 의 `para` 는 구역을 이어 붙인 문서 전체 번호이고, list 가 0 이 아니면 칸 안(표 안 표)이다 |
 | 누름틀 | `getFieldList`(fieldType `clickhere`) | 된다. 이름·안내문·값·표 안 여부 |
 | 개요 번호 | `getOutlineNavigation` | 된다. 단 **개요(Outline) 문단만** 준다 |
-| 문단 번호(Number) | `getPageTextLayout` 에서 문단 첫 줄 첫 run(`charStart` 0) 바로 앞에 그려진 번호 글자. 처음 찾은 값만 쓴다(다음 쪽 머리말·쪽 번호를 번호로 읽지 않게) | 된다. 번호 문자열은 문서에 저장되지 않고 렌더링 때 계산되므로, 화면에 그려진 값을 읽는다. 개요 번호도 같은 방법으로 읽고 `getOutlineNavigation` 과 같은지 테스트로 맞춰 본다 |
+| 문단 번호(Number) | `getPageTextLayout` 에서 문단 첫 줄 첫 run(`charStart` 0) 바로 앞에 그려진 번호 글자. 처음 찾은 값만 쓴다(다음 쪽 머리말·쪽 번호를 번호로 읽지 않게). 글자 배치는 번호 문단이 시작하는 쪽만 읽는다(#6) | 된다. 번호 문자열은 문서에 저장되지 않고 렌더링 때 계산되므로, 화면에 그려진 값을 읽는다. 개요 번호도 같은 방법으로 읽고 `getOutlineNavigation` 과 같은지 테스트로 맞춰 본다 |
 | 직접 타이핑한 번호("1.") | — | 본문 텍스트에 그대로 들어간다. 번호 필드는 비어 있다. 실제 공문(기안문)은 대부분 이쪽이다 |
 
 - `getStructure` 는 개요/조문 트리를 주지만 문단 번호 문자열은 없어서 쓰지 않았다.
+- `getSectionStarts` 는 구역 정의(SectionDef) 표식이 든 문단까지 구역 시작으로 센다(rhwp `hwpctrl_sets.rs` `section_starts_json`). 구역 하나에 `[0,1]` 이 나올 수 있어, 표 위치(`getControls` 의 `para`)를 구역·문단으로 나눌 때는 `getParagraphCount` 합을 쓴다(#6, 테스트).
 - 실제 기안문 서식은 머리(기관명·수신·제목)와 꼬리(발신명의·결재란·연락처)가 **표 안 누름틀**이다. 누름틀 블록이 이 정보를 준다. 결재란 칸은 표 안 표라 바깥 표 블록의 칸 텍스트에는 나오지 않는다(v0.1 범위 밖, 스펙 기술 메모).
 
 ### 하이라이트 (`src/core/highlight-rects.ts`)
