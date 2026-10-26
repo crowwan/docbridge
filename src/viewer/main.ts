@@ -155,6 +155,11 @@ function handleRequest(request: RequestMessage): unknown {
       return openedBlocks();
     case 'find_text':
       return findInBlocks(openedBlocks(), request.params.query);
+    default: {
+      // 메서드를 더하고 여기 처리를 빠뜨리면 컴파일 오류가 난다
+      const unhandled: never = request;
+      throw new Error(`처리하지 않는 요청입니다: ${String(unhandled)}`);
+    }
   }
 }
 

@@ -1,6 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { answerRequest, REQUEST_TIMEOUT_MS, RequestTracker, textTargetSchema, type RequestMessage } from '../src/shared/protocol.ts';
+import {
+  answerRequest,
+  REQUEST_TIMEOUT_MS,
+  RequestTracker,
+  requestMessageSchema,
+  textTargetSchema,
+  viewerMethodSchemas,
+  type RequestMessage,
+  type ViewerMethod,
+  type ViewerParams,
+} from '../src/shared/protocol.ts';
 
 const numberResult = (result: unknown) => z.number().parse(result);
 
@@ -63,7 +73,22 @@ describe('SPEC-001 서버↔뷰어 요청/응답', () => {
   });
 });
 
+// 메서드마다 맞는 입력 하나. 메서드를 더하고 여기를 빠뜨리면 타입 검사에서 걸린다
+const sampleParams: { [M in ViewerMethod]: ViewerParams<M> } = {
+  load_document: { fileName: '공문.hwpx', data: '' },
+  get_blocks: {},
+  find_text: { query: '회신' },
+};
+
 describe('SPEC-001 뷰어의 요청 처리', () => {
+  it('서버가 부르는 모든 메서드의 요청을 뷰어가 읽을 수 있다', () => {
+    const methods = Object.keys(viewerMethodSchemas);
+    expect(methods.sort()).toEqual(Object.keys(sampleParams).sort());
+    for (const [method, params] of Object.entries(sampleParams)) {
+      expect(requestMessageSchema.safeParse({ type: 'request', id: 1, method, params }).success).toBe(true);
+    }
+  });
+
   const request = (method: string, params: unknown) => JSON.stringify({ type: 'request', id: 7, method, params });
   const methodOf = (message: RequestMessage) => message.method;
 

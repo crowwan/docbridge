@@ -63,13 +63,25 @@ export const parseViewerResult: { [M in ViewerMethod]: (result: unknown) => View
 const requestSchema = <M extends ViewerMethod, P extends z.ZodType>(method: M, params: P) =>
   z.object({ type: z.literal('request'), id: z.number(), method: z.literal(method), params });
 
-/** 뷰어가 요청을 읽는 스키마. 메서드마다 입력 모양이 다르다(메서드를 더하면 여기에도 더한다) */
+/** 메서드별 요청 스키마. viewerMethodSchemas 의 메서드를 하나라도 빠뜨리면 satisfies 에서 컴파일 오류가 난다 */
+const requestSchemas = {
+  load_document: requestSchema('load_document', viewerMethodSchemas.load_document.params),
+  get_blocks: requestSchema('get_blocks', viewerMethodSchemas.get_blocks.params),
+  find_text: requestSchema('find_text', viewerMethodSchemas.find_text.params),
+} satisfies { [M in ViewerMethod]: z.ZodObject };
+
+/** 뷰어가 요청을 읽는 스키마. 메서드마다 입력 모양이 다르다 */
 export const requestMessageSchema = z.discriminatedUnion('method', [
-  requestSchema('load_document', viewerMethodSchemas.load_document.params),
-  requestSchema('get_blocks', viewerMethodSchemas.get_blocks.params),
-  requestSchema('find_text', viewerMethodSchemas.find_text.params),
+  requestSchemas.load_document,
+  requestSchemas.get_blocks,
+  requestSchemas.find_text,
 ]);
 export type RequestMessage = z.infer<typeof requestMessageSchema>;
+
+// 유니언에 빠진 메서드가 있으면 여기서 컴파일 오류가 난다(런타임 "읽을 수 없는 요청" 대신)
+type MissingRequestMethod = Exclude<ViewerMethod, RequestMessage['method']>;
+const everyMethodHasRequestSchema: [MissingRequestMethod] extends [never] ? true : MissingRequestMethod = true;
+void everyMethodHasRequestSchema;
 
 export const responseMessageSchema = z.union([
   z.object({ type: z.literal('response'), id: z.number(), ok: z.literal(true), result: z.unknown() }),
