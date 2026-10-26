@@ -62,7 +62,6 @@ const textLayoutSchema = z.object({
       text: z.string(),
       secIdx: z.number().optional(),
       paraIdx: z.number().optional(),
-      charStart: z.number().optional(),
       cellIdx: z.number().optional(),
     }),
   ),
@@ -109,8 +108,7 @@ function renderedNumbers(doc: HwpDocument): Map<string, string> {
         previous.paraIdx !== undefined ||
         run.paraIdx === undefined ||
         run.secIdx === undefined ||
-        run.cellIdx !== undefined ||
-        run.charStart !== 0
+        run.cellIdx !== undefined
       ) {
         return;
       }

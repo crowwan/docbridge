@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { extractBlocks, type Block, type ParagraphBlock, type TableBlock } from '../src/core/blocks.ts';
+import { createBlankDocument } from '../src/core/rhwp-node.ts';
 import { openFixture } from './fixtures.ts';
 
 const paragraphs = (blocks: Block[]) => blocks.filter((b): b is ParagraphBlock => b.kind === 'paragraph');
@@ -34,6 +35,17 @@ describe('SPEC-001 블록 추출 (기술 검증)', () => {
       ['다.', '신청 방법'],
       ['3.', '회신 기한'],
     ]);
+  });
+
+  it('번호 문단 가운데 누름틀이 있어도 번호 문자열은 번호 글자다', () => {
+    const doc = createBlankDocument();
+    doc.insertText(0, 0, 0, '수신  귀하');
+    const numberingId = doc.ensureDefaultNumbering();
+    doc.applyParaFormat(0, 0, JSON.stringify({ headType: 'Number', paraLevel: 0, numberingId }));
+    doc.insertClickHereField(0, 0, 4, '받는 곳', '', '수신', true);
+
+    const [first] = paragraphs(extractBlocks(doc));
+    expect(first?.number).toBe('1.');
   });
 
   it('개요 문단은 번호와 개요 수준을 주고, 번호는 rhwp 개요 탐색 결과와 같다', () => {
