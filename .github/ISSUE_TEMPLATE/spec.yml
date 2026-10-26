@@ -1,0 +1,28 @@
+name: 스펙
+description: 승인된 스펙 문서 하나에 대응하는 상위 이슈 (/spec-issues 가 만든다)
+title: "[SPEC-000] 기능 이름"
+labels: ["spec"]
+body:
+  - type: input
+    id: doc
+    attributes:
+      label: 스펙 문서
+      placeholder: docs/specs/SPEC-000-name.md
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: 목표
+      description: 스펙의 "배경과 목표" 요약
+    validations:
+      required: true
+  - type: textarea
+    id: criteria
+    attributes:
+      label: 수용 기준
+      description: 스펙 문서의 수용 기준을 그대로 옮긴다. 세부 구현은 sub-issue 로 나눈다.
+      value: |
+        - [ ] AC-1
+    validations:
+      required: true

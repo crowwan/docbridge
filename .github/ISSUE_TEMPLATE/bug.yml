@@ -1,0 +1,38 @@
+name: 버그
+description: 기대한 동작과 다르게 동작하는 문제
+title: "버그 요약"
+labels: ["bug"]
+body:
+  - type: textarea
+    id: steps
+    attributes:
+      label: 재현 단계
+      value: |
+        1.
+        2.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 기대 동작
+      description: 관련 스펙 AC 가 있으면 함께 적는다 (예 SPEC-002 AC-4)
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 실제 동작
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: 환경
+      placeholder: 앱 v0.1.0 / macOS 26.0 / 외장 모니터 2대
+  - type: checkboxes
+    id: regression
+    attributes:
+      label: 재발 방지
+      options:
+        - label: 재현 테스트를 먼저 작성한다 (불가능하면 docs/qa-checklist.md 에 항목 추가)

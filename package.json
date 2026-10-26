@@ -1,0 +1,9 @@
+{
+  "name": "docbridge",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Claude 채팅에서 한글(HWP/HWPX) 문서를 묻고 고치는 로컬 브리지",
+  "scripts": {
+    "build": "echo '빌드 대상 없음 (첫 구현 이슈에서 채운다)'"
+  }
+}

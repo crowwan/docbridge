@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  pull_request:
+    paths-ignore: ["docs/**", "**/*.md", ".github/ISSUE_TEMPLATE/**"]
+  push:
+    branches: [main]
+    paths-ignore: ["docs/**", "**/*.md", ".github/ISSUE_TEMPLATE/**"]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+      - name: 린트
+        run: npm run lint --if-present
+      - name: 타입 검사
+        run: npm run typecheck --if-present
+      - name: 테스트
+        run: npm test --if-present
+      - name: 빌드
+        run: npm run build
