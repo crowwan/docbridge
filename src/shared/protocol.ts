@@ -2,7 +2,8 @@
 // 서버가 요청(request)을 보내고 뷰어가 같은 id 로 응답(response)한다. 메시지는 JSON 문자열이고,
 // 받는 쪽은 아래 zod 스키마로 읽는다(타입 단언 없이).
 import { z } from 'zod';
-import { blockPositionSchema } from '../core/block-schema.ts';
+import { blockPositionSchema, blockSchema } from '../core/block-schema.ts';
+import { textMatchSchema } from '../core/find-text.ts';
 
 /** 뷰어가 이 시간 안에 응답하지 않으면 요청을 실패로 끝낸다 */
 export const REQUEST_TIMEOUT_MS = 30_000;
@@ -23,6 +24,10 @@ export const loadDocumentResultSchema = z.object({
 export const viewerMethodSchemas = {
   /** 문서를 열어 렌더링하고 블록을 추출한다. 이전 문서는 닫는다 */
   load_document: { params: loadDocumentParamsSchema, result: loadDocumentResultSchema },
+  /** 열린 문서의 블록 전문(문서 순서). 열 때 뽑아 둔 것 */
+  get_blocks: { params: z.object({}), result: z.array(blockSchema) },
+  /** 문단·표 칸에서 query 와 일치하는 위치 */
+  find_text: { params: z.object({ query: z.string() }), result: z.array(textMatchSchema) },
 } as const;
 
 type MethodSchemas = typeof viewerMethodSchemas;
@@ -32,16 +37,22 @@ export type ViewerResult<M extends ViewerMethod> = z.infer<MethodSchemas[M]['res
 export type LoadDocumentParams = ViewerParams<'load_document'>;
 export type LoadDocumentResult = ViewerResult<'load_document'>;
 
-/** 서버가 뷰어 응답의 결과를 읽는 스키마(메서드 M 의 결과 타입으로) */
-export const viewerResultSchemas: { [M in ViewerMethod]: z.ZodType<ViewerResult<M>> } = {
-  load_document: viewerMethodSchemas.load_document.result,
+/** 서버가 뷰어 응답의 결과를 메서드 M 의 결과 타입으로 읽는다 */
+export const parseViewerResult: { [M in ViewerMethod]: (result: unknown) => ViewerResult<M> } = {
+  load_document: (result) => viewerMethodSchemas.load_document.result.parse(result),
+  get_blocks: (result) => viewerMethodSchemas.get_blocks.result.parse(result),
+  find_text: (result) => viewerMethodSchemas.find_text.result.parse(result),
 };
 
-const requestSchema = <M extends ViewerMethod>(method: M) =>
-  z.object({ type: z.literal('request'), id: z.number(), method: z.literal(method), params: viewerMethodSchemas[method].params });
+const requestSchema = <M extends ViewerMethod, P extends z.ZodType>(method: M, params: P) =>
+  z.object({ type: z.literal('request'), id: z.number(), method: z.literal(method), params });
 
 /** 뷰어가 요청을 읽는 스키마. 메서드마다 입력 모양이 다르다(메서드를 더하면 여기에도 더한다) */
-export const requestMessageSchema = z.discriminatedUnion('method', [requestSchema('load_document')]);
+export const requestMessageSchema = z.discriminatedUnion('method', [
+  requestSchema('load_document', viewerMethodSchemas.load_document.params),
+  requestSchema('get_blocks', viewerMethodSchemas.get_blocks.params),
+  requestSchema('find_text', viewerMethodSchemas.find_text.params),
+]);
 export type RequestMessage = z.infer<typeof requestMessageSchema>;
 
 export const responseMessageSchema = z.union([

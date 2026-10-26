@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { startBridge, type Bridge } from '../src/server/bridge.ts';
 import { createMcpServer } from '../src/server/mcp.ts';
 import { DocumentSession, MAX_FILE_BYTES, VIEWER_CONNECT_TIMEOUT_MS } from '../src/server/session.ts';
-import { FakeViewer, paragraphBlocks } from './fake-viewer.ts';
+import { FakeViewer, loadParams, paragraphBlocks } from './fake-viewer.ts';
 import { fixturePath } from './fixtures.ts';
 
 const toolResultSchema = z.object({
@@ -84,8 +84,8 @@ describe('SPEC-001 문서 열기 (open_document)', () => {
     const [result, request] = await Promise.all([callOpen(path), answerNextLoad(viewer, 1, 14)]);
 
     expect(request.method).toBe('load_document');
-    expect(request.params.fileName).toBe(fileName);
-    expect(Buffer.from(request.params.data, 'base64')).toEqual(await readFile(fixturePath(fixture)));
+    expect(loadParams(request).fileName).toBe(fileName);
+    expect(Buffer.from(loadParams(request).data, 'base64')).toEqual(await readFile(fixturePath(fixture)));
     expect(result.isError).toBeUndefined();
     expect(openResultSchema.parse(JSON.parse(result.content[0]?.text ?? ''))).toEqual({
       fileName,
@@ -116,7 +116,7 @@ describe('SPEC-001 문서 열기 (open_document)', () => {
     const [second, request] = await Promise.all([callOpen(fixturePath('report.hwpx')), answerNextLoad(viewer, 2, 30)]);
 
     expect(openBrowser).not.toHaveBeenCalled();
-    expect(request.params.fileName).toBe('report.hwpx');
+    expect(loadParams(request).fileName).toBe('report.hwpx');
     expect(openResultSchema.parse(JSON.parse(second.content[0]?.text ?? ''))).toMatchObject({
       fileName: 'report.hwpx',
       pageCount: 2,
@@ -221,8 +221,8 @@ describe('SPEC-001 문서 열기 (open_document)', () => {
     const request = await answerNextLoad(reloaded, 1, 14);
     await session.ready();
 
-    expect(request.params.fileName).toBe('notice.hwpx');
-    expect(Buffer.from(request.params.data, 'base64')).toEqual(await readFile(path));
+    expect(loadParams(request).fileName).toBe('notice.hwpx');
+    expect(Buffer.from(loadParams(request).data, 'base64')).toEqual(await readFile(path));
     expect(openBrowser).not.toHaveBeenCalled();
     expect(session.document?.ids).toBe(idsBefore);
     expect(session.document?.ids.label(paragraphBlocks(14)).map(({ id }) => id)).toEqual(labelsBefore);
@@ -263,7 +263,7 @@ describe('SPEC-001 문서 열기 (open_document)', () => {
     await raced.ready();
 
     expect(raced.document?.fileName).toBe('report.hwpx');
-    expect(reloaded.history.at(-1)?.params.fileName).toBe('report.hwpx');
+    expect(loadParams(reloaded.history.at(-1)).fileName).toBe('report.hwpx');
   });
 
   it('새 파일을 rhwp 가 읽지 못하면 서버도 열린 문서를 비우고, 새로고침해도 이전 문서를 되살리지 않는다', async () => {

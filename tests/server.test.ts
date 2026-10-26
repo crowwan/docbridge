@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { z } from 'zod';
 import { PORT_ATTEMPTS, startBridge, type Bridge } from '../src/server/bridge.ts';
-import { FakeViewer, paragraphBlocks } from './fake-viewer.ts';
+import { FakeViewer, loadParams, paragraphBlocks } from './fake-viewer.ts';
 import { fixturePath } from './fixtures.ts';
 
 const serverEntry = fileURLToPath(new URL('../src/server/index.ts', import.meta.url));
@@ -118,7 +118,7 @@ describe('SPEC-001 MCP·뷰어 서버', () => {
     viewer.respond(request.id, { pageCount: 1, blocks: paragraphBlocks(14) });
     const result = toolResultSchema.parse(await opening);
 
-    expect(request.params.fileName).toBe('notice.hwpx');
+    expect(loadParams(request).fileName).toBe('notice.hwpx');
     expect(openResultSchema.parse(JSON.parse(result.content[0]?.text ?? ''))).toEqual({
       fileName: 'notice.hwpx',
       pageCount: 1,

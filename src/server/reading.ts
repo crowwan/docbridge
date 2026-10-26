@@ -215,3 +215,20 @@ export function readBlocks(blocks: LabeledBlock[], selection: BlockSelection): R
     .join(' ');
   return { blocks: sent, more: { message, ...(next ? { next } : {}) } };
 }
+
+export interface ReadBlocksArgs {
+  ids?: string[] | undefined;
+  fromPage?: number | undefined;
+  toPage?: number | undefined;
+  from?: string | undefined;
+}
+
+/** read_blocks 인자를 고르는 방법 하나(ids 또는 쪽 범위)로 바꾼다. toPage 가 없으면 fromPage 한 쪽 */
+export function selectionFrom({ ids, fromPage, toPage, from }: ReadBlocksArgs): BlockSelection {
+  if (ids !== undefined && (fromPage !== undefined || toPage !== undefined)) {
+    throw new Error('ids 와 쪽 범위(fromPage·toPage) 중 하나만 주세요.');
+  }
+  if (ids !== undefined) return { ids };
+  if (fromPage === undefined) throw new Error('읽을 블록을 ids 나 fromPage(·toPage) 로 정하세요.');
+  return { fromPage, toPage: toPage ?? fromPage, ...(from === undefined ? {} : { from }) };
+}

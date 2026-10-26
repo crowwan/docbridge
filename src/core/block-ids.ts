@@ -2,7 +2,7 @@
 // rhwp 의 문단 주소는 (구역, 문단) 위치 인덱스뿐이고 편집하면 뒤 번호가 밀린다
 // (rhwp-code-analysis 2-6). 그래서 문서를 열 때 블록마다 짧은 id 를 붙이고,
 // docbridge 가 문단을 넣거나 지울 때마다 대응표의 위치를 같이 옮긴다.
-import type { BlockPosition } from './block-schema.ts';
+import type { BlockPosition, TextBlockPosition } from './block-schema.ts';
 
 export type { BlockPosition } from './block-schema.ts';
 
@@ -54,6 +54,13 @@ export class BlockIdTable {
 
   anchor(id: string): BlockAnchor | undefined {
     return this.anchors.get(id);
+  }
+
+  /** 문단·표 블록 위치의 id. 누름틀은 같은 문단 안 순서가 필요해 label 로 붙인다 */
+  idOf(position: TextBlockPosition): string | undefined {
+    const key = anchorKey(anchorOf(position, 0));
+    for (const [id, anchor] of this.anchors) if (anchorKey(anchor) === key) return id;
+    return undefined;
   }
 
   /** 지금 문서에서 다시 뽑은 블록 목록에 id 를 붙여 돌려준다 */
