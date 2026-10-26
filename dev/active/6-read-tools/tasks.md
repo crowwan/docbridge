@@ -11,3 +11,15 @@
 - [x] 새 테스트 실제 실패 확인(대상 줄 바꾸기, 스냅샷 값 바꾸기, 뷰어 find 핸들러 바꿔 재빌드 E2E) [✅]
 - [x] PR #12 + CI 통과 [✅ 2026-10-26 17:20]
 - [x] 조율자 요청: TextTarget 공용 스키마(148f259 푸시), 스펙 기준 문구, DOCBRIDGE_E2E_PORT [✅ 2026-10-26 17:35]
+
+## PR #12 1차 리뷰 반영 (2026-10-26)
+
+- [x] 🟡5 뷰어 메서드 완전성 컴파일 검사·보내는 요청 RequestMessage — f7b73b7 (먼저 push, #7 rebase 용)
+- [x] .gitignore .claude/worktrees/ — 1c2aab0
+- [x] 🔴1 read_blocks 인자 검사(fromPage>toPage·쪽 수 밖·0 이하·ids+from) — 24ecfc4
+- [x] 🔴2 20,000자 한도에 rowLabel·누름틀 name/guide·번호까지 — 6fdf160
+- [x] 🟡3 번호가 다음 쪽에 그려진 문단 대비 — 87d02d7
+- [x] 🟡4 idOf 역맵 — 23f39cd
+- [x] 🟡6 DOCBRIDGE_E2E_PORT portFromEnv — b1446b2
+- [x] 🟡7 shared/errors.ts — 8089364
+- 넘김(조율자 메모): UTF-16 vs 코드포인트(#7), 블록 캐시(SPEC-002)
