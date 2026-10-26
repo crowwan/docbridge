@@ -6,6 +6,7 @@ import type { AddressInfo } from 'node:net';
 import { extname, join, normalize } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { ServerMessage } from '../shared/protocol.ts';
+import { log } from './log.ts';
 
 const HOST = '127.0.0.1';
 
@@ -63,7 +64,13 @@ export async function startBridge(options: BridgeOptions): Promise<Bridge> {
   const wss = new WebSocketServer({ noServer: true });
   const viewers = new Set<WebSocket>();
 
+  // 연결 하나의 오류(잘못된 프레임, 연결 끊김 등)가 'error' 이벤트로 새어 나가면
+  // 듣는 곳이 없어 MCP 서버 프로세스 전체가 죽는다. 로그를 남기고 그 연결만 정리한다.
   http.on('upgrade', (req, socket, head) => {
+    socket.on('error', (error) => {
+      log(`뷰어 연결 소켓 오류: ${error.message}`);
+      socket.destroy();
+    });
     if (tokenOf(req.url) !== token) {
       socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n');
       return;
@@ -71,6 +78,11 @@ export async function startBridge(options: BridgeOptions): Promise<Bridge> {
     wss.handleUpgrade(req, socket, head, (ws) => {
       viewers.add(ws);
       ws.on('close', () => viewers.delete(ws));
+      ws.on('error', (error) => {
+        log(`뷰어 WebSocket 오류: ${error.message}`);
+        viewers.delete(ws);
+        ws.terminate();
+      });
     });
   });
 

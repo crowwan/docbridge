@@ -1,4 +1,6 @@
+import { randomBytes } from 'node:crypto';
 import { mkdtemp, writeFile } from 'node:fs/promises';
+import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,6 +25,38 @@ function connectViewer(url: string): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     ws.once('open', () => resolve(ws));
     ws.once('error', reject);
+  });
+}
+
+// ws 라이브러리를 거치지 않고 손으로 WebSocket 핸드셰이크를 한 뒤 잘못된 프레임을 보낸다.
+// 연결이 닫히면(서버가 그 연결만 정리하면) 풀린다.
+function sendMalformedFrame(port: number, token: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(port, '127.0.0.1');
+    socket.once('error', reject);
+    socket.once('connect', () => {
+      socket.write(
+        [
+          `GET /?token=${token} HTTP/1.1`,
+          `Host: 127.0.0.1:${port}`,
+          'Upgrade: websocket',
+          'Connection: Upgrade',
+          `Sec-WebSocket-Key: ${randomBytes(16).toString('base64')}`,
+          'Sec-WebSocket-Version: 13',
+          '',
+          '',
+        ].join('\r\n'),
+      );
+    });
+    socket.once('data', (response) => {
+      if (!String(response).startsWith('HTTP/1.1 101')) {
+        reject(new Error(`핸드셰이크 실패: ${String(response)}`));
+        return;
+      }
+      // FIN + 예약된 opcode 0x3, 마스크 켬, 길이 0, 마스크 키 4바이트
+      socket.write(Buffer.from([0x83, 0x80, 1, 2, 3, 4]));
+    });
+    socket.once('close', () => resolve());
   });
 }
 
@@ -69,6 +103,19 @@ describe('SPEC-001 MCP·뷰어 서버 동시 구동 (기술 검증)', () => {
     await expect(connectViewer(base)).rejects.toThrow(/401/);
     await expect(connectViewer(`${base}?token=wrong`)).rejects.toThrow(/401/);
     expect(bridge.viewerCount()).toBe(0);
+  });
+
+  it('한 연결이 잘못된 프레임을 보내도 서버는 살아 있고 다른 뷰어는 계속 메시지를 받는다', async () => {
+    bridge = await startBridge({ port: 0, viewerDir: tmpdir() });
+    const healthy = await connectViewer(bridge.viewerUrl);
+
+    await sendMalformedFrame(bridge.port, bridge.token);
+    const received = nextMessage(healthy);
+    bridge.broadcast({ type: 'ping', at: 1 });
+
+    expect(await received).toEqual({ type: 'ping', at: 1 });
+    expect(bridge.viewerCount()).toBe(1);
+    healthy.close();
   });
 
   it('뷰어 페이지와 WASM 파일을 127.0.0.1 에서 알맞은 형식으로 내준다', async () => {
