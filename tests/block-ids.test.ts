@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BlockIdTable } from '../src/core/block-ids.ts';
+import { blockPositionSchema } from '../src/core/block-schema.ts';
 import { extractBlocks, type Block } from '../src/core/blocks.ts';
 import { openFixture } from './fixtures.ts';
 
@@ -29,6 +30,14 @@ describe('SPEC-001 블록 id (기술 검증)', () => {
     const labeled = BlockIdTable.assign(blocks).label(blocks);
     expect(labeled.slice(0, 3).map(({ id }) => id)).toEqual(['b1', 'b2', 'b3']);
     expect(labeled.every(({ id }) => id !== undefined)).toBe(true);
+  });
+
+  it('블록에서 id 를 붙일 위치만 뽑는다(표는 컨트롤 번호까지)', () => {
+    const blocks = extractBlocks(openFixture('notice.hwpx'));
+    const positions = blocks.map((block) => blockPositionSchema.parse(block));
+    expect(positions[0]).toEqual({ kind: 'paragraph', section: 0, paragraph: 0 });
+    expect(positions.find((p) => p.kind === 'table')).toEqual({ kind: 'table', section: 0, paragraph: 11, controlIndex: 0 });
+    expect(positions.find((p) => p.kind === 'field')).toEqual({ kind: 'field', section: 0, paragraph: 1 });
   });
 
   it('문단을 넣어도 기존 블록의 id 는 같은 내용을 가리킨다', () => {

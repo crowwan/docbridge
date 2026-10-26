@@ -2,13 +2,9 @@
 // rhwp 의 문단 주소는 (구역, 문단) 위치 인덱스뿐이고 편집하면 뒤 번호가 밀린다
 // (rhwp-code-analysis 2-6). 그래서 문서를 열 때 블록마다 짧은 id 를 붙이고,
 // docbridge 가 문단을 넣거나 지울 때마다 대응표의 위치를 같이 옮긴다.
-import type { FieldBlock, ParagraphBlock, TableBlock } from './blocks.ts';
+import type { BlockPosition } from './block-schema.ts';
 
-/** id 를 붙이는 데 필요한 블록 위치. 뷰어가 서버에 이것만 보낸다 */
-export type BlockPosition =
-  | Pick<ParagraphBlock, 'kind' | 'section' | 'paragraph'>
-  | Pick<TableBlock, 'kind' | 'section' | 'paragraph' | 'controlIndex'>
-  | Pick<FieldBlock, 'kind' | 'section' | 'paragraph'>;
+export type { BlockPosition } from './block-schema.ts';
 
 export interface BlockAnchor {
   section: number;

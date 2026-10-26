@@ -2,16 +2,10 @@
 // 서버가 요청(request)을 보내고 뷰어가 같은 id 로 응답(response)한다. 메시지는 JSON 문자열이고,
 // 받는 쪽은 아래 zod 스키마로 읽는다(타입 단언 없이).
 import { z } from 'zod';
+import { blockPositionSchema } from '../core/block-schema.ts';
 
 /** 뷰어가 이 시간 안에 응답하지 않으면 요청을 실패로 끝낸다 */
 export const REQUEST_TIMEOUT_MS = 30_000;
-
-// 블록 id 표를 만드는 데 필요한 블록 위치(core/block-ids.ts 의 BlockPosition)
-export const blockPositionSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('paragraph'), section: z.number(), paragraph: z.number() }),
-  z.object({ kind: z.literal('table'), section: z.number(), paragraph: z.number(), controlIndex: z.number() }),
-  z.object({ kind: z.literal('field'), section: z.number(), paragraph: z.number() }),
-]);
 
 export const loadDocumentParamsSchema = z.object({
   fileName: z.string(),

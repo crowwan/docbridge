@@ -4,8 +4,8 @@
 // - 둘 다 없거나 토큰이 거부되면 "docbridge 가 연 탭이 아닙니다" 화면
 import init, { HwpDocument } from '@rhwp/core';
 import wasmUrl from '@rhwp/core/rhwp_bg.wasm?url';
-import type { BlockPosition } from '../core/block-ids.ts';
-import { extractBlocks, type Block } from '../core/blocks.ts';
+import { blockPositionSchema } from '../core/block-schema.ts';
+import { extractBlocks } from '../core/blocks.ts';
 import { selectionRects, type SelectionRect, type TextRange } from '../core/highlight-rects.ts';
 import { requestMessageSchema, type LoadDocumentResult, type ResponseMessage } from '../shared/protocol.ts';
 import type { RenderMetrics, ViewerApi } from './api.ts';
@@ -119,11 +119,6 @@ function showDocument(bytes: Uint8Array, fileName: string): { doc: HwpDocument; 
   return { doc, parseMs, pageRenderMs };
 }
 
-const positionOf = (block: Block): BlockPosition =>
-  block.kind === 'table'
-    ? { kind: 'table', section: block.section, paragraph: block.paragraph, controlIndex: block.controlIndex }
-    : { kind: block.kind, section: block.section, paragraph: block.paragraph };
-
 function base64ToBytes(data: string): Uint8Array {
   const binary = atob(data);
   const bytes = new Uint8Array(binary.length);
@@ -134,7 +129,7 @@ function base64ToBytes(data: string): Uint8Array {
 function loadDocument(fileName: string, data: string): LoadDocumentResult {
   try {
     const { doc } = showDocument(base64ToBytes(data), fileName);
-    return { pageCount: doc.pageCount(), blocks: extractBlocks(doc).map(positionOf) };
+    return { pageCount: doc.pageCount(), blocks: extractBlocks(doc).map((block) => blockPositionSchema.parse(block)) };
   } catch (error) {
     currentDoc?.free();
     currentDoc = undefined;

@@ -1,53 +1,10 @@
-// 문서를 Claude 에게 보여줄 블록(본문 문단·표·누름틀) 목록으로 바꾼다.
-// 기술 검증(#4)용 프로토타입: rhwp 공개 API 만으로 블록을 뽑을 수 있는지 확인한다.
+// 문서를 Claude 에게 보여줄 블록(본문 문단·표·누름틀) 목록으로 바꾼다. rhwp 공개 API 만 쓴다.
 import type { HwpDocument } from '@rhwp/core';
 import { z } from 'zod';
+import type { Block, FieldBlock, ParagraphBlock, TableBlock } from './block-schema.ts';
 
-export interface ParagraphBlock {
-  kind: 'paragraph';
-  section: number;
-  paragraph: number;
-  /** 1부터 시작하는 쪽 번호 */
-  page: number;
-  text: string;
-  /** 자동 번호(문단 번호·개요 번호) 문단이면 화면에 그려지는 번호 문자열 */
-  number?: string;
-  /** 개요 문단이면 개요 수준(1부터) */
-  outlineLevel?: number;
-}
+export type { Block, FieldBlock, ParagraphBlock, TableBlock, TableCell } from './block-schema.ts';
 
-export interface TableCell {
-  row: number;
-  col: number;
-  text: string;
-  /** 같은 행 첫 칸의 텍스트(칸 라벨) */
-  rowLabel: string;
-}
-
-export interface TableBlock {
-  kind: 'table';
-  section: number;
-  /** 표를 품은 본문 문단 */
-  paragraph: number;
-  controlIndex: number;
-  page: number;
-  rowCount: number;
-  colCount: number;
-  cells: TableCell[];
-}
-
-export interface FieldBlock {
-  kind: 'field';
-  section: number;
-  /** 누름틀이 있는 본문 문단(표 안이면 표를 품은 문단) */
-  paragraph: number;
-  name: string;
-  guide: string;
-  value: string;
-  inTable: boolean;
-}
-
-export type Block = ParagraphBlock | TableBlock | FieldBlock;
 
 const controlsSchema = z.array(
   z.object({ ctrlId: z.string(), list: z.number(), para: z.number(), controlIndex: z.number() }),
@@ -209,6 +166,7 @@ function fieldsByParagraph(doc: HwpDocument): Map<string, FieldBlock[]> {
       kind: 'field',
       section,
       paragraph,
+      page: pageOf(doc, section, paragraph),
       name: field.name,
       guide: field.guide,
       value: field.value,
