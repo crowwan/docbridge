@@ -9,6 +9,7 @@ import {
   readBlocks,
   selectionFrom,
   type LabeledBlock,
+  type ReadBlock,
 } from '../src/server/reading.ts';
 import { openFixture } from './fixtures.ts';
 
@@ -19,6 +20,20 @@ const paragraphs = (count: number, text = '문단', page = (i: number) => i + 1)
   labeled(
     Array.from({ length: count }, (_, i) => ({ kind: 'paragraph' as const, section: 0, paragraph: i, page: page(i), text })),
   );
+
+/** 실제로 내보내는 글자 필드(id·kind 같은 구조 값 제외)의 길이 합 */
+function sentTextLength(blocks: ReadBlock[]): number {
+  return blocks.reduce((sum, block) => {
+    switch (block.kind) {
+      case 'paragraph':
+        return sum + block.text.length + (block.number?.length ?? 0);
+      case 'table':
+        return sum + block.cells.reduce((cellSum, cell) => cellSum + cell.text.length + cell.rowLabel.length, 0);
+      case 'field':
+        return sum + block.name.length + block.guide.length + block.value.length;
+    }
+  }, 0);
+}
 
 const noticeBlocks = () => {
   const blocks = extractBlocks(openFixture('notice.hwpx'));
@@ -179,19 +194,52 @@ describe('SPEC-001 블록 읽기 (read_blocks)', () => {
     });
   });
 
-  it('큰 표 하나가 20,000자를 넘으면 들어가는 칸까지만 보낸다', () => {
-    const cells = Array.from({ length: 30 }, (_, i) => ({ row: i, col: 0, text: '가'.repeat(1_000), rowLabel: '가'.repeat(1_000) }));
+  it('큰 표 하나가 20,000자를 넘으면 들어가는 칸까지만 보낸다(칸마다 반복되는 라벨도 센다)', () => {
+    // 칸마다 text 1,000자 + rowLabel 1,000자 = 2,000자, 30칸이면 60,000자
+    const cells = Array.from({ length: 30 }, (_, i) => ({ row: i, col: 1, text: '가'.repeat(1_000), rowLabel: '나'.repeat(1_000) }));
     const blocks = labeled([
-      { kind: 'table', section: 0, paragraph: 0, controlIndex: 0, page: 1, rowCount: 30, colCount: 1, cells },
+      { kind: 'table', section: 0, paragraph: 0, controlIndex: 0, page: 1, rowCount: 30, colCount: 2, cells },
     ]);
 
     const result = readBlocks(blocks, { ids: ['b1'] });
 
     const [read] = result.blocks;
-    expect(read?.kind === 'table' ? read.cells : []).toHaveLength(20);
+    expect(read?.kind === 'table' ? read.cells : []).toHaveLength(10);
     expect(read).toMatchObject({ truncated: true });
-    expect(result.more?.message).toBe('b1: 30,000자 중 앞 20,000자만 보냈습니다.');
+    expect(result.more?.message).toBe('b1: 60,000자 중 앞 20,000자만 보냈습니다.');
     expect(result.more?.next).toBeUndefined();
+    expect(sentTextLength(result.blocks)).toBeLessThanOrEqual(READ_CHAR_LIMIT);
+  });
+
+  it('보내는 글자(문단 번호, 칸 라벨, 누름틀 이름·안내문·값)를 모두 세어 20,000자를 넘기지 않는다', () => {
+    const table = Array.from({ length: 4 }, (_, i) => ({
+      kind: 'table' as const,
+      section: 0,
+      paragraph: i,
+      controlIndex: 0,
+      page: 1,
+      rowCount: 10,
+      colCount: 2,
+      cells: Array.from({ length: 10 }, (_, r) => ({ row: r, col: 1, text: '가'.repeat(100), rowLabel: '나'.repeat(200) })),
+    }));
+    const fields = Array.from({ length: 10 }, (_, i) => ({
+      kind: 'field' as const,
+      section: 0,
+      paragraph: 10 + i,
+      page: 1,
+      name: '이'.repeat(500),
+      guide: '안'.repeat(500),
+      value: '값'.repeat(100),
+      inTable: false,
+    }));
+    const blocks = labeled([...table, ...fields]);
+
+    const result = readBlocks(blocks, { ids: blocks.map(({ id }) => id) });
+
+    // 표 4개 × 3,000자 = 12,000, 누름틀 하나 1,100자 → 7개까지 19,700자
+    expect(result.blocks.map((b) => b.kind)).toEqual([...Array(4).fill('table'), ...Array(7).fill('field')]);
+    expect(sentTextLength(result.blocks)).toBe(19_700);
+    expect(result.more?.next).toEqual({ ids: ['b12', 'b13', 'b14'] });
   });
 });
 

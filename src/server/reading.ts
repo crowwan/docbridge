@@ -4,7 +4,7 @@ import type { Block, TableCell } from '../core/block-schema.ts';
 
 /** get_outline 한 번에 보내는 블록 수 */
 export const OUTLINE_LIMIT = 500;
-/** read_blocks 한 번에 보내는 글자 수(문단 텍스트·칸 텍스트·누름틀 값) */
+/** read_blocks 한 번에 보내는 글자 수(문단 텍스트·번호, 칸 텍스트·라벨, 누름틀 이름·안내문·값) */
 export const READ_CHAR_LIMIT = 20_000;
 /** 개요에 보여주는 앞부분 글자 수 */
 export const PREVIEW_CHARS = 40;
@@ -126,15 +126,20 @@ function readBlock({ id, block }: LabeledBlock): ReadBlock {
   }
 }
 
-/** 글자 수 한도에 세는 글자: 문단 텍스트, 칸 텍스트, 누름틀 값 */
+const cellLength = (cell: TableCell) => cell.text.length + cell.rowLabel.length;
+
+/**
+ * 글자 수 한도에 세는 글자: 실제로 내보내는 글자 필드 전부(id·kind 같은 구조 값은 빼고).
+ * 문단 텍스트·번호, 칸 텍스트와 칸마다 반복되는 라벨, 누름틀 이름·안내문·값
+ */
 function charCount(block: ReadBlock): number {
   switch (block.kind) {
     case 'paragraph':
-      return block.text.length;
+      return block.text.length + (block.number?.length ?? 0);
     case 'table':
-      return block.cells.reduce((sum, cell) => sum + cell.text.length, 0);
+      return block.cells.reduce((sum, cell) => sum + cellLength(cell), 0);
     case 'field':
-      return block.value.length;
+      return block.name.length + block.guide.length + block.value.length;
   }
 }
 
@@ -142,22 +147,28 @@ function charCount(block: ReadBlock): number {
 function cutToLimit(block: ReadBlock, limit: number): ReadBlock {
   switch (block.kind) {
     case 'paragraph':
-      return { ...block, text: block.text.slice(0, limit), truncated: true };
+      return { ...block, text: block.text.slice(0, Math.max(0, limit - (block.number?.length ?? 0))), truncated: true };
     case 'table': {
       const cells: TableCell[] = [];
       let used = 0;
       for (const cell of block.cells) {
-        if (used + cell.text.length > limit) {
-          if (cells.length === 0) cells.push({ ...cell, text: cell.text.slice(0, limit) });
+        if (used + cellLength(cell) > limit) {
+          if (cells.length === 0) {
+            const rowLabel = cell.rowLabel.slice(0, limit);
+            cells.push({ ...cell, rowLabel, text: cell.text.slice(0, limit - rowLabel.length) });
+          }
           break;
         }
         cells.push(cell);
-        used += cell.text.length;
+        used += cellLength(cell);
       }
       return { ...block, cells, truncated: true };
     }
-    case 'field':
-      return { ...block, value: block.value.slice(0, limit), truncated: true };
+    case 'field': {
+      const name = block.name.slice(0, limit);
+      const guide = block.guide.slice(0, limit - name.length);
+      return { ...block, name, guide, value: block.value.slice(0, limit - name.length - guide.length), truncated: true };
+    }
   }
 }
 
