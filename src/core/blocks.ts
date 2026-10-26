@@ -50,7 +50,7 @@ export interface FieldBlock {
 export type Block = ParagraphBlock | TableBlock | FieldBlock;
 
 const controlsSchema = z.array(
-  z.object({ ctrlId: z.string(), para: z.number(), controlIndex: z.number() }),
+  z.object({ ctrlId: z.string(), list: z.number(), para: z.number(), controlIndex: z.number() }),
 );
 const pageOfPositionSchema = z.object({ page: z.number() });
 const tableDimensionsSchema = z.object({ rowCount: z.number(), colCount: z.number(), cellCount: z.number() });
@@ -169,6 +169,7 @@ function readTable(doc: HwpDocument, section: number, paragraph: number, control
 }
 
 // getControls 의 para 는 구역을 이어 붙인 문서 전체 문단 번호다.
+// list 0 이 본문이고, 그 밖의 list 는 표 칸·글상자 안이다(표 안 표는 바깥 표 블록에 속한다).
 function tablesByParagraph(doc: HwpDocument): Map<string, number[]> {
   const sectionStarts: number[] = [];
   let total = 0;
@@ -178,7 +179,7 @@ function tablesByParagraph(doc: HwpDocument): Map<string, number[]> {
   }
   const tables = new Map<string, number[]>();
   for (const control of parse(controlsSchema, doc.getControls())) {
-    if (control.ctrlId !== 'tbl') continue;
+    if (control.ctrlId !== 'tbl' || control.list !== 0) continue;
     const section = sectionStarts.findLastIndex((start) => start <= control.para);
     const key = positionKey(section, control.para - (sectionStarts[section] ?? 0));
     tables.set(key, [...(tables.get(key) ?? []), control.controlIndex]);
