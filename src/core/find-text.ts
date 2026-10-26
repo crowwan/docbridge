@@ -9,9 +9,8 @@ export const CONTEXT_CHARS = 20;
 
 export const textMatchSchema = z.object({
   block: textBlockPositionSchema,
-  /** 표 칸 안 일치면 칸 좌표(0부터) */
-  row: z.number().optional(),
-  col: z.number().optional(),
+  /** 표 칸 안 일치면 칸(0부터) */
+  cell: z.object({ row: z.number(), col: z.number() }).optional(),
   start: z.number(),
   end: z.number(),
   before: z.string(),
@@ -51,7 +50,7 @@ export function findInBlocks(blocks: Block[], query: string): TextMatch[] {
       case 'table': {
         const position = textBlockPositionSchema.parse(block);
         return block.cells.flatMap(({ row, col, text }) =>
-          matchesIn(text, query).map((range) => ({ block: position, row, col, ...range })),
+          matchesIn(text, query).map((range) => ({ block: position, cell: { row, col }, ...range })),
         );
       }
       case 'field':

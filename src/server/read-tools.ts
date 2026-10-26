@@ -2,19 +2,11 @@
 import type { Block } from '../core/block-schema.ts';
 import type { BlockIdTable } from '../core/block-ids.ts';
 import { outline, readBlocks, type BlockSelection, type LabeledBlock, type OutlineResult, type ReadResult } from './reading.ts';
+import type { TextTarget } from '../shared/protocol.ts';
 import { NO_DOCUMENT, type DocumentSession } from './session.ts';
 
-export interface FoundText {
-  id: string;
-  /** 표 칸 안 일치면 칸 좌표(0부터) */
-  row?: number;
-  col?: number;
-  /** 블록(표는 칸) 텍스트 안 글자 위치. 끝은 포함하지 않는다 */
-  start: number;
-  end: number;
-  before: string;
-  after: string;
-}
+/** 찾은 곳: 하이라이트에 그대로 넘기는 대상(start·end 채움) + 앞뒤 20자 */
+export type FoundText = TextTarget & { start: number; end: number; before: string; after: string };
 
 export interface FindResult {
   query: string;
@@ -47,10 +39,10 @@ export async function readBlockContents(session: DocumentSession, selection: Blo
 export async function findText(session: DocumentSession, query: string): Promise<FindResult> {
   const found = await session.requestViewer('find_text', { query });
   const ids = idTable(session);
-  const matches = found.flatMap(({ block, row, col, start, end, before, after }): FoundText[] => {
+  const matches = found.flatMap(({ block, cell, start, end, before, after }): FoundText[] => {
     const id = ids.idOf(block);
     if (id === undefined) return [];
-    return [{ id, ...(row === undefined ? {} : { row }), ...(col === undefined ? {} : { col }), start, end, before, after }];
+    return [{ id, ...(cell === undefined ? {} : { cell }), start, end, before, after }];
   });
   return { query, matchCount: matches.length, matches };
 }

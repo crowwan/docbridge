@@ -8,6 +8,7 @@ import type { Block } from '../src/core/block-schema.ts';
 import { startBridge, type Bridge } from '../src/server/bridge.ts';
 import { createMcpServer } from '../src/server/mcp.ts';
 import { DocumentSession } from '../src/server/session.ts';
+import { textTargetSchema } from '../src/shared/protocol.ts';
 import { FakeViewer } from './fake-viewer.ts';
 import { fixturePath } from './fixtures.ts';
 import { rhwpViewerHandler } from './rhwp-viewer.ts';
@@ -54,8 +55,7 @@ const findSchema = z.object({
   matches: z.array(
     z.object({
       id: z.string(),
-      row: z.number().optional(),
-      col: z.number().optional(),
+      cell: z.object({ row: z.number(), col: z.number() }).optional(),
       start: z.number(),
       end: z.number(),
       before: z.string(),
@@ -207,7 +207,18 @@ describe('SPEC-001 문서 구조 읽기 도구 (get_outline · read_blocks · fi
       expect(match.before).toBe(text.slice(Math.max(0, match.start - 20), match.start));
       expect(match.after).toBe(text.slice(match.end, match.end + 20));
     }
-    expect(cell.matches).toEqual([{ id: tableId, row: 2, col: 2, start: 5, end: 8, before: '구민회관 ', after: '' }]);
+    expect(cell.matches).toEqual([{ id: tableId, cell: { row: 2, col: 2 }, start: 5, end: 8, before: '구민회관 ', after: '' }]);
+  });
+
+  it('find_text 일치에서 앞뒤 문맥을 뺀 id·cell·start·end 는 하이라이트 대상(TextTarget) 형식 그대로다', async () => {
+    await openWithRhwp('notice.hwpx');
+
+    const found = findSchema.parse(await json('find_text', { query: '구민회관' }));
+
+    expect(found.matchCount).toBeGreaterThan(0);
+    for (const { before: _before, after: _after, ...target } of found.matches) {
+      expect(textTargetSchema.parse(target)).toEqual(target);
+    }
   });
 
   it('get_outline 결과가 500블록을 넘으면 잘라서 돌려주고 from 으로 이어 받는 방법을 알려준다', async () => {

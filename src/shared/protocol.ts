@@ -5,6 +5,22 @@ import { z } from 'zod';
 import { blockPositionSchema, blockSchema } from '../core/block-schema.ts';
 import { textMatchSchema } from '../core/find-text.ts';
 
+/**
+ * 하이라이트·찾기 공용 대상(#6 find_text 결과, #7 highlight 입력).
+ * 글자 위치는 read_blocks 가 돌려주는 블록 text(표는 칸 안 문단을 \n 으로 이은 칸 text) 기준이다.
+ */
+export const textTargetSchema = z.object({
+  /** 블록 id */
+  id: z.string(),
+  /** 표 블록일 때 칸(0부터). 표 블록인데 없으면 표 전체 */
+  cell: z.object({ row: z.number().int().min(0), col: z.number().int().min(0) }).optional(),
+  /** 블록(또는 칸) 텍스트 안 시작 글자 위치. 0부터, 포함 */
+  start: z.number().int().min(0).optional(),
+  /** 끝 글자 위치, 미포함. start·end 둘 다 없으면 블록(칸) 전체 */
+  end: z.number().int().min(0).optional(),
+});
+export type TextTarget = z.infer<typeof textTargetSchema>;
+
 /** 뷰어가 이 시간 안에 응답하지 않으면 요청을 실패로 끝낸다 */
 export const REQUEST_TIMEOUT_MS = 30_000;
 

@@ -70,7 +70,7 @@ test.describe('SPEC-001 문서 구조 읽기 도구 (서버가 내주는 뷰어)
     expect(outline.blocks.find((b) => b.id === match?.id)?.number).toBe('3.');
     expect(match).toMatchObject({ start: 0, end: 5, before: '' });
     expect(cell.matches).toEqual([
-      { id: outline.blocks.find((b) => b.kind === 'table')?.id, row: 2, col: 2, start: 5, end: 8, before: '구민회관 ', after: '' },
+      { id: outline.blocks.find((b) => b.kind === 'table')?.id, cell: { row: 2, col: 2 }, start: 5, end: 8, before: '구민회관 ', after: '' },
     ]);
   });
 });

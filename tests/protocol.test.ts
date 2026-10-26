@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { answerRequest, REQUEST_TIMEOUT_MS, RequestTracker, type RequestMessage } from '../src/shared/protocol.ts';
+import { answerRequest, REQUEST_TIMEOUT_MS, RequestTracker, textTargetSchema, type RequestMessage } from '../src/shared/protocol.ts';
 
 const numberResult = (result: unknown) => z.number().parse(result);
 
@@ -97,5 +97,23 @@ describe('SPEC-001 뷰어의 요청 처리', () => {
   it('요청 모양이 아닌 메시지에는 응답하지 않는다', () => {
     expect(answerRequest('{"hello":1}', methodOf)).toBeUndefined();
     expect(answerRequest('not json', methodOf)).toBeUndefined();
+  });
+});
+
+describe('SPEC-001 하이라이트·찾기 공용 대상 (TextTarget)', () => {
+  it('블록 id 만, 표 칸, 블록(칸) 안 범위를 대상으로 읽는다', () => {
+    expect(textTargetSchema.parse({ id: 'b3' })).toEqual({ id: 'b3' });
+    expect(textTargetSchema.parse({ id: 'b12', cell: { row: 2, col: 2 }, start: 5, end: 8 })).toEqual({
+      id: 'b12',
+      cell: { row: 2, col: 2 },
+      start: 5,
+      end: 8,
+    });
+  });
+
+  it('음수나 소수 글자 위치·칸 좌표는 받지 않는다', () => {
+    expect(textTargetSchema.safeParse({ id: 'b1', start: -1, end: 2 }).success).toBe(false);
+    expect(textTargetSchema.safeParse({ id: 'b1', start: 0.5 }).success).toBe(false);
+    expect(textTargetSchema.safeParse({ id: 'b1', cell: { row: -1, col: 0 } }).success).toBe(false);
   });
 });

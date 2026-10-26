@@ -55,8 +55,7 @@ describe('SPEC-001 글자 찾기 (find_text)', () => {
     expect(matches).toEqual([
       {
         block: { kind: 'table', section: 0, paragraph: 11, controlIndex: 0 },
-        row: 2,
-        col: 2,
+        cell: { row: 2, col: 2 },
         start: 5,
         end: 8,
         before: '구민회관 ',

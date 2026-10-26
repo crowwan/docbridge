@@ -56,7 +56,7 @@ export function createMcpServer(session: DocumentSession): McpServer {
     'find_text',
     {
       description:
-        '문단·표 칸에서 글자를 찾는다(대소문자·띄어쓰기 그대로). 일치마다 블록 id, 표 칸이면 row·col, 블록(칸) 텍스트 안 start·end(0부터, end 미포함), 앞뒤 20자(before·after). 범위는 highlight 에 그대로 넘길 수 있다',
+        '문단·표 칸에서 글자를 찾는다(대소문자·띄어쓰기 그대로). 일치마다 { id, cell?: { row, col }, start, end, before, after } — 표 칸이면 cell(0부터), start·end 는 read_blocks 의 블록 text(표는 칸 text) 안 글자 위치(0부터, end 미포함), before·after 는 앞뒤 20자. id·cell·start·end 는 highlight 대상으로 그대로 넘긴다',
       inputSchema: { query: z.string().min(1).describe('찾을 글자') },
     },
     ({ query }) => toolResult(() => findText(session, query)),
