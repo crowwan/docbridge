@@ -43,7 +43,7 @@ Claude 채팅 ──stdio── docbridge MCP 서버 ──WebSocket── 브�
 |---|---|---|
 | `open_document` | `path` (로컬 파일 경로, `~/` 가능) | 연결된 뷰어가 없으면 기본 브라우저로 뷰어 주소를 연다(30초 안에 뷰어가 붙지 않으면 뷰어 주소와 함께 오류). 이미 연결된 뷰어가 있으면 새 탭을 열지 않고 그 탭의 문서를 바꾼다. 문서를 띄우고 문서 요약(파일 이름, 쪽 수, 블록 수)과 뷰어 주소를 돌려준다 |
 | `get_outline` | 선택 `from`(블록 id, 이어 받기) | `{ blockCount, blocks, more? }`. `blocks` 는 문서 순서대로 `{ id, kind, page, text, number?, outlineLevel?, name? }` — `kind` 는 `paragraph`(문단)·`table`(표)·`field`(누름틀), `page` 는 1부터인 쪽, `text` 는 앞 40자(넘으면 끝에 `…`, 표는 칸 텍스트를 ` \| ` 로 이은 것, 누름틀은 값), 자동 번호면 `number`(번호 문자열), 개요 문단이면 `outlineLevel`(1부터), 누름틀이면 `name`. 한 번에 500블록 |
-| `read_blocks` | `ids`(블록 id 목록) 또는 `fromPage`·`toPage`(1부터, `toPage` 없으면 한 쪽) + 선택 `from`(쪽 범위 안에서 이 id 부터). 둘 다 주거나 둘 다 없으면 오류 | `{ blocks, more? }`. `ids` 면 준 순서(중복 제거), 쪽 범위면 문서 순서. 문단 `{ id, kind, page, text, number?, outlineLevel? }`, 표 `{ id, kind, page, rowCount, colCount, cells }` — `cells` 는 칸마다 `{ row, col, text, rowLabel }`(`행,열` 은 0부터, `text` 는 칸 안 문단을 `\n` 으로 이은 것, `rowLabel` 은 같은 행 첫 칸 텍스트), 누름틀 `{ id, kind, page, name, guide, value, inTable }`. 잘린 블록은 `truncated: true` |
+| `read_blocks` | `ids`(블록 id 목록) 또는 `fromPage`·`toPage`(1부터, `toPage` 없으면 한 쪽) + 선택 `from`(쪽 범위 안에서 이 id 부터). 잘못된 조합·범위는 오류(예외 절) | `{ blocks, more? }`. `ids` 면 준 순서(중복 제거), 쪽 범위면 문서 순서. 문단 `{ id, kind, page, text, number?, outlineLevel? }`, 표 `{ id, kind, page, rowCount, colCount, cells }` — `cells` 는 칸마다 `{ row, col, text, rowLabel }`(`행,열` 은 0부터, `text` 는 칸 안 문단을 `\n` 으로 이은 것, `rowLabel` 은 같은 행 첫 칸 텍스트), 누름틀 `{ id, kind, page, name, guide, value, inTable }`. 잘린 블록은 `truncated: true` |
 | `find_text` | `query`(1자 이상, 글자 그대로 비교) | `{ query, matchCount, matches }`. 일치마다 하이라이트 대상 `TextTarget`(아래 블록 절, `start`·`end` 채움) + `before`·`after`(앞뒤 20자) — `{ id, cell?: { row, col }, start, end, before, after }`, 표 칸 안이면 `cell`. 앞에서부터 겹치지 않게 모두 찾는다. 문단·표 칸에서 찾고 누름틀 블록은 따로 찾지 않는다(누름틀 값은 그 누름틀이 든 문단·칸 텍스트에 들어 있다) |
 | `highlight` | 대상(`TextTarget`) 목록, 선택 `note` | 뷰어에 하이라이트를 그리고 첫 대상으로 스크롤한다. 이전 하이라이트는 지운다 |
 | `clear_highlight` | 없음 | 하이라이트를 모두 지운다 |
@@ -79,6 +79,13 @@ Claude 채팅 ──stdio── docbridge MCP 서버 ──WebSocket── 브�
   - **50MB** 를 넘는 파일: "파일이 너무 큽니다(<크기>MB). 50MB 까지 열 수 있습니다."
   - rhwp 가 읽지 못하면(손상, 암호, 배포용 문서) "문서를 열 수 없습니다: <rhwp 가 준 이유>" 를 돌려주고, 뷰어에는 "문서를 열 수 없습니다" 오류 화면(파일 이름과 이유)을 보여준다. 이전 문서는 닫힌다(서버도 열린 문서를 비운다). 그 뒤 문서가 필요한 도구는 "열린 문서가 없습니다. open_document 로 문서를 여세요." 를 돌려주고, 탭을 새로고침해도 이전 문서를 다시 띄우지 않는다.
 - **없는 블록 id**: "없는 블록 id 입니다: b77, b88. get_outline 을 다시 불러 지금 블록 id 를 확인하세요." (`read_blocks` 의 `ids`·`from`, `get_outline` 의 `from`)
+- **`read_blocks` 인자 오류**: 빈 결과로 돌려주지 않고 오류로 거부한다(빈 결과면 "그 쪽은 비었다"로 읽힌다).
+  - 고를 방법이 없음(`toPage` 만 준 경우 포함): "읽을 블록을 ids 나 fromPage(·toPage) 로 정하세요."
+  - `ids` 와 쪽 범위를 같이: "ids 와 쪽 범위(fromPage·toPage) 중 하나만 주세요."
+  - `ids` 와 `from` 을 같이: "from 은 쪽 범위(fromPage·toPage)와 함께만 씁니다. ids 로 이어 읽을 때는 more.next 의 ids 를 그대로 주세요."
+  - 0 이하 쪽: "쪽 번호는 1부터입니다(fromPage: 0)." (`toPage` 도 같다)
+  - `fromPage` > `toPage`: "fromPage(5)가 toPage(2)보다 뒤입니다. fromPage 는 toPage 보다 작거나 같아야 합니다."
+  - 문서 쪽 수 밖: "이 문서는 3쪽까지입니다(toPage: 9)." (쪽 수는 뷰어 조판 기준, `open_document` 결과의 쪽 수)
 - **큰 문서**: `get_outline` 은 블록 500개, `read_blocks` 는 한 번에 글자 20,000자까지(문단 텍스트·칸 텍스트·누름틀 값을 센다). 넘으면 결과에 `more: { message, next }` 를 붙인다. `next` 는 다음에 같은 도구를 부를 인자 그대로다 — `get_outline` 은 `{ from: "b501" }`, `read_blocks` 는 남은 `{ ids }` 또는 `{ fromPage, toPage, from }`. 예: "블록이 620개라 1~500번째만 보냈습니다. 나머지는 get_outline 을 from: "b501" 로 다시 부르세요." / "글자가 20,000자를 넘어 블록 50개 중 20개만 보냈습니다. 나머지는 read_blocks 를 more.next 의 인자로 다시 부르세요."
   - `read_blocks` 는 넘기 전 블록까지 보낸다. 첫 블록이 혼자 20,000자를 넘으면 그 블록을 잘라(문단은 앞 20,000자, 표는 들어가는 칸까지) `truncated: true` 로 보내고 "b7: 25,000자 중 앞 20,000자만 보냈습니다." 를 붙인다. 잘린 블록의 나머지는 v0.1 에서 이어 받지 못한다(`find_text` 로 위치를 찾아 문맥을 본다).
 - **토큰 없는 연결**: 뷰어 주소에 세션 토큰이 없거나 틀리면 WebSocket 연결을 거부(HTTP 401)하고 "docbridge 가 연 탭이 아닙니다" 화면을 보여준다. 서버를 다시 띄우면 토큰이 바뀌므로 이전 탭도 이 화면이 된다.

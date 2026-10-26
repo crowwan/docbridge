@@ -7,6 +7,7 @@ import {
   READ_CHAR_LIMIT,
   outline,
   readBlocks,
+  selectionFrom,
   type LabeledBlock,
 } from '../src/server/reading.ts';
 import { openFixture } from './fixtures.ts';
@@ -191,5 +192,29 @@ describe('SPEC-001 블록 읽기 (read_blocks)', () => {
     expect(read).toMatchObject({ truncated: true });
     expect(result.more?.message).toBe('b1: 30,000자 중 앞 20,000자만 보냈습니다.');
     expect(result.more?.next).toBeUndefined();
+  });
+});
+
+describe('SPEC-001 블록 읽기 인자 검사 (read_blocks)', () => {
+  const PAGES = 3;
+
+  it.each([
+    [{}, '읽을 블록을 ids 나 fromPage(·toPage) 로 정하세요.'],
+    [{ toPage: 2 }, '읽을 블록을 ids 나 fromPage(·toPage) 로 정하세요.'],
+    [{ ids: ['b1'], fromPage: 1 }, 'ids 와 쪽 범위(fromPage·toPage) 중 하나만 주세요.'],
+    [{ ids: ['b1'], from: 'b2' }, 'from 은 쪽 범위(fromPage·toPage)와 함께만 씁니다. ids 로 이어 읽을 때는 more.next 의 ids 를 그대로 주세요.'],
+    [{ fromPage: 0 }, '쪽 번호는 1부터입니다(fromPage: 0).'],
+    [{ fromPage: 1, toPage: 0 }, '쪽 번호는 1부터입니다(toPage: 0).'],
+    [{ fromPage: 3, toPage: 2 }, 'fromPage(3)가 toPage(2)보다 뒤입니다. fromPage 는 toPage 보다 작거나 같아야 합니다.'],
+    [{ fromPage: 5 }, '이 문서는 3쪽까지입니다(fromPage: 5).'],
+    [{ fromPage: 2, toPage: 9 }, '이 문서는 3쪽까지입니다(toPage: 9).'],
+  ])('잘못된 조합·쪽 범위 %j 는 빈 결과 대신 분명한 오류로 거부한다', (args, message) => {
+    expect(() => selectionFrom(args, PAGES)).toThrow(message);
+  });
+
+  it('맞는 인자는 고르는 방법 하나로 바꾼다(toPage 가 없으면 fromPage 한 쪽)', () => {
+    expect(selectionFrom({ ids: ['b1'] }, PAGES)).toEqual({ ids: ['b1'] });
+    expect(selectionFrom({ fromPage: 2 }, PAGES)).toEqual({ fromPage: 2, toPage: 2 });
+    expect(selectionFrom({ fromPage: 1, toPage: 3, from: 'b4' }, PAGES)).toEqual({ fromPage: 1, toPage: 3, from: 'b4' });
   });
 });

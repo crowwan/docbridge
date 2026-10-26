@@ -223,12 +223,28 @@ export interface ReadBlocksArgs {
   from?: string | undefined;
 }
 
-/** read_blocks 인자를 고르는 방법 하나(ids 또는 쪽 범위)로 바꾼다. toPage 가 없으면 fromPage 한 쪽 */
-export function selectionFrom({ ids, fromPage, toPage, from }: ReadBlocksArgs): BlockSelection {
-  if (ids !== undefined && (fromPage !== undefined || toPage !== undefined)) {
-    throw new Error('ids 와 쪽 범위(fromPage·toPage) 중 하나만 주세요.');
+/**
+ * read_blocks 인자를 고르는 방법 하나(ids 또는 쪽 범위)로 바꾼다. toPage 가 없으면 fromPage 한 쪽.
+ * 잘못된 조합·쪽 범위는 빈 결과로 돌려주지 않고 오류로 거부한다(빈 결과면 Claude 가 "그 쪽은 비었다"고 읽는다)
+ */
+export function selectionFrom({ ids, fromPage, toPage, from }: ReadBlocksArgs, pageCount: number): BlockSelection {
+  if (ids !== undefined) {
+    if (fromPage !== undefined || toPage !== undefined) throw new Error('ids 와 쪽 범위(fromPage·toPage) 중 하나만 주세요.');
+    if (from !== undefined) {
+      throw new Error('from 은 쪽 범위(fromPage·toPage)와 함께만 씁니다. ids 로 이어 읽을 때는 more.next 의 ids 를 그대로 주세요.');
+    }
+    return { ids };
   }
-  if (ids !== undefined) return { ids };
   if (fromPage === undefined) throw new Error('읽을 블록을 ids 나 fromPage(·toPage) 로 정하세요.');
-  return { fromPage, toPage: toPage ?? fromPage, ...(from === undefined ? {} : { from }) };
+  const lastPage = toPage ?? fromPage;
+  for (const [name, page] of [['fromPage', fromPage], ['toPage', lastPage]] as const) {
+    if (page < 1) throw new Error(`쪽 번호는 1부터입니다(${name}: ${page}).`);
+  }
+  if (fromPage > lastPage) {
+    throw new Error(`fromPage(${fromPage})가 toPage(${lastPage})보다 뒤입니다. fromPage 는 toPage 보다 작거나 같아야 합니다.`);
+  }
+  for (const [name, page] of [['fromPage', fromPage], ['toPage', lastPage]] as const) {
+    if (page > pageCount) throw new Error(`이 문서는 ${pageCount}쪽까지입니다(${name}: ${page}).`);
+  }
+  return { fromPage, toPage: lastPage, ...(from === undefined ? {} : { from }) };
 }

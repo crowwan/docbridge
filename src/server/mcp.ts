@@ -2,7 +2,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { findText, getOutline, readBlockContents } from './read-tools.ts';
-import { OUTLINE_LIMIT, READ_CHAR_LIMIT, selectionFrom } from './reading.ts';
+import { OUTLINE_LIMIT, READ_CHAR_LIMIT } from './reading.ts';
 import type { DocumentSession } from './session.ts';
 
 const text = (value: string) => ({ content: [{ type: 'text' as const, text: value }] });
@@ -44,12 +44,12 @@ export function createMcpServer(session: DocumentSession): McpServer {
       description: `블록 전문을 읽는다. ids 또는 쪽 범위(fromPage~toPage)로 고른다. 문단은 text, 표는 cells(칸마다 row·col(0부터)·text·rowLabel=같은 행 첫 칸), 누름틀은 name·guide·value. 한 번에 ${READ_CHAR_LIMIT.toLocaleString('en-US')}자까지이고 넘으면 more.next 를 인자로 다시 부른다`,
       inputSchema: {
         ids: z.array(z.string()).min(1).optional().describe('읽을 블록 id 목록(get_outline·find_text 의 id)'),
-        fromPage: z.number().int().min(1).optional().describe('이 쪽부터(1부터)'),
-        toPage: z.number().int().min(1).optional().describe('이 쪽까지. 없으면 fromPage 한 쪽'),
+        fromPage: z.number().int().optional().describe('이 쪽부터(1부터)'),
+        toPage: z.number().int().optional().describe('이 쪽까지(fromPage 이상, 문서 쪽 수 이하). 없으면 fromPage 한 쪽'),
         from: z.string().optional().describe('쪽 범위 안에서 이 블록 id 부터(이어 받기)'),
       },
     },
-    (args) => toolResult(() => readBlockContents(session, selectionFrom(args))),
+    (args) => toolResult(() => readBlockContents(session, args)),
   );
 
   server.registerTool(

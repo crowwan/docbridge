@@ -190,6 +190,21 @@ describe('SPEC-001 문서 구조 읽기 도구 (get_outline · read_blocks · fi
     );
   });
 
+  it('read_blocks 는 문서 밖·거꾸로 된 쪽 범위와 ids+from 을 빈 결과 대신 오류로 거부한다', async () => {
+    await openWithRhwp('notice.hwpx');
+
+    const rejected = async (args: Record<string, unknown>) => {
+      const result = await call('read_blocks', args);
+      expect(result.isError).toBe(true);
+      return result.content[0]?.text;
+    };
+
+    expect(await rejected({ fromPage: 0 })).toBe('쪽 번호는 1부터입니다(fromPage: 0).');
+    expect(await rejected({ fromPage: 2 })).toBe('이 문서는 1쪽까지입니다(fromPage: 2).');
+    expect(await rejected({ fromPage: 1, toPage: 0 })).toBe('쪽 번호는 1부터입니다(toPage: 0).');
+    expect(await rejected({ ids: ['b1'], from: 'b2' })).toMatch(/^from 은 쪽 범위/);
+  });
+
   it('find_text 는 일치하는 모든 위치의 블록 id·범위·앞뒤 20자를 돌려준다(표 칸 안은 칸 좌표까지)', async () => {
     await openWithRhwp('notice.hwpx');
     const outline = outlineSchema.parse(await json('get_outline'));
