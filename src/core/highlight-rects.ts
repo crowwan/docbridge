@@ -68,6 +68,7 @@ function cellAccess(doc: HwpDocument, section: number, cell: CellLocation): Para
     length: (p) => doc.getCellParagraphLength(section, pp, ci, cellIndex, p),
     lineInfo: (p, o) => doc.getLineInfoInCell(section, pp, ci, cellIndex, p, o),
     caret: (p, o) => doc.getCursorRectInCell(section, pp, ci, cellIndex, p, o),
+    // 칸 경로면 rhwp 는 para_idx 를 쓰지 않고 칸 문맥(pp, ci, cellIndex, 칸 문단)만 본다 (rhwp def947c src/document_core/queries/cursor_nav.rs:492-517, 1058-1097)
     lineStartCaret: (p, line) => doc.getCursorRectOnLine(section, p, line, false, pp, ci, cellIndex, p),
   };
 }
@@ -106,7 +107,13 @@ export function selectionRects(doc: HwpDocument, range: TextRange): SelectionRec
     const start = starts[i];
     if (start === undefined || !start.atLineStart) return rect;
     const caret = caretSchema.parse(JSON.parse(access.lineStartCaret(start.paragraph, start.lineIndex)));
-    if (caret.pageIndex !== rect.pageIndex || caret.x <= rect.x) return rect;
-    return { ...rect, x: caret.x, width: rect.x + rect.width - caret.x };
+    return alignLeftToCaret(rect, caret);
   });
+}
+
+/** 사각형 왼쪽을 줄 첫 글자 캐럿에 맞춘다. 캐럿이 사각형 안쪽(왼쪽 끝과 오른쪽 끝 사이)일 때만 바꾼다 */
+export function alignLeftToCaret(rect: SelectionRect, caret: { pageIndex: number; x: number }): SelectionRect {
+  const right = rect.x + rect.width;
+  if (caret.pageIndex !== rect.pageIndex || caret.x <= rect.x || caret.x >= right) return rect;
+  return { ...rect, x: caret.x, width: right - caret.x };
 }

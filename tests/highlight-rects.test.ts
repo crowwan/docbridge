@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { selectionRects } from '../src/core/highlight-rects.ts';
+import { alignLeftToCaret, selectionRects } from '../src/core/highlight-rects.ts';
 import { openFixture } from './fixtures.ts';
 
 const caretX = (json: string) => z.object({ x: z.number() }).parse(JSON.parse(json)).x;
@@ -44,5 +44,12 @@ describe('SPEC-001 하이라이트 사각형 (기술 검증)', () => {
     });
     expect(rects).toHaveLength(1);
     expect(rects[0]?.width).toBeGreaterThan(0);
+  });
+
+  it('캐럿이 사각형 오른쪽 끝이거나 그보다 오른쪽이면 사각형을 바꾸지 않는다(폭이 0 이하가 되지 않는다)', () => {
+    const rect = { pageIndex: 0, x: 100, y: 10, width: 50, height: 13 };
+    expect(alignLeftToCaret(rect, { pageIndex: 0, x: 150 })).toEqual(rect);
+    expect(alignLeftToCaret(rect, { pageIndex: 0, x: 170 })).toEqual(rect);
+    expect(alignLeftToCaret(rect, { pageIndex: 0, x: 120 })).toEqual({ ...rect, x: 120, width: 30 });
   });
 });
