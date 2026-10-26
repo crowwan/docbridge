@@ -1,16 +1,4 @@
-:root {
-  --bg: #e9e9ec;
-  --surface: #ffffff;
-  --text: #1d1d1f;
-  --muted: #5f5f66;
-  --highlight: rgb(255 214 0 / 45%);
-  --space-2: 8px;
-  --space-4: 16px;
-  --space-8: 32px;
-  --radius: 8px;
-  --page-shadow: 0 1px 3px rgb(0 0 0 / 18%);
-}
-
+/* 뷰어 화면. 값은 tokens.css 의 토큰만 쓴다 */
 * {
   box-sizing: border-box;
 }
@@ -19,7 +7,9 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 14px/1.5 system-ui, sans-serif;
+  font-family: var(--font-sans);
+  font-size: var(--text-size);
+  line-height: var(--text-line-height);
 }
 
 .toolbar {
@@ -36,7 +26,7 @@ body {
 
 .toolbar h1 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--title-size);
 }
 
 .toolbar p {
@@ -69,8 +59,23 @@ body {
   pointer-events: none;
 }
 
+.highlight-note {
+  position: absolute;
+  z-index: 1;
+  max-width: var(--note-max-width);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--note-bg);
+  color: var(--note-fg);
+  box-shadow: var(--page-shadow);
+  font-size: var(--note-font-size);
+  line-height: var(--note-line-height);
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+
 .notice {
-  max-width: 480px;
+  max-width: var(--notice-max-width);
   margin: var(--space-8) auto;
   padding: var(--space-4);
   background: var(--surface);
@@ -84,7 +89,7 @@ body {
 
 .notice h2 {
   margin: 0 0 var(--space-2);
-  font-size: 16px;
+  font-size: var(--title-size);
 }
 
 .notice p {

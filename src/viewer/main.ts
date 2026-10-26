@@ -1,15 +1,24 @@
-// docbridge 뷰어: @rhwp/core 로 문서를 Canvas 에 그리고, getSelectionRects(왼쪽 끝 보정) 로 하이라이트를 겹친다.
+// docbridge 뷰어: @rhwp/core 로 문서를 Canvas 에 그리고, getSelectionRects(줄 끝 보정) 로 하이라이트와 note 를 겹친다.
+// 하이라이트는 쪽 요소 안에 있어서 새 문서를 열거나 새로고침하면 사라진다.
 // - ?token=<세션 토큰>: 서버가 연 탭. WebSocket 으로 붙어 서버 요청(load_document 등)을 처리한다
 // - ?fixture=<이름>: 개발 서버의 fixtures/ 에서 문서를 연다(개발·E2E 전용)
 // - 둘 다 없거나 토큰이 거부되면 "docbridge 가 연 탭이 아닙니다" 화면
 import init, { HwpDocument } from '@rhwp/core';
 import wasmUrl from '@rhwp/core/rhwp_bg.wasm?url';
+import { indexOfAnchor } from '../core/block-ids.ts';
 import { blockPositionSchema, type Block } from '../core/block-schema.ts';
 import { extractBlocks } from '../core/blocks.ts';
 import { findInBlocks } from '../core/find-text.ts';
-import { selectionRects, type SelectionRect, type TextRange } from '../core/highlight-rects.ts';
+import { selectionRects, type SelectionRect } from '../core/highlight-rects.ts';
+import { targetRects } from '../core/highlight-targets.ts';
 import { errorMessage } from '../shared/errors.ts';
-import { answerRequest, type LoadDocumentResult, type RequestMessage } from '../shared/protocol.ts';
+import {
+  answerRequest,
+  type LoadDocumentResult,
+  type RequestMessage,
+  type ViewerParams,
+  type ViewerResult,
+} from '../shared/protocol.ts';
 import type { RenderMetrics, ViewerApi } from './api.ts';
 
 const ZOOM = 1;
@@ -78,21 +87,60 @@ function renderPages(doc: HwpDocument): { pageRenderMs: number[]; pageEls: HTMLE
   return { pageRenderMs, pageEls };
 }
 
-function drawHighlight(doc: HwpDocument, pageEls: HTMLElement[], range: TextRange): SelectionRect[] {
-  for (const old of document.querySelectorAll('.highlight')) old.remove();
-  const rects = selectionRects(doc, range);
-  rects.forEach((rect, i) => {
-    const box = document.createElement('div');
-    box.className = 'highlight';
-    box.dataset['testid'] = `highlight-${i}`;
-    box.style.left = `${rect.x * ZOOM}px`;
-    box.style.top = `${rect.y * ZOOM}px`;
-    box.style.width = `${rect.width * ZOOM}px`;
-    box.style.height = `${rect.height * ZOOM}px`;
-    pageEls[rect.pageIndex]?.append(box);
-  });
+/** 하이라이트·note 를 모두 지운다 */
+function clearHighlights(): void {
+  for (const old of document.querySelectorAll('.highlight, .highlight-note')) old.remove();
+}
+
+const NOTE_GAP = 4;
+
+/** note 를 첫 사각형 바로 위(자리가 없으면 아래)에, 왼쪽 끝을 맞춰 붙인다. 쪽 밖으로 나가지 않게 한다 */
+function placeNote(pageEl: HTMLElement, rect: SelectionRect, text: string): void {
+  const note = document.createElement('div');
+  note.className = 'highlight-note';
+  note.setAttribute('role', 'note');
+  note.dataset['testid'] = 'highlight-note';
+  note.textContent = text;
+  pageEl.append(note);
+  const above = rect.y * ZOOM - note.offsetHeight - NOTE_GAP;
+  const top = above >= 0 ? above : (rect.y + rect.height) * ZOOM + NOTE_GAP;
+  const left = Math.max(0, Math.min(rect.x * ZOOM, pageEl.clientWidth - note.offsetWidth));
+  note.style.top = `${top}px`;
+  note.style.left = `${left}px`;
+}
+
+/** 이전 하이라이트를 지우고 대상마다 사각형을 그린 뒤, note 를 첫 대상 옆에 붙이고 첫 대상으로 스크롤한다 */
+function paintHighlights(pageEls: HTMLElement[], targets: SelectionRect[][], note?: string): void {
+  clearHighlights();
+  let index = 0;
+  for (const rects of targets) {
+    for (const rect of rects) {
+      const box = document.createElement('div');
+      box.className = 'highlight';
+      box.dataset['testid'] = `highlight-${index}`;
+      box.style.left = `${rect.x * ZOOM}px`;
+      box.style.top = `${rect.y * ZOOM}px`;
+      box.style.width = `${rect.width * ZOOM}px`;
+      box.style.height = `${rect.height * ZOOM}px`;
+      pageEls[rect.pageIndex]?.append(box);
+      index += 1;
+    }
+  }
+  const first = targets[0]?.[0];
+  const firstPage = first === undefined ? undefined : pageEls[first.pageIndex];
+  if (first !== undefined && firstPage !== undefined && note !== undefined) placeNote(firstPage, first, note);
+  // 바로 옮긴다(부드러운 스크롤 없음): 도구 결과를 받았을 때 이미 그 자리가 보여야 한다
   document.querySelector('.highlight')?.scrollIntoView({ block: 'center' });
-  return rects;
+}
+
+/** 대상을 모두 사각형으로 바꾼 뒤에 그린다. 하나라도 틀리면 이전 하이라이트를 그대로 두고 던진다 */
+function highlightTargets(params: ViewerParams<'highlight'>): ViewerResult<'highlight'> {
+  const doc = currentDoc;
+  const blocks = openedBlocks();
+  if (doc === undefined) throw new Error(NO_VIEWER_DOCUMENT);
+  const targets = params.targets.map((target) => targetRects(doc, blocks, indexOfAnchor(blocks, target.anchor), target));
+  paintHighlights(currentPageEls, targets, params.note);
+  return { pages: targets.map((rects) => (rects[0]?.pageIndex ?? 0) + 1) };
 }
 
 const api: ViewerApi = {
@@ -104,6 +152,7 @@ const api: ViewerApi = {
 window.docbridge = api;
 
 let currentDoc: HwpDocument | undefined;
+let currentPageEls: HTMLElement[] = [];
 /** 서버가 연 문서에서 뽑은 블록. 읽기 전용(v0.1)이라 열 때 한 번 뽑아 둔다 */
 let currentBlocks: Block[] | undefined;
 
@@ -115,8 +164,14 @@ function showDocument(bytes: Uint8Array, fileName: string): { doc: HwpDocument; 
   currentDoc?.free();
   currentDoc = doc;
   hideNotice();
+  // 쪽을 새로 그리면 이전 문서의 하이라이트·note 도 같이 사라진다
   const { pageRenderMs, pageEls } = renderPages(doc);
-  api.highlight = (range) => drawHighlight(doc, pageEls, range);
+  currentPageEls = pageEls;
+  api.highlight = (range) => {
+    const rects = selectionRects(doc, range);
+    paintHighlights(pageEls, [rects]);
+    return rects;
+  };
   setStatus(`${fileName} — ${doc.pageCount()}쪽`);
   return { doc, parseMs, pageRenderMs };
 }
@@ -137,6 +192,7 @@ function loadDocument(fileName: string, data: string): LoadDocumentResult {
     currentDoc?.free();
     currentDoc = undefined;
     currentBlocks = undefined;
+    currentPageEls = [];
     api.highlight = () => {
       throw new Error('문서가 열려 있지 않습니다');
     };
@@ -154,6 +210,11 @@ function handleRequest(request: RequestMessage): unknown {
       return openedBlocks();
     case 'find_text':
       return findInBlocks(openedBlocks(), request.params.query);
+    case 'highlight':
+      return highlightTargets(request.params);
+    case 'clear_highlight':
+      clearHighlights();
+      return {};
     default: {
       // 메서드를 더하고 여기 처리를 빠뜨리면 컴파일 오류가 난다
       const unhandled: never = request;
@@ -162,8 +223,10 @@ function handleRequest(request: RequestMessage): unknown {
   }
 }
 
+const NO_VIEWER_DOCUMENT = '뷰어에 열린 문서가 없습니다. open_document 로 문서를 여세요.';
+
 function openedBlocks(): Block[] {
-  if (currentBlocks === undefined) throw new Error('뷰어에 열린 문서가 없습니다. open_document 로 문서를 여세요.');
+  if (currentBlocks === undefined) throw new Error(NO_VIEWER_DOCUMENT);
   return currentBlocks;
 }
 

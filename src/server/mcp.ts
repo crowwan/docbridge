@@ -2,6 +2,8 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { errorMessage } from '../shared/errors.ts';
+import { NOTE_MAX_CHARS, textTargetSchema } from '../shared/protocol.ts';
+import { clearHighlight, highlight } from './highlight-tools.ts';
 import { findText, getOutline, readBlockContents } from './read-tools.ts';
 import { OUTLINE_LIMIT, READ_CHAR_LIMIT } from './reading.ts';
 import type { DocumentSession } from './session.ts';
@@ -57,10 +59,29 @@ export function createMcpServer(session: DocumentSession): McpServer {
     'find_text',
     {
       description:
-        '문단·표 칸에서 글자를 찾는다(대소문자·띄어쓰기 그대로). 일치마다 { id, cell?: { row, col }, start, end, before, after } — 표 칸이면 cell(0부터), start·end 는 read_blocks 의 블록 text(표는 칸 text) 안 글자 위치(0부터, end 미포함), before·after 는 앞뒤 20자. id·cell·start·end 는 highlight 대상으로 그대로 넘긴다',
+        '문단·표 칸에서 글자를 찾는다(대소문자·띄어쓰기 그대로). 일치마다 { id, cell?: { row, col }, start, end, before, after } — 표 칸이면 cell(0부터), start·end 는 read_blocks 의 블록 text(표는 칸 text) 안 유니코드 글자 위치(0부터, end 미포함. 이모지도 한 글자), before·after 는 앞뒤 20자. id·cell·start·end 는 highlight 대상으로 그대로 넘긴다',
       inputSchema: { query: z.string().min(1).describe('찾을 글자') },
     },
     ({ query }) => toolResult(() => findText(session, query)),
+  );
+
+  server.registerTool(
+    'highlight',
+    {
+      description:
+        '답의 근거를 뷰어에 하이라이트하고 첫 대상이 보이게 스크롤한다. 이전 하이라이트는 지운다. 대상마다 { id, cell?: { row, col }, start?, end? } — find_text 일치(before·after 뺀 것)를 그대로 넘기면 된다. start·end 가 없으면 블록 전체(표는 cell 이 없으면 표 전체, 누름틀은 값, 값이 비면 안내문). 결과는 그린 대상 수와 하이라이트가 있는 쪽',
+      inputSchema: {
+        targets: z.array(textTargetSchema).min(1).describe('하이라이트할 대상. 첫 대상으로 스크롤한다'),
+        note: z.string().max(NOTE_MAX_CHARS).optional().describe(`하이라이트 옆에 짧게 보일 말(${NOTE_MAX_CHARS}자까지)`),
+      },
+    },
+    ({ targets, note }) => toolResult(() => highlight(session, targets, note)),
+  );
+
+  server.registerTool(
+    'clear_highlight',
+    { description: '뷰어의 하이라이트와 note 를 모두 지운다', inputSchema: {} },
+    () => toolResult(() => clearHighlight(session)),
   );
 
   return server;

@@ -78,6 +78,8 @@ const sampleParams: { [M in ViewerMethod]: ViewerParams<M> } = {
   load_document: { fileName: '공문.hwpx', data: '' },
   get_blocks: {},
   find_text: { query: '회신' },
+  highlight: { targets: [{ id: 'b1', anchor: { section: 0, paragraph: 0, part: 'text' }, start: 0, end: 2 }], note: '근거' },
+  clear_highlight: {},
 };
 
 describe('SPEC-001 뷰어의 요청 처리', () => {
