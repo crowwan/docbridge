@@ -13,3 +13,4 @@
 - 뷰어는 열 때 뽑은 블록(currentBlocks)을 들고 있다(읽기 전용 v0.1). SPEC-002 편집 때 다시 뽑아야 한다.
 - `z.object({})` 는 `Record<string, never>` 로 추론된다. 제네릭 인덱싱(`schemas[method].parse`)은 TS 가 M 과 연결하지 못해 `parseViewerResult` 맵(메서드 → parse 함수)으로 둠.
 - find_text 결과 수에 상한이 없다(한 글자 검색이면 많을 수 있음) — 스펙에 없어서 두지 않음, PR 확인 못 한 것에 적음.
+- 2026-10-26 조율자: find_text 결과 = TextTarget({ id, cell?: { row, col }, start?, end? }) + before·after 로 고정(#7 과 병렬). 처음 만든 평평한 row·col 을 cell 로 바꿈.
