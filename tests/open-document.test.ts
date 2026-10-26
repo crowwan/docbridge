@@ -226,4 +226,42 @@ describe('SPEC-001 문서 열기 (open_document)', () => {
     expect(session.document?.ids).toBe(idsBefore);
     expect(session.document?.ids.label(paragraphBlocks(14)).map(({ id }) => id)).toEqual(labelsBefore);
   });
+
+  it('새로고침으로 이전 문서를 다시 띄우는 중에 다른 파일을 열면 뷰어에 마지막으로 남는 문서가 서버의 현재 문서다', async () => {
+    // 새로고침 쪽 파일 읽기를 붙잡아 두고, 새 파일 읽기가 끝난 다음 차례에 놓아준다
+    let holdReload = false;
+    let releaseReload = () => {};
+    let reloadReadStarted = () => {};
+    const reloadReading = new Promise<void>((resolve) => {
+      reloadReadStarted = resolve;
+    });
+    const raced = new DocumentSession(bridge, {
+      openBrowser,
+      readFile: async (path) => {
+        if (holdReload && path.endsWith('notice.hwpx')) {
+          const released = new Promise<void>((resolve) => {
+            releaseReload = resolve;
+          });
+          reloadReadStarted();
+          await released;
+        }
+        if (path.endsWith('report.hwpx')) setImmediate(() => releaseReload());
+        return readFile(path);
+      },
+    });
+    const first = await connectViewer();
+    first.autoRespond({ pageCount: 1, blocks: paragraphBlocks(14) });
+    await raced.open(fixturePath('notice.hwpx'));
+
+    holdReload = true;
+    await closeViewer(first);
+    const reloaded = await connectViewer();
+    reloaded.autoRespond({ pageCount: 1, blocks: paragraphBlocks(14) });
+    await reloadReading;
+    await raced.open(fixturePath('report.hwpx'));
+    await raced.ready();
+
+    expect(raced.document?.fileName).toBe('report.hwpx');
+    expect(reloaded.history.at(-1)?.params.fileName).toBe('report.hwpx');
+  });
 });

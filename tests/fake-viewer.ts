@@ -6,11 +6,19 @@ export class FakeViewer {
   private readonly ws: WebSocket;
   private readonly received: RequestMessage[] = [];
   private readonly waiters: Array<(request: RequestMessage) => void> = [];
+  /** 받은 요청 전부(순서대로) */
+  readonly history: RequestMessage[] = [];
+  private autoResult: ViewerResult<'load_document'> | undefined;
 
   private constructor(ws: WebSocket) {
     this.ws = ws;
     ws.on('message', (data) => {
       const request = requestMessageSchema.parse(JSON.parse(String(data)));
+      this.history.push(request);
+      if (this.autoResult !== undefined) {
+        this.respond(request.id, this.autoResult);
+        return;
+      }
       const waiter = this.waiters.shift();
       if (waiter) waiter(request);
       else this.received.push(request);
@@ -30,6 +38,11 @@ export class FakeViewer {
     const queued = this.received.shift();
     if (queued) return Promise.resolve(queued);
     return new Promise((resolve) => this.waiters.push(resolve));
+  }
+
+  /** 이후 오는 요청마다 바로 이 결과로 응답한다 */
+  autoRespond(result: ViewerResult<'load_document'>): void {
+    this.autoResult = result;
   }
 
   respond(id: number, result: ViewerResult<'load_document'>): void {

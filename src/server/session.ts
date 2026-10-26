@@ -37,6 +37,8 @@ export interface OpenResult {
 export interface SessionOptions {
   /** 기본 브라우저로 주소를 연다 (테스트에서는 가짜) */
   openBrowser: (url: string) => void;
+  /** 검사를 통과한 파일의 바이트를 읽는다 (기본 fs.readFile, 테스트에서 읽기 순서를 조절) */
+  readFile?: (path: string) => Promise<Uint8Array>;
 }
 
 /** ~/ 로 시작하면 홈 폴더로 바꾸고 절대 경로로 만든다 */
@@ -44,7 +46,7 @@ function absolutePath(path: string): string {
   return resolve(path === '~' || path.startsWith('~/') ? join(homedir(), path.slice(1)) : path);
 }
 
-async function readDocumentFile(path: string): Promise<Uint8Array> {
+async function readDocumentFile(path: string, read: (path: string) => Promise<Uint8Array>): Promise<Uint8Array> {
   const extension = extname(path).toLowerCase();
   if (!OPENABLE_EXTENSIONS.includes(extension)) {
     throw new Error(`열 수 없는 파일 형식입니다(${extension || '확장자 없음'}). .hwp, .hwpx 만 열 수 있습니다.`);
@@ -54,24 +56,26 @@ async function readDocumentFile(path: string): Promise<Uint8Array> {
   if (info.size > MAX_FILE_BYTES) {
     throw new Error(`파일이 너무 큽니다(${Math.ceil(info.size / MB)}MB). ${MAX_FILE_BYTES / MB}MB 까지 열 수 있습니다.`);
   }
-  return readFile(path);
+  return read(path);
 }
 
 export class DocumentSession {
   private readonly bridge: Bridge;
   private readonly openBrowser: (url: string) => void;
+  private readonly readFile: (path: string) => Promise<Uint8Array>;
   private current: OpenedDocument | undefined;
-  /** open() 이 진행 중이면 새로 붙은 뷰어에 이전 문서를 다시 띄우지 않는다 */
-  private opening = false;
-  private reloading: Promise<void> = Promise.resolve();
+  /** 뷰어에 문서를 보내는 일(열기·새로고침 다시 띄우기)을 한 줄로 세운다. 보낸 순서 = 뷰어에 남는 순서 */
+  private loads: Promise<void> = Promise.resolve();
 
   constructor(bridge: Bridge, options: SessionOptions) {
     this.bridge = bridge;
     this.openBrowser = options.openBrowser;
+    this.readFile = options.readFile ?? readFile;
     // 새로고침: 같은 탭이 다시 붙으면 마지막 문서를 다시 보내고 id 표는 그대로 둔다
     bridge.events.on('connected', () => {
-      if (this.opening || this.current === undefined) return;
-      this.reloading = this.reload(this.current);
+      const document = this.current;
+      if (document === undefined) return;
+      void this.enqueue(() => this.reload(document));
     });
   }
 
@@ -79,32 +83,38 @@ export class DocumentSession {
     return this.current;
   }
 
-  /** 새로고침으로 문서를 다시 띄우는 중이면 끝날 때까지 기다린다 */
+  /** 문서를 여는 중이거나 새로고침으로 다시 띄우는 중이면 끝날 때까지 기다린다 */
   ready(): Promise<void> {
-    return this.reloading;
+    return this.loads;
+  }
+
+  private enqueue<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.loads.then(task);
+    // 앞 작업이 실패해도 다음 작업은 돈다
+    this.loads = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 
   /** 문서를 뷰어에 띄운다. 뷰어가 없으면 브라우저로 뷰어 주소를 열고 붙기를 기다린다 */
   async open(inputPath: string): Promise<OpenResult> {
     const path = absolutePath(inputPath);
-    const bytes = await readDocumentFile(path);
+    const bytes = await readDocumentFile(path, this.readFile);
     const fileName = basename(path);
-    this.opening = true;
-    let loaded: LoadDocumentResult;
-    try {
+    return this.enqueue(async () => {
       if (!this.bridge.hasViewer()) await this.launchViewer();
-      loaded = await this.load(fileName, bytes);
-    } finally {
-      this.opening = false;
-    }
-    this.current = {
-      path,
-      fileName,
-      pageCount: loaded.pageCount,
-      blockCount: loaded.blocks.length,
-      ids: BlockIdTable.assign(loaded.blocks),
-    };
-    return { fileName, pageCount: loaded.pageCount, blockCount: loaded.blocks.length, viewerUrl: this.bridge.viewerUrl };
+      const loaded = await this.load(fileName, bytes);
+      this.current = {
+        path,
+        fileName,
+        pageCount: loaded.pageCount,
+        blockCount: loaded.blocks.length,
+        ids: BlockIdTable.assign(loaded.blocks),
+      };
+      return { fileName, pageCount: loaded.pageCount, blockCount: loaded.blocks.length, viewerUrl: this.bridge.viewerUrl };
+    });
   }
 
   /** 문서가 필요한 도구가 뷰어에 요청하는 공용 경로. 뷰어가 없으면 스펙 문구와 마지막 파일 경로로 실패한다 */
@@ -158,12 +168,12 @@ export class DocumentSession {
     return connected;
   }
 
+  /** 줄 안에서만 부른다. 줄을 기다리는 사이 다른 문서를 열었으면 보내지 않는다 */
   private async reload(document: OpenedDocument): Promise<void> {
+    if (this.current !== document) return;
     try {
-      const bytes = await readDocumentFile(document.path);
+      const bytes = await readDocumentFile(document.path, this.readFile);
       const loaded = await this.load(document.fileName, bytes);
-      // 그사이 다른 문서를 열었으면 그 문서가 기준이다
-      if (this.current !== document) return;
       this.current = { ...document, pageCount: loaded.pageCount, blockCount: loaded.blocks.length };
     } catch (error) {
       log(`새로고침한 뷰어에 문서를 다시 띄우지 못했습니다: ${String(error)}`);
