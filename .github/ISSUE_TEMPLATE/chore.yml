@@ -1,0 +1,19 @@
+name: 작업
+description: 설정, 리팩토링, 문서, 의존성 등 기능이 아닌 작업
+title: "작업 요약"
+labels: ["chore"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: 할 일
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: 완료 조건
+      value: |
+        - [ ]
+    validations:
+      required: true

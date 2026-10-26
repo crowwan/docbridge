@@ -1,0 +1,26 @@
+name: 릴리스
+description: 마일스톤 하나의 릴리스 체크리스트 (/release 가 만든다)
+title: "v0.0.0 릴리스"
+labels: ["release"]
+body:
+  - type: textarea
+    id: checklist
+    attributes:
+      label: 릴리스 절차
+      value: |
+        - [ ] 마일스톤 이슈 전부 Closed
+        - [ ] main CI 통과
+        - [ ] 수동 QA (아래 목록, Release 빌드로 확인)
+        - [ ] CHANGELOG.md 갱신
+        - [ ] 버전 번호 반영 PR 머지
+        - [ ] 태그 푸시 및 배포
+        - [ ] 스펙 status: done, 마일스톤 Close
+    validations:
+      required: true
+  - type: textarea
+    id: qa
+    attributes:
+      label: 수동 QA
+      description: docs/qa-checklist.md 를 복사해 붙인다
+    validations:
+      required: true
