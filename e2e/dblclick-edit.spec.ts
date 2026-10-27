@@ -308,6 +308,7 @@ test.describe('SPEC-006 더블클릭으로 글자 고치기 (서버가 내주는
     expect(moved?.y).toBeGreaterThan(before?.y ?? Infinity);
     expect(Math.abs((moved?.y ?? 0) - (block?.y ?? 0))).toBeLessThan(1);
     await expect(editBox(page)).toBeFocused();
+    await firstPage(page).screenshot({ path: `${SCREENS}/dblclick-08-moved.png` });
     await page.keyboard.press('Enter');
 
     await expect.poll(() => blockText('b11')).toBe(B11_AFTER);
@@ -322,6 +323,7 @@ test.describe('SPEC-006 더블클릭으로 글자 고치기 (서버가 내주는
 
     await expect(editBox(page)).toHaveCount(0);
     await expect(page.getByRole('alert')).toHaveText(BLOCK_CHANGED_WHILE_EDITING);
+    await page.screenshot({ path: `${SCREENS}/dblclick-09-deleted.png` });
     expect(session.editCount).toBe(1);
   });
 
