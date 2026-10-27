@@ -118,12 +118,21 @@ export class BlockIdTable {
 
   /** 문단을 index 자리에 넣은 뒤: 그 자리부터 뒤 문단들의 위치를 하나씩 민다. 새 문단에 새 id 를 준다(part = 그 문단의 어느 블록인지 — 표를 담은 문단이면 tablePart) */
   paragraphInserted(section: number, index: number, part = 'text'): string {
+    const [id] = this.paragraphInsertedWith(section, index, [part]);
+    if (id === undefined) throw new Error('새 id 를 만들지 못했습니다');
+    return id;
+  }
+
+  /** paragraphInserted 와 같되, 넣은 문단의 블록마다(parts, 문단 안 순서) 새 id 를 준다. 블록이 없는 빈 문단이면 위치만 민다(copy_blocks) */
+  paragraphInsertedWith(section: number, index: number, parts: string[]): string[] {
     this.shift(section, index, 1);
     this.idByKey = undefined;
-    const id = `b${this.nextNumber}`;
-    this.nextNumber += 1;
-    this.anchors.set(id, { section, paragraph: index, part });
-    return id;
+    return parts.map((part) => {
+      const id = `b${this.nextNumber}`;
+      this.nextNumber += 1;
+      this.anchors.set(id, { section, paragraph: index, part });
+      return id;
+    });
   }
 
   /** index 문단을 지운 뒤: 그 문단의 id 들을 없애고 뒤 문단들의 위치를 하나씩 당긴다 */

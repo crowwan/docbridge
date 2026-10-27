@@ -1,10 +1,12 @@
-// 문서 사이 문단·표 복사 기술 검증(#62, ADR 004). SPEC-007 copy_blocks 가 쓸 프로토타입이다.
+// 문서 사이 문단·표 복사(SPEC-007 copy_blocks, ADR 004 — #62 기술 검증, #64 구현). 대상 탭이 편집 공용 경로 안에서 부른다(edit-operations.ts).
 // 원본 탭이 보낸 HWPX 바이트를 대상 쪽에서 열어 rhwp importParagraphBlock 으로 가져오고,
 // rhwp 동작이 스펙과 다른 곳만 바로잡는다(ADR 002·003 원칙 그대로):
 // - 번호 정의·스타일을 "내용이 모두 같을 때만" 대상 것으로 다시 쓰고 아니면 새로 더한다
-//   → 대상에 같은 모양의 번호 정의가 있으면 그것으로(번호가 대상 위치를 따라 이어진다), 개요 문단은 대상 구역 개요 번호로
+//   → 대상에 같은 모양의 번호 정의가 있으면 그것으로(넣는 자리 바로 앞 문단의 목록 우선 — 번호가 대상 위치를 따라 이어진다), 개요 문단은 대상 구역 개요 번호로
 //   → 대상에 같은 이름 스타일이 있으면 그 스타일로(applyStyle — 스타일 모양이던 글자만 대상 스타일 모양, 직접 서식은 그대로)
-//   → 그래서 아무도 쓰지 않게 된 복제 스타일("바탕글" 두 개 등)은 지운다. 지우면 표 칸 문단 번호가 어긋나는 경우는 "이름 사본N" 으로 바꾼다
+//   → 그래서 아무도 쓰지 않게 된 복제 스타일("바탕글" 두 개 등)은 지운다. 지우면 표 칸 문단 번호가 어긋나는 경우는 "이름 사본N" 으로 바꾼다.
+//     더한 스타일의 다음 스타일이 복제를 가리키면 먼저 대상의 같은 이름 스타일로 돌린다(rhwp deleteStyle 은 지운 스타일을 가리키던 다음 스타일을 바탕글로 바꾼다)
+// 보정은 넣은 문단(과 그 안 표 칸 문단)만 본다 — 대상의 원래 문단은 원래 스타일 번호(더한 것보다 작다)만 쓰므로 큰 대상 문서를 훑지 않는다.
 // 표 안 표의 칸 문단은 rhwp 에 스타일을 읽는 경로 API 가 없어 보지 않는다(ADR 004 "확인 못 한 것").
 // 원본 핸들 만들기는 옮기기(edits.ts DEFAULT_COPIES)와 같은 순서: HWP 로 한 번 바꾼 사본 → HWPX 그대로.
 import { HwpDocument } from '@rhwp/core';
@@ -68,7 +70,7 @@ const importRequest = (from: SourceRange, to: TargetPlace, dryRun: boolean) =>
     dryRun,
   });
 
-const styleListSchema = z.array(z.object({ id: z.number(), name: z.string() }));
+const styleListSchema = z.array(z.object({ id: z.number(), name: z.string(), nextStyleId: z.number() }));
 const styleAtSchema = z.object({ id: z.number(), name: z.string() });
 const numberingListSchema = z.array(z.object({ id: z.number(), levelFormats: z.array(z.string()) }));
 const paraPropsSchema = z.looseObject({ headType: z.string(), numberingId: z.number() });
@@ -108,7 +110,7 @@ export function copyParagraphs(
         if (rejected.length === 0 || found.length <= rejected.length) rejected = found;
         continue;
       }
-      const before = { styles: styleNames(target), numberings: numberings(target) };
+      const before = { styles: styleNames(target), numberings: numberings(target), precedingNumbering: numberingAt(target, to.section, to.before - 1) };
       target.importParagraphBlock(source, importRequest(from, to, false));
       const inserted = { start: to.before, end: to.before + (from.end - from.start) };
       return { ok: true, inserted, corrections: correct(target, to.section, inserted, before) };
@@ -137,12 +139,25 @@ function dryRunRejections(target: HwpDocument, source: HwpDocument, from: Source
   }
 }
 
-const styleNames = (doc: HwpDocument) => parseJson(styleListSchema, doc.getStyleList()).map(({ name }) => name);
+const styleList = (doc: HwpDocument) => parseJson(styleListSchema, doc.getStyleList());
+const styleNames = (doc: HwpDocument) => styleList(doc).map(({ name }) => name);
 const numberings = (doc: HwpDocument) => parseJson(numberingListSchema, doc.getNumberingList());
+const styleAt = (doc: HwpDocument, section: number, paragraph: number) => parseJson(styleAtSchema, doc.getStyleAt(section, paragraph)).id;
+const cellStyleAt = (doc: HwpDocument, section: number, { paragraph, control, cell, cellParagraph }: CellParagraph) =>
+  parseJson(styleAtSchema, doc.getCellStyleAt(section, paragraph, control, cell, cellParagraph)).id;
+
+/** 자동 번호 문단이면 그 번호 정의 id(넣는 자리 앞 문단의 목록을 이어 쓰려고 넣기 전에 읽는다) */
+function numberingAt(doc: HwpDocument, section: number, paragraph: number): number | undefined {
+  if (paragraph < 0) return undefined;
+  const { headType, numberingId } = parseJson(paraPropsSchema, doc.getParaPropertiesAt(section, paragraph));
+  return headType === 'Number' ? numberingId : undefined;
+}
 
 interface Before {
   styles: string[];
   numberings: z.infer<typeof numberingListSchema>;
+  /** 넣는 자리 바로 앞 문단의 번호 정의(자동 번호 문단일 때) */
+  precedingNumbering: number | undefined;
 }
 
 /** 넣은 문단(과 그 안 표 칸 문단)을 대상 번호 정의·스타일로 다시 가리키고, 쓰이지 않게 된 복제 스타일을 지운다 */
@@ -161,43 +176,44 @@ function correct(doc: HwpDocument, section: number, inserted: { start: number; e
       corrections.numbering += 1;
     } else if (headType === 'Number') {
       const formats = JSON.stringify(added.find(({ id }) => id === numberingId)?.levelFormats);
-      const same = before.numberings.find(({ levelFormats }) => JSON.stringify(levelFormats) === formats);
-      if (same === undefined) continue; // 대상에 같은 모양이 없으면 새 번호 목록(1부터)
-      doc.applyParaFormat(section, p, JSON.stringify({ numberingId: same.id }));
+      const same = before.numberings.filter(({ levelFormats }) => JSON.stringify(levelFormats) === formats).map(({ id }) => id);
+      // 같은 모양이 여럿이면 넣는 자리 바로 앞 문단의 목록을 잇는다(PR #70 리뷰). 대상에 같은 모양이 없으면 새 번호 목록(1부터)
+      const chosen = same.find((id) => id === before.precedingNumbering) ?? same[0];
+      if (chosen === undefined) continue;
+      doc.applyParaFormat(section, p, JSON.stringify({ numberingId: chosen }));
       corrections.numbering += 1;
     }
   }
 
-  // 스타일: rhwp 가 더한 스타일(id ≥ 원래 개수)이 대상의 같은 이름 스타일이면 그 스타일로
+  // 스타일: rhwp 가 더한 스타일(id ≥ 원래 개수)이 대상의 같은 이름 스타일이면 그 스타일로. 스타일 목록은 applyStyle 로 바뀌지 않아 한 번만 읽는다
+  const names = styleNames(doc);
   const targetStyleOf = (styleId: number): number | undefined => {
     if (styleId < before.styles.length) return undefined;
-    const name = styleNames(doc)[styleId];
-    const same = before.styles.indexOf(name ?? '');
+    const same = before.styles.indexOf(names[styleId] ?? '');
     return same < 0 ? undefined : same;
   };
   for (let p = inserted.start; p < inserted.end; p += 1) {
-    const to = targetStyleOf(parseJson(styleAtSchema, doc.getStyleAt(section, p)).id);
+    const to = targetStyleOf(styleAt(doc, section, p));
     if (to === undefined) continue;
     doc.applyStyle(section, p, to);
     corrections.styles += 1;
   }
   for (const cell of cells) {
-    const to = targetStyleOf(parseJson(styleAtSchema, doc.getCellStyleAt(section, cell.paragraph, cell.control, cell.cell, cell.cellParagraph)).id);
+    const to = targetStyleOf(cellStyleAt(doc, section, cell));
     if (to === undefined) continue;
     doc.applyCellStyle(section, cell.paragraph, cell.control, cell.cell, cell.cellParagraph, to);
     corrections.styles += 1;
   }
 
-  // 쓰이지 않게 된 복제 스타일 지우기. rhwp deleteStyle 은 본문 문단의 스타일 번호만 당기고 표 칸 문단은 손대지 않아서,
-  // 넣은 칸 문단이 지울 스타일보다 뒤 번호(남기는 새 스타일)를 쓰면 지우지 않는다. 대상의 원래 칸 문단은 원래 번호(더 작다)만 쓴다
+  // 쓰이지 않게 된 복제 스타일 지우기. 대상의 원래 문단은 원래 번호(더한 것보다 작다)만 쓰므로 넣은 문단만 보면 된다.
+  // rhwp deleteStyle 은 본문 문단의 스타일 번호만 당기고 표 칸 문단은 손대지 않아서,
+  // 넣은 칸 문단이 지울 스타일보다 뒤 번호(남기는 새 스타일)를 쓰면 지우지 않는다
   const used = new Set<number>();
-  for (let s = 0; s < doc.getSectionCount(); s += 1) {
-    for (let p = 0; p < doc.getParagraphCount(s); p += 1) used.add(parseJson(styleAtSchema, doc.getStyleAt(s, p)).id);
-  }
-  const cellStyles = cells.map((c) => parseJson(styleAtSchema, doc.getCellStyleAt(section, c.paragraph, c.control, c.cell, c.cellParagraph)).id);
+  for (let p = inserted.start; p < inserted.end; p += 1) used.add(styleAt(doc, section, p));
+  const cellStyles = cells.map((cell) => cellStyleAt(doc, section, cell));
   cellStyles.forEach((id) => used.add(id));
+  pointNextStylesAtTarget(doc, before.styles);
   // 지우지 못하는 복제는 한글이 붙여 넣을 때처럼 "이름 사본N" 으로 바꿔 같은 이름이 둘 남지 않게 한다
-  const names = styleNames(doc);
   for (let id = names.length - 1; id >= before.styles.length; id -= 1) {
     const name = names[id] ?? '';
     if (!before.styles.includes(name)) continue;
@@ -208,11 +224,34 @@ function correct(doc: HwpDocument, section: number, inserted: { start: number; e
     const taken = new Set(styleNames(doc));
     let copyNumber = 1;
     while (taken.has(`${name} 사본${copyNumber}`)) copyNumber += 1;
-    doc.updateStyle(id, JSON.stringify({ name: `${name} 사본${copyNumber}` }));
+    if (!doc.updateStyle(id, JSON.stringify({ name: `${name} 사본${copyNumber}` }))) {
+      throw new Error(`복제 스타일 "${name}" 의 이름을 바꾸지 못했습니다(스타일 ${id}). 같은 이름 스타일이 둘 남아 복사하지 않았습니다.`);
+    }
     corrections.renamedStyles.unshift(`${name} → ${name} 사본${copyNumber}`);
   }
   corrections.addedStyles = styleNames(doc).slice(before.styles.length);
   return corrections;
+}
+
+/**
+ * 더한 스타일(복제가 아닌 것)의 다음 스타일이 복제 스타일(대상에 같은 이름이 있는 새 스타일)이면 대상의 같은 이름 스타일로 돌린다.
+ * 복제를 지우면 rhwp 가 그 참조를 바탕글로 바꾸고, 지우지 못해 "사본N" 이 되면 다른 이름을 가리키게 된다. 복제 자신은 지우거나 사본이 되므로 그대로 둔다
+ */
+function pointNextStylesAtTarget(doc: HwpDocument, targetStyles: string[]): void {
+  const list = styleList(doc);
+  const targetOf = (styleId: number): number | undefined => {
+    if (styleId < targetStyles.length) return undefined;
+    const same = targetStyles.indexOf(list[styleId]?.name ?? '');
+    return same < 0 ? undefined : same;
+  };
+  for (const { id, name, nextStyleId } of list.slice(targetStyles.length)) {
+    if (targetStyles.includes(name)) continue;
+    const next = targetOf(nextStyleId);
+    if (next === undefined) continue;
+    if (!doc.updateStyle(id, JSON.stringify({ nextStyleId: next }))) {
+      throw new Error(`스타일 "${name}" 의 다음 스타일을 바꾸지 못했습니다(스타일 ${id}).`);
+    }
+  }
 }
 
 interface CellParagraph {

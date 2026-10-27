@@ -592,7 +592,7 @@ describe('SPEC-002 insert_paragraph (편집 공용 경로)', () => {
 
     const { changed, changes } = editor.edit(insert(editor, 'b11', 'after', '문의: 안전총괄과'), editor.depth);
 
-    expect(changes).toEqual({ deletedTables: [], deletedParagraphs: [], inserted: [{ section: S, paragraph: 11, part: 'text' }] });
+    expect(changes).toEqual({ deletedTables: [], deletedParagraphs: [], inserted: [{ section: S, paragraph: 11, parts: ['text'] }] });
     expect(changed).toEqual([
       {
         anchor: { section: S, paragraph: 11, part: 'text' },
