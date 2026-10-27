@@ -579,6 +579,17 @@ describe('SPEC-002 되돌리기 (기술 검증)', () => {
     expect(history.size).toBe(0);
   });
 
+  it('새 문서를 열면 옛 문서 기록을 닫으며 버린 편집 수를 돌려주고, 닫은 기록은 쓰지 않는다', () => {
+    const doc = mixedDocument();
+    const history = new EditHistory<null>(doc);
+    history.apply('a', null, () => replaceParagraphText(doc, S, 0, 'a'));
+    history.apply('b', null, () => replaceParagraphText(doc, S, 0, 'b'));
+
+    expect(history.dispose()).toBe(2);
+    expect(() => history.undo()).toThrow('닫은 편집 기록입니다');
+    expect(() => history.apply('c', null, () => replaceParagraphText(doc, S, 0, 'c'))).toThrow('닫은 편집 기록입니다');
+    expect(textOf(doc, 0)).toBe('b');
+  });
 });
 
 describe('SPEC-002 HWPX 저장 검증 (기술 검증)', () => {
