@@ -17,6 +17,8 @@ const S = 0;
 
 const charShapeIdAt = (doc: HwpDocument, paragraph: number, offset: number): unknown =>
   JSON.parse(doc.getCharPropertiesAt(S, paragraph, offset)).charShapeId;
+const isBoldAt = (doc: HwpDocument, paragraph: number, offset: number): unknown =>
+  JSON.parse(doc.getCharPropertiesAt(S, paragraph, offset)).bold;
 const cellCharShapeIdAt = (doc: HwpDocument, paragraph: number, control: number, cell: number, offset: number): unknown =>
   JSON.parse(doc.getCellCharPropertiesAt(S, paragraph, control, cell, 0, offset)).charShapeId;
 
@@ -205,6 +207,74 @@ describe('SPEC-002 replace_text (편집 공용 경로)', () => {
     expect(doc.getTextRange(S, 0, 0, doc.getParagraphLength(S, 0))).toBe('가나다라마바');
     expect(JSON.stringify(editor.blocks)).toBe(before);
     expect(editor.undo(1, editor.depth)).toBe(0);
+  });
+});
+
+describe('SPEC-002 replace_text 누름틀 값 끝 글자를 포함한 범위 (#68)', () => {
+  /** 누름틀 하나에 값 value 를 채운 편집기. place 'body' = "성명 [값] 끝" 문단, 'end' = 문단 끝 누름틀, 'cell' = 표 칸 안 누름틀 */
+  function fieldEditor(value: string, place: 'body' | 'end' | 'cell'): { editor: DocumentEditor; id: string } {
+    const doc = createBlankDocument();
+    if (place === 'cell') {
+      doc.insertText(S, 0, 0, '앞 문단');
+      doc.createTable(S, 0, 4, 1, 1);
+      doc.insertTextInCell(S, 1, 0, 0, 0, 0, '성명 ');
+      doc.insertClickHereFieldInCell(S, 1, 0, 0, 0, 3, false, '이름', '', '성명', true);
+    } else {
+      doc.insertText(S, 0, 0, place === 'body' ? '성명  끝' : '성명 ');
+      doc.insertClickHereField(S, 0, 3, '이름', '', '성명', true);
+    }
+    const [field] = listFields(doc);
+    if (field === undefined) throw new Error('누름틀이 없다');
+    if (value !== '') doc.setFieldValue(field.fieldId, value);
+    const editor = new DocumentEditor(doc);
+    const index = editor.blocks.findIndex((block) => block.kind === 'field');
+    return { editor, id: `b${index + 1}` };
+  }
+
+  const fieldValue = (editor: DocumentEditor) => editor.blocks.flatMap((block) => (block.kind === 'field' ? [block.value] : []));
+
+  it.each(['body', 'end', 'cell'] as const)('값 "가나다" 의 끝 글자를 포함한 범위(2~3, 3~3 글자째)를 바꾼다 — %s', (place) => {
+    const { editor, id } = fieldEditor('가나다', place);
+    editor.edit(replace(editor, id, '라마', { start: 1, end: 3 }), editor.depth);
+    expect(fieldValue(editor)).toEqual(['가라마']);
+
+    editor.edit(replace(editor, id, '바', { start: 2, end: 3 }), editor.depth);
+    expect(fieldValue(editor)).toEqual(['가라바']);
+  });
+
+  it('끝 글자 하나를 바꾸면 새 글자는 바뀐 끝 글자 모양을 따르고, 앞 글자 모양은 그대로다', () => {
+    const { editor, id } = fieldEditor('가나다', 'body');
+    const [field] = listFields(editor.doc);
+    if (field === undefined) throw new Error('누름틀이 없다');
+    const at = field.startCharIdx;
+    editor.doc.applyCharFormat(S, 0, at + 2, at + 3, JSON.stringify({ bold: true }));
+    const plainId = charShapeIdAt(editor.doc, 0, at + 1);
+
+    editor.edit(replace(editor, id, '라마', { start: 2, end: 3 }), editor.depth);
+
+    expect(fieldValue(editor)).toEqual(['가나라마']);
+    // 앞 글자는 원래 모양 id 그대로, 새 글자는 끝 글자 모양을 속성으로 다시 건 것이라 굵기로 본다
+    expect(charShapeIdAt(editor.doc, 0, at + 1)).toBe(plainId);
+    expect([2, 3].map((offset) => isBoldAt(editor.doc, 0, at + offset))).toEqual([true, true]);
+  });
+
+  it.each(['body', 'end', 'cell'] as const)('값 전체(0~3)를 바꾸고 빈 글자로 끝 글자를 지운다 — %s', (place) => {
+    const { editor, id } = fieldEditor('가나다', place);
+    editor.edit(replace(editor, id, '하', { start: 0, end: 3 }), editor.depth);
+    expect(fieldValue(editor)).toEqual(['하']);
+
+    editor.edit(replace(editor, id, '홍길동'), editor.depth);
+    editor.edit(replace(editor, id, '', { start: 1, end: 3 }), editor.depth);
+    expect(fieldValue(editor)).toEqual(['홍']);
+  });
+
+  it.each(['body', 'end', 'cell'] as const)('값 전체를 빈 글자로 바꾸면 빈 누름틀이 되고, 빈 값에 다시 넣을 수 있다 — %s', (place) => {
+    const { editor, id } = fieldEditor('가나다', place);
+    editor.edit(replace(editor, id, ''), editor.depth);
+    expect(fieldValue(editor)).toEqual(['']);
+
+    editor.edit(replace(editor, id, '라마'), editor.depth);
+    expect(fieldValue(editor)).toEqual(['라마']);
   });
 });
 
