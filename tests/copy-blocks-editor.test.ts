@@ -151,6 +151,18 @@ describe('SPEC-007 copy_blocks — 대상 탭 편집 (편집 공용 경로)', ()
     expect(target.depth).toBe(0);
   });
 
+  it('넣은 문단의 블록이 알린 블록(원본 꼬리표)과 다르면 되돌린다 — 서버가 없는 블록에 id 를 주지 않게', () => {
+    const target = new DocumentEditor(openFixture('report.hwpx'));
+    const before = outlineOf(target.blocks);
+    const operation = copyOperation(source, ['b6'], target, 'b1', 'after');
+    if (operation.kind !== 'copy_blocks') throw new Error('copy_blocks 편집이 아니다');
+    // 원본 문단 글자 블록을 표라고 잘못 알린다
+    const wrong = { ...operation, source: { ...operation.source, blocks: operation.source.blocks.map((b) => ({ ...b, anchor: { ...b.anchor, part: 'table:0' } })) } };
+
+    expect(() => target.edit(wrong, 0)).toThrow('넣은 문단(구역 0 문단 1)의 블록이 예상과 다릅니다(예상 table:0, 실제 text). 넣지 않았습니다.');
+    expect(outlineOf(extractBlocks(target.doc))).toEqual(before);
+  });
+
   it('대상 구역 첫 문단 앞에는 넣지 않는다(insert_paragraph 와 같은 기준 규칙)', () => {
     const target = new DocumentEditor(openFixture('report.hwpx'));
 
