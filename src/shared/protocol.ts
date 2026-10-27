@@ -53,6 +53,12 @@ export const editResultSchema = z.object({
 /** 서버가 아는 편집 순번(연 뒤 적용한 편집 수 − 되돌린 수). 뷰어 순번과 다르면 뷰어는 아무것도 하지 않고 거부한다 */
 const depthSchema = z.number().int().min(0);
 
+/**
+ * 이 요청이 성공한 뒤의 저장하지 않은 편집 수(서버 EditLog 가 미리 계산). 뷰어는 성공하면 이 값으로 탭 닫기 확인 창을 정한다 —
+ * 편집·되돌리기 뒤에 edit_state 를 따로 보내는 왕복을 줄인다
+ */
+const unsavedEditsSchema = z.number().int().min(0);
+
 /** 서버가 뷰어에 부르는 메서드와 입력·결과 스키마 */
 export const viewerMethodSchemas = {
   /** 문서를 열어 렌더링하고 블록을 추출한다. 이전 문서는 닫는다 */
@@ -69,16 +75,17 @@ export const viewerMethodSchemas = {
    * 편집 공용 경로(SPEC-002): 스냅샷 → 편집 → 다시 그리기 → 블록 다시 뽑기 → 바뀐 블록 표시(이전 표시·하이라이트는 지워진다).
    * 다시 그리기·표시까지 성공해야 기록에 들어가고, 실패하면 스냅샷으로 되돌려 문서는 그대로다. 편집 종류는 operation.kind(core/edit-operations.ts)
    */
-  edit: { params: z.object({ operation: editOperationSchema, depth: depthSchema }), result: editResultSchema },
+  edit: { params: z.object({ operation: editOperationSchema, depth: depthSchema, unsavedEdits: unsavedEditsSchema }), result: editResultSchema },
   /** 스냅샷으로 steps 만큼(있는 만큼만) 되돌리고 다시 그린다. 결과는 되돌린 수(없으면 0) */
   undo: {
-    params: z.object({ steps: z.number().int().min(1), depth: depthSchema }),
+    // unsavedEdits 는 steps 를 다 되돌렸을 때의 값. 덜 되돌렸으면 뷰어는 쓰지 않고 서버가 edit_state 로 맞춘다
+    params: z.object({ steps: z.number().int().min(1), depth: depthSchema, unsavedEdits: unsavedEditsSchema }),
     result: z.object({ undone: z.number(), pageCount: z.number() }),
   },
   /** 지금 문서를 HWPX 로 내보내 다시 열어 비교한다(저장 전 검증). 같을 때만 바이트(base64)를 싣는다. 50MB 를 넘으면 오류 */
   export_hwpx: { params: z.object({}), result: saveExportSchema },
   /**
-   * 서버 편집 기록의 상태를 뷰어에 맞춘다(저장·편집·되돌리기 뒤). 뷰어는 unsavedEdits 가 0 이 아니면 탭을 닫거나 새로고침할 때
+   * 서버 편집 기록의 상태를 뷰어에 맞춘다(저장 뒤, 되돌리기가 덜 되돌렸을 때). 뷰어는 unsavedEdits 가 0 이 아니면 탭을 닫거나 새로고침할 때
    * 확인 창을 띄우고, 상태 줄을 마지막 파일 이름으로 둔다. 저장하지 않은 편집 수는 서버(EditLog)만 센다
    */
   edit_state: { params: z.object({ fileName: z.string(), unsavedEdits: z.number().int().min(0) }), result: z.object({}) },

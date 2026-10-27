@@ -83,8 +83,9 @@ const sampleParams: { [M in ViewerMethod]: ViewerParams<M> } = {
   edit: {
     operation: { kind: 'replace_text', target: { id: 'b1', anchor: { section: 0, paragraph: 0, part: 'text' } }, text: '새 글자' },
     depth: 0,
+    unsavedEdits: 1,
   },
-  undo: { steps: 1, depth: 1 },
+  undo: { steps: 1, depth: 1, unsavedEdits: 0 },
   export_hwpx: {},
   edit_state: { fileName: '공문-수정.hwpx', unsavedEdits: 0 },
 };

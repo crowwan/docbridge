@@ -83,6 +83,7 @@ describe('SPEC-002 글자 바꾸기·되돌리기 도구 (replace_text · undo)'
         text: '11. 7.',
       },
       depth: 0,
+      unsavedEdits: 1,
     });
   });
 
@@ -162,8 +163,7 @@ describe('SPEC-002 글자 바꾸기·되돌리기 도구 (replace_text · undo)'
     const read = json('get_outline');
     await Promise.all([edit, read]);
 
-    // 편집은 뷰어에 편집 상태(edit_state, 확인 창)를 보내는 데까지가 한 덩이다
-    expect(viewer.history.map((request) => request.method).slice(-3)).toEqual(['edit', 'edit_state', 'get_blocks']);
+    expect(viewer.history.map((request) => request.method).slice(-2)).toEqual(['edit', 'get_blocks']);
     expect(session.document?.pageCount).toBeGreaterThan(1);
     expect(session.document?.pageCount).toBe(rhwp.editor().doc.pageCount());
     await json('undo');

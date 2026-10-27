@@ -19,3 +19,4 @@
   - 새로고침: 서버는 `new EditLog()`(depth 0), 뷰어는 load_document 로 새 `DocumentEditor`(depth 0). 테스트로 다음 replace_text·undo 확인.
   - 되돌리기 칸 중복: `core/bounded-stack.ts` 로 합침(EditHistory·EditLog).
   - 테스트 편집은 실제 replace_text·undo. id 표를 옮기는 편집(#20 넣기)은 아직 없어 서버 id 표만 흉내낸 테스트 하나.
+- 2026-10-27 PR #25 재리뷰: 원본 판정은 .hwpx 붙인 뒤 + 링크 따라간 inode, writeSave 도 `protectedPath` 로 쓰기 직전 재확인. overwrite 임시 파일은 realpath 폴더. 복사 대체 실패 시 대상 삭제. overwrite 는 path 있을 때만. `~` 처리 `server/paths.ts`. 새로고침 load 실패(문서 비움)도 알림. 편집·undo 요청 params 에 `unsavedEdits`(EditLog.unsavedAfterRecord/AfterUndo) — 덜 되돌렸을 때만 edit_state 따로. `syncViewerEditState` 삭제.

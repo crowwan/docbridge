@@ -22,12 +22,15 @@ export interface RhwpViewer {
   editor: () => DocumentEditor;
   /** 받은 edit_state 들(순서대로) */
   readonly editStates: Array<ViewerParams<'edit_state'>>;
+  /** 뷰어가 아는 저장하지 않은 편집 수(확인 창 기준): 편집·되돌리기 요청에 실려 오거나 edit_state 로 온 값 */
+  unsavedEdits(): number;
 }
 
 export function rhwpViewer(options: RhwpViewerOptions = {}): RhwpViewer {
   initRhwpForNode();
   let editor: DocumentEditor | undefined;
   const editStates: Array<ViewerParams<'edit_state'>> = [];
+  let unsaved = 0;
   const opened = () => {
     if (editor === undefined) throw new Error('뷰어에 열린 문서가 없습니다');
     return editor;
@@ -39,6 +42,7 @@ export function rhwpViewer(options: RhwpViewerOptions = {}): RhwpViewer {
         editor?.doc.free();
         editor = undefined;
         editor = new DocumentEditor(new HwpDocument(new Uint8Array(Buffer.from(request.params.data, 'base64'))));
+        unsaved = 0;
         return { pageCount: editor.doc.pageCount(), blocks: editor.blocks.map((block) => blockPositionSchema.parse(block)) };
       }
       case 'get_blocks':
@@ -59,18 +63,23 @@ export function rhwpViewer(options: RhwpViewerOptions = {}): RhwpViewer {
         const changed = editor.edit(request.params.operation, request.params.depth, (changedBlocks, blocks) => {
           unmarked = blockBoxes(editor.doc, blocks, changedBlocks.map(({ anchor }) => anchor)).unmarked;
         });
+        unsaved = request.params.unsavedEdits;
         return { changed, unmarked, pageCount: editor.doc.pageCount() };
       }
-      case 'undo':
-        return { undone: opened().undo(request.params.steps, request.params.depth), pageCount: opened().doc.pageCount() };
+      case 'undo': {
+        const undone = opened().undo(request.params.steps, request.params.depth);
+        if (undone === request.params.steps) unsaved = request.params.unsavedEdits;
+        return { undone, pageCount: opened().doc.pageCount() };
+      }
       case 'export_hwpx':
         return exportForSave(opened().doc, options.reopen === undefined ? {} : { reopen: options.reopen });
       case 'edit_state':
         editStates.push(request.params);
+        unsaved = request.params.unsavedEdits;
         return {};
     }
   };
-  return { handle, editor: opened, editStates };
+  return { handle, editor: opened, editStates, unsavedEdits: () => unsaved };
 }
 
 /** 요청 처리 함수만 쓰는 테스트용 */

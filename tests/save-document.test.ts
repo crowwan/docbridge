@@ -281,27 +281,31 @@ describe('SPEC-002 저장 (save_document)', () => {
     const { path } = await save();
 
     expect(session.unsavedEdits).toBe(0);
-    expect(viewer.editStates.at(-1)).toEqual({ fileName: '공문-수정.hwpx', unsavedEdits: 0 });
+    expect(viewer.editStates).toEqual([{ fileName: '공문-수정.hwpx', unsavedEdits: 0 }]);
+    expect(viewer.unsavedEdits()).toBe(0);
     const disconnected = once(bridge.events, 'disconnected');
     sockets.at(-1)?.close();
     await disconnected;
     expect((await call('get_outline')).content[0]?.text).toBe(`${NOT_CONNECTED} 마지막 파일: ${path}`);
   });
 
-  it('편집·저장·되돌리기마다 서버의 저장하지 않은 편집 수를 뷰어에 보낸다(저장 뒤 되돌리면 다시 1)', async () => {
-    const viewer = await connectRhwp();
+  it('편집·되돌리기 요청에 편집 뒤 저장하지 않은 편집 수를 실어 보내고, 저장만 따로 알린다(저장 뒤 되돌리면 다시 1)', async () => {
+    const socket = await FakeViewer.connect(bridge.viewerUrl);
+    sockets.push(socket);
+    const viewer = rhwpViewer();
+    socket.serve(viewer.handle);
     await openCopy('notice.hwpx', '공문.hwpx');
-    await replaceFirst('고친 제목');
-    await save();
 
+    await replaceFirst('고친 제목');
+    expect(viewer.unsavedEdits()).toBe(1);
+    await save();
+    expect(viewer.unsavedEdits()).toBe(0);
     // 저장한 편집을 되돌리면 저장한 파일과 다시 달라진다
     expect((await call('undo')).isError).toBeUndefined();
+    expect(viewer.unsavedEdits()).toBe(1);
 
-    expect(viewer.editStates).toEqual([
-      { fileName: '공문.hwpx', unsavedEdits: 1 },
-      { fileName: '공문-수정.hwpx', unsavedEdits: 0 },
-      { fileName: '공문-수정.hwpx', unsavedEdits: 1 },
-    ]);
+    const methods = socket.history.map((request) => request.method).filter((method) => method !== 'get_blocks');
+    expect(methods).toEqual(['load_document', 'edit', 'export_hwpx', 'edit_state', 'undo']);
   });
 
   it('저장하는 사이 들어온 문서 열기·편집은 저장이 끝난 뒤에 한다(저장한 문서의 상태가 섞이지 않는다)', async () => {
@@ -323,7 +327,8 @@ describe('SPEC-002 저장 (save_document)', () => {
     expect(result.warnings).toBeUndefined();
     expect(blockTexts(new Uint8Array(await readFile(result.path)))).toContain('저장할 글자');
     expect(opened().path).toBe(other);
-    expect(viewer.editStates.map((state) => state.fileName)).toEqual(['공문.hwpx', '공문-수정.hwpx', '공문-수정.hwpx']);
+    expect(viewer.editStates.map((state) => state.fileName)).toEqual(['공문-수정.hwpx']);
+    expect(viewer.unsavedEdits()).toBe(0);
   });
 
   it('파일을 쓰지 못하면 이유를 돌려주고 마지막 파일과 저장하지 않은 편집 수를 그대로 둔다', async () => {
@@ -336,7 +341,8 @@ describe('SPEC-002 저장 (save_document)', () => {
 
     expect(opened().path).toBe(source);
     expect(session.unsavedEdits).toBe(1);
-    expect(viewer.editStates).toEqual([{ fileName: '공문.hwpx', unsavedEdits: 1 }]);
+    expect(viewer.editStates).toEqual([]);
+    expect(viewer.unsavedEdits()).toBe(1);
   });
 
   it('뷰어가 보낸 파일이 크기 상한을 넘거나 길이가 맞지 않으면 쓰지 않는다', () => {
@@ -427,7 +433,7 @@ describe('SPEC-002 새로고침과 저장하지 않은 편집', () => {
     const undone = await call('undo');
     expect(undone.isError).toBeUndefined();
     expect(session.unsavedEdits).toBe(0);
-    expect(viewer.editStates.at(-1)).toEqual({ fileName: '공문.hwpx', unsavedEdits: 0 });
+    expect(viewer.unsavedEdits()).toBe(0);
   });
 
   it('새로고침한 탭이 다시 띄우기 전에 끊겨도 사라진 편집 알림은 한 번만 붙는다', async () => {

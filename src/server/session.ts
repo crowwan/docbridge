@@ -153,15 +153,9 @@ export class DocumentSession {
     await this.pushEditState(document);
   }
 
-  /** 뷰어에 지금 편집 상태를 보낸다(편집·되돌리기·저장은 스스로 보낸다. 테스트처럼 기록을 직접 바꿨을 때) */
-  syncViewerEditState(): Promise<void> {
-    return this.enqueue(async () => {
-      if (this.current !== undefined) await this.pushEditState(this.current);
-    });
-  }
-
   /**
-   * 뷰어에 편집 상태(마지막 파일 이름·저장하지 않은 편집 수)를 보낸다. 줄 안에서 부른다. 뷰어 확인 창은 이 값만 따른다.
+   * 뷰어에 편집 상태(마지막 파일 이름·저장하지 않은 편집 수)를 보낸다. 줄 안에서 부른다(저장 뒤 등. 편집·되돌리기는 요청에 실어 보낸다).
+   * 뷰어 확인 창은 서버가 준 값만 따른다.
    * 실패해도(뷰어가 끊김 등) 도구는 실패시키지 않는다 — 확인 창 상태만 어긋나고, 새 뷰어는 0 에서 시작한다
    */
   private async pushEditState(document: OpenedDocument): Promise<void> {
@@ -261,11 +255,14 @@ export class DocumentSession {
       const document = this.openedDocument();
       const operation = operationFor(document);
       const before = document.ids.clone();
-      const { changed, unmarked, pageCount } = await this.send('edit', { operation, depth: document.edits.depth });
+      const { changed, unmarked, pageCount } = await this.send('edit', {
+        operation,
+        depth: document.edits.depth,
+        unsavedEdits: document.edits.unsavedAfterRecord(),
+      });
       updateIds(document.ids);
       document.edits.record(label, before);
       document.pageCount = pageCount;
-      await this.pushEditState(document);
       const { ids } = document;
       return {
         changed: changed.map(({ anchor, block }) => ({ id: ids.idAt(anchor), block })),
@@ -283,13 +280,18 @@ export class DocumentSession {
       const document = this.openedDocument();
       const available = Math.min(steps, document.edits.editCount);
       if (available === 0) return [];
-      const { undone, pageCount } = await this.send('undo', { steps: available, depth: document.edits.depth });
+      const { undone, pageCount } = await this.send('undo', {
+        steps: available,
+        depth: document.edits.depth,
+        unsavedEdits: document.edits.unsavedAfterUndo(available),
+      });
       document.pageCount = pageCount;
       // 뷰어가 되돌린 만큼만(뷰어 스냅샷이 서버 기록보다 적을 수 있다 — 새로고침 뒤 등)
       const taken = document.edits.undo(undone);
       if (taken === undefined) return [];
       document.ids = taken.state;
-      await this.pushEditState(document);
+      // 뷰어가 덜 되돌렸으면 요청에 실은 값이 틀리다 — 따로 맞춘다
+      if (undone !== available) await this.pushEditState(document);
       return taken.labels;
     });
   }

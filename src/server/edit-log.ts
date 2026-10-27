@@ -36,8 +36,22 @@ export class EditLog<S> {
 
   /** 마지막으로 열거나 저장한 파일과 지금 문서 사이의 편집 수. 저장한 뒤 되돌린 것도 센다 */
   get unsavedEdits(): number {
-    const shared = commonPrefix(this.chain, this.savedChain);
-    return this.chain.length - shared + (this.savedChain.length - shared);
+    return this.unsavedFor(this.chain);
+  }
+
+  /** 편집 하나를 더 기록하면 될 저장하지 않은 편집 수(뷰어 편집 요청에 미리 싣는다) */
+  unsavedAfterRecord(): number {
+    return this.unsavedFor([...this.chain, this.nextState]);
+  }
+
+  /** steps 만큼(있는 만큼만) 되돌리면 될 저장하지 않은 편집 수 */
+  unsavedAfterUndo(steps: number): number {
+    return this.unsavedFor(this.chain.slice(0, this.chain.length - Math.min(steps, this.entries.size)));
+  }
+
+  private unsavedFor(chain: number[]): number {
+    const shared = commonPrefix(chain, this.savedChain);
+    return chain.length - shared + (this.savedChain.length - shared);
   }
 
   /** 편집 순번: 연 뒤 적용한 편집 수 − 되돌린 수(20칸 상한과 상관없음). 뷰어 DocumentEditor.depth 와 같아야 한다 */

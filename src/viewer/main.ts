@@ -280,9 +280,9 @@ function handleRequest(request: RequestMessage): unknown {
       clearHighlights();
       return {};
     case 'edit':
-      return applyEdit(request.params.operation, request.params.depth);
+      return applyEdit(request.params.operation, request.params.depth, request.params.unsavedEdits);
     case 'undo':
-      return undoEdits(request.params.steps, request.params.depth);
+      return undoEdits(request.params.steps, request.params.depth, request.params.unsavedEdits);
     case 'export_hwpx':
       return exportHwpx();
     case 'edit_state':
@@ -311,7 +311,8 @@ function openedBlocks(): Block[] {
  * 편집하고 다시 그린 뒤 바뀐 블록에 표시를 남긴다. 다시 그리기·표시까지 성공해야 편집 기록에 들어간다.
  * 그 사이 던지면 문서는 스냅샷으로 돌아가므로 화면도 되돌린 문서로 다시 그린다
  */
-function applyEdit(operation: EditOperation, depth: number): ViewerResult<'edit'> {
+/** unsaved: 편집이 성공한 뒤의 저장하지 않은 편집 수(서버가 계산해 실어 보낸다) */
+function applyEdit(operation: EditOperation, depth: number, unsaved: number): ViewerResult<'edit'> {
   const editor = openedEditor();
   let unmarked: BlockAnchor[] = [];
   let drawn = false;
@@ -323,6 +324,7 @@ function applyEdit(operation: EditOperation, depth: number): ViewerResult<'edit'
       paintEditMarks(marks.boxes);
       unmarked = marks.unmarked;
     });
+    unsavedEdits = unsaved;
     return { changed, unmarked, pageCount: editor.doc.pageCount() };
   } catch (error) {
     if (drawn) redrawAfterFailure(editor.doc);
@@ -339,9 +341,11 @@ function redrawAfterFailure(doc: HwpDocument): void {
   }
 }
 
-function undoEdits(steps: number, depth: number): ViewerResult<'undo'> {
+/** unsaved: steps 를 다 되돌렸을 때의 저장하지 않은 편집 수. 덜 되돌렸으면 서버가 edit_state 로 맞춘다 */
+function undoEdits(steps: number, depth: number, unsaved: number): ViewerResult<'undo'> {
   const editor = openedEditor();
   const undone = editor.undo(steps, depth);
+  if (undone === steps) unsavedEdits = unsaved;
   if (undone > 0) redraw(editor.doc, 'keep');
   return { undone, pageCount: editor.doc.pageCount() };
 }
