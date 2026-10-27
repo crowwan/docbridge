@@ -7,3 +7,4 @@
 - [x] 뷰어 beforeunload + E2E
 - [x] 스펙·README·CLAUDE.md
 - [x] PR #25 (CI 통과)
+- [x] #19 머지 뒤 main 으로 옮기고 편집 경로 연결·되돌리기 칸 합치기

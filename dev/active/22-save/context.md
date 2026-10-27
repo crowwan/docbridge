@@ -13,3 +13,9 @@
 - 새로고침: 사라진 편집 = `edits.unsavedEdits`(#19, 저장 뒤 되돌린 것도 셈). 있으면 id 표를 `savedIds.clone()`, 없으면 지금 표 그대로(기존 테스트의 같은 객체 단언 유지). 편집 기록은 항상 새로. 알림은 세션 `notices` → mcp.ts 가 다음 도구 결과 content 뒤에 글 한 덩이로(성공·오류 모두, 한 번).
 - (PR #25 리뷰로 바꿈) 뷰어는 저장하지 않은 편집을 세지 않는다. 서버 `EditLog.unsavedEdits` 가 기준이고 `session.syncViewerEditState()` 가 뷰어 요청 `edit_state { fileName, unsavedEdits }` 로 보낸다(저장 뒤, #19 머지 뒤 편집·undo 뒤). 처음 만든 `noteEdit`·`document_saved` 는 없앰 — 저장 뒤 undo 하면 서버 1·뷰어 0 으로 어긋났다.
 - beforeunload 확인 창은 브라우저 고유 창이라 page.screenshot 에 안 찍힌다. E2E 는 `dialog.type() === 'beforeunload'` 로 확인. 페이지를 한 번 눌러야(사용자 활성화) 뜬다.
+- 2026-10-27 #19(PR #26, 69ef30f) 머지 뒤: 이전 커밋들을 main 위로 한 번에 옮김(패치 적용 + 충돌 해결, 백업 브랜치 로컬 `backup/22-save-pre-rebase`).
+  - 편집 경로 연결: `session.edit`·`undo`·`recordSave` 가 줄 안에서 `pushEditState` → 뷰어 `edit_state`. 편집 도구는 손대지 않음.
+  - 저장도 `session.exclusive` 로 같은 줄(편집 전 id 표 사본·뷰어 스냅샷·저장 상태가 한 시점). 그래서 "쓰는 사이 다른 문서" 분기는 없앰. 줄 안에서는 `requestViewer`(ready 를 기다림)를 쓰면 막혀서 `send` 를 넘긴다.
+  - 새로고침: 서버는 `new EditLog()`(depth 0), 뷰어는 load_document 로 새 `DocumentEditor`(depth 0). 테스트로 다음 replace_text·undo 확인.
+  - 되돌리기 칸 중복: `core/bounded-stack.ts` 로 합침(EditHistory·EditLog).
+  - 테스트 편집은 실제 replace_text·undo. id 표를 옮기는 편집(#20 넣기)은 아직 없어 서버 id 표만 흉내낸 테스트 하나.
