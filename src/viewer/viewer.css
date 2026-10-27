@@ -34,6 +34,20 @@ body {
   color: var(--muted);
 }
 
+/* 이 탭의 문서 이름(SPEC-007). Claude 가 "d2 에 넣었습니다" 할 때 어느 탭인지 */
+.doc-name {
+  padding: 0 var(--space-1);
+  border: var(--doc-name-border-width) solid var(--doc-name-border);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: var(--doc-name-size);
+  font-variant-numeric: tabular-nums;
+}
+
+.doc-name[hidden] {
+  display: none;
+}
+
 #pages {
   display: flex;
   flex-direction: column;

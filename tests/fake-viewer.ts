@@ -40,14 +40,7 @@ export class FakeViewer {
       this.history.push(request);
       const handler = this.handler;
       if (handler !== undefined) {
-        let silent = false;
-        const response = answerRequest(String(data), (message) => {
-          const result = handler(message);
-          silent = result === NO_RESPONSE;
-          return result;
-        });
-        if (silent) return;
-        if (response !== undefined) ws.send(JSON.stringify(response));
+        this.answerWith(handler, String(data));
         return;
       }
       if (this.autoResult !== undefined) {
@@ -78,11 +71,24 @@ export class FakeViewer {
   /** 이후 오는 요청마다 바로 이 결과로 응답한다 */
   autoRespond(result: ViewerResult<'load_document'>): void {
     this.autoResult = result;
+    for (const request of this.received.splice(0)) this.respond(request.id, result);
   }
 
-  /** 이후 오는 요청을 handler 로 처리해 응답한다(던지면 오류 응답) */
+  /** 이후 오는 요청(이미 와서 기다리는 요청 포함 — 붙자마자 온 문서 열기 등)을 handler 로 처리해 응답한다(던지면 오류 응답) */
   serve(handler: (request: RequestMessage) => unknown): void {
     this.handler = handler;
+    for (const request of this.received.splice(0)) this.answerWith(handler, JSON.stringify(request));
+  }
+
+  private answerWith(handler: (request: RequestMessage) => unknown, data: string): void {
+    let silent = false;
+    const response = answerRequest(data, (message) => {
+      const result = handler(message);
+      silent = result === NO_RESPONSE;
+      return result;
+    });
+    if (silent) return;
+    if (response !== undefined) this.ws.send(JSON.stringify(response));
   }
 
   respond(id: number, result: ViewerResult<'load_document'>): void {

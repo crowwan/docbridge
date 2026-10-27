@@ -11,7 +11,7 @@ import type { BlockAnchor } from '../src/core/block-ids.ts';
 import { INACTIVE_VIEWER, startBridge, type Bridge } from '../src/server/bridge.ts';
 import { NOTHING_TO_UNDO } from '../src/server/edit-tools.ts';
 import { createMcpServer } from '../src/server/mcp.ts';
-import { DocumentSession } from '../src/server/session.ts';
+import { DocumentSessions } from '../src/server/documents.ts';
 import { LATE_USER_REQUEST, STALE_USER_EDIT } from '../src/server/user-edit.ts';
 import {
   REQUEST_TIMEOUT_MS,
@@ -22,6 +22,7 @@ import {
 } from '../src/shared/protocol.ts';
 import { FakeViewer, NO_RESPONSE } from './fake-viewer.ts';
 import { fixturePath } from './fixtures.ts';
+import { withoutDoc } from './tool-result.ts';
 import { rhwpViewer } from './rhwp-viewer.ts';
 
 const toolResultSchema = z.object({
@@ -35,7 +36,7 @@ const B11_AFTER = '회신 기한: 2026. 11. 7.(금)까지 참석 인원을 회�
 
 describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기·알림', () => {
   let bridge: Bridge;
-  let session: DocumentSession;
+  let sessions: DocumentSessions;
   let client: Client;
   let viewer: FakeViewer;
   const sockets: FakeViewer[] = [];
@@ -45,7 +46,7 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
   const json = async (name: string, args: Record<string, unknown> = {}): Promise<unknown> => {
     const result = await call(name, args);
     if (result.isError) throw new Error(result.content[0]?.text);
-    return JSON.parse(result.content[0]?.text ?? '');
+    return withoutDoc(JSON.parse(result.content[0]?.text ?? ''));
   };
   /** get_outline 의 블록 id(문서 순서)와 붙은 알림 */
   const outline = async () => {
@@ -62,12 +63,12 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
   const requests = (method: RequestMessage['method']) => viewer.history.filter((request) => request.method === method);
   /** 뷰어가 가진 블록 위치(서버 id 표와 같다) */
   const anchorOf = (id: string): BlockAnchor => {
-    const anchor = session.document?.ids.anchor(id);
+    const anchor = sessions.document?.ids.anchor(id);
     if (anchor === undefined) throw new Error(`${id} 가 없다`);
     return anchor;
   };
   /** 서버가 아는 지금 문서 상태 번호(뷰어가 마지막으로 받은 편집·되돌리기의 상태 번호와 같다) */
-  const serverState = () => session.document?.edits.state ?? 0;
+  const serverState = () => sessions.document?.edits.state ?? 0;
   /** 뷰어가 보고 있는 문서의 상태 번호로 사람 편집을 보낸다 */
   const userEdit = (edit: UserEdit, state = serverState()) => viewer.userRequest('user_edit', { edit, state });
   /**
@@ -87,9 +88,9 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
 
   beforeEach(async () => {
     bridge = await startBridge({ port: 0, viewerDir: tmpdir() });
-    session = new DocumentSession(bridge, { openBrowser: vi.fn() });
+    sessions = new DocumentSessions(bridge, { openBrowser: vi.fn() });
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
-    await createMcpServer(session).connect(serverSide);
+    await createMcpServer(sessions).connect(serverSide);
     client = new Client({ name: 'docbridge-test', version: '0.0.0' });
     await client.connect(clientSide);
     viewer = await FakeViewer.connect(bridge.viewerUrl);
@@ -148,7 +149,7 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
       [0, 1],
       [1, 2],
     ]);
-    expect(session.unsavedEdits).toBe(2);
+    expect(sessions.unsavedEdits).toBe(2);
     // 편집 요청마다 편집 뒤 상태 번호를 실어 보낸다(뷰어가 사람 편집에 실어 돌려준다)
     expect(requests('edit').map(({ params }) => ('state' in params ? params.state : undefined))).toEqual([1, 2]);
     expect(serverState()).toBe(2);
@@ -166,7 +167,7 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
 
     expect(failure(await user)).toBe(STALE_USER_EDIT);
     expect(await readText('b11')).toBe(B11_BEFORE);
-    expect(session.editCount).toBe(1);
+    expect(sessions.editCount).toBe(1);
   });
 
   it('뷰어가 Claude 편집을 적용한 뒤 보낸 사람 편집(새 상태 번호)은 서버 기록이 끝나기 전에 와도 그 뒤에 적용한다', async () => {
@@ -183,10 +184,10 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
     succeeded(await user);
     expect(await readText('b1')).toBe('라마바구청');
     expect(await readText('b11')).toBe(B11_AFTER);
-    expect(session.editCount).toBe(2);
+    expect(sessions.editCount).toBe(2);
   });
 
-  it('문서를 바꾸기 전 화면에서 보낸 사람 편집은 새 문서에 적용하지 않고 거부한다 (open_document — 새 문서도 상태 번호 0)', async () => {
+  it('같은 파일을 다시 열기 전 화면에서 보낸 사람 편집은 다시 연 문서에 적용하지 않고 거부한다 (open_document 같은 doc — 다시 연 문서도 상태 번호 0)', async () => {
     const held = holdNext('load_document');
     // 같은 파일을 다시 열어 블록 위치가 같다 — 위치·번호만 보면 새 문서에 그대로 적용된다
     const opening = json('open_document', { path: fixturePath('notice.hwpx') });
@@ -199,27 +200,43 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
 
     expect(failure(await user)).toBe(STALE_USER_EDIT);
     expect(await readText('b11')).toBe(B11_BEFORE);
-    expect(session.editCount).toBe(0);
+    expect(sessions.editCount).toBe(0);
     expect((await outline()).notices).toEqual([]);
   });
 
-  it('문서를 바꾸기 전 화면에서 보낸 사람 편집은 새로 만든 문서에도 적용하지 않고 거부한다 (create_document)', async () => {
+  it('SPEC-007 다른 탭에 새 문서를 만드는 중에 보낸 사람 편집은 그 탭 문서(d1)에 적용하고, 새 문서(d2)는 그대로다', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'docbridge-user-edit-'));
-    const held = holdNext('create_document');
-    const creating = json('create_document', { path: join(dir, '새 문서.hwpx') });
-    const { release } = await held;
+    const b1 = anchorOf('b1');
+    // 새 문서는 빈 탭(다음 문서가 쓰는 탭)에 만들어진다. 만들기 응답을 붙잡아 그사이 d1 탭에서 고친다
+    const blank = await FakeViewer.connect(bridge.viewerUrl);
+    sockets.push(blank);
+    const other = rhwpViewer();
+    let releaseCreate = () => {};
+    const createHeld = new Promise<void>((resolve) => {
+      blank.serve((request) => {
+        const result = other.handle(request);
+        if (request.method !== 'create_document') return result;
+        releaseCreate = () => blank.respondWith(request.id, result);
+        resolve();
+        return NO_RESPONSE;
+      });
+    });
+    const creating = call('create_document', { path: join(dir, '새 문서.hwpx') });
+    await createHeld;
 
-    // 새 문서의 첫 문단도 이전 문서 b1 과 같은 위치다
-    const user = userEdit({ kind: 'replace_text', target: { anchor: anchorOf('b1') }, text: '이전 문서에서 고친 글자' }, 0);
-    release();
-    await creating;
+    // 새 문서의 첫 문단도 d1 b1 과 같은 위치다 — 문서가 섞이면 엉뚱한 문서에 들어간다
+    const user = userEdit({ kind: 'replace_text', target: { anchor: b1 }, text: '라마바구청' }, 0);
+    succeeded(await user);
+    releaseCreate();
+    expect(JSON.parse((await creating).content[0]?.text ?? '')).toMatchObject({ doc: 'd2' });
 
-    expect(failure(await user)).toBe(STALE_USER_EDIT);
-    expect(await readText('b1')).toBe('');
-    expect(session.editCount).toBe(0);
+    expect(other.editor().blocks.map((block) => (block.kind === 'paragraph' ? block.text : block.kind))).toEqual(['']);
+    expect(await json('read_blocks', { doc: 'd1', ids: ['b1'] })).toMatchObject({ blocks: [{ text: '라마바구청' }] });
+    expect(sessions.get('d1').editCount).toBe(1);
+    expect(sessions.get('d2').editCount).toBe(0);
   });
 
-  it('문서를 바꾸기 전 화면에서 누른 ⌘Z 는 새 문서에 쓰지 않고 거부한다', async () => {
+  it('같은 파일을 다시 열기 전 화면에서 누른 ⌘Z 는 다시 연 문서에 쓰지 않고 거부한다', async () => {
     const held = holdNext('load_document');
     const opening = json('open_document', { path: fixturePath('notice.hwpx') });
     const { release } = await held;
@@ -232,7 +249,7 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
     expect(requests('undo')).toEqual([]);
   });
 
-  it('문서를 바꾸면 이전 문서에서 사람이 고친 알림은 버린다(새 문서의 블록 id 와 헷갈리지 않게)', async () => {
+  it('같은 파일을 다시 열면 그 문서에서 사람이 고친 알림은 버린다(다시 연 문서의 블록 id 와 헷갈리지 않게)', async () => {
     succeeded(await userEdit(replaceB11()));
 
     const opened = await call('open_document', { path: fixturePath('notice.hwpx') });
@@ -244,10 +261,10 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
   it('뷰어를 새로고침하면 사람이 고친 알림 대신 사라진 편집 수만 알린다', async () => {
     succeeded(await userEdit(replaceB11()));
 
-    const newer = await FakeViewer.connect(bridge.viewerUrl);
+    const newer = await FakeViewer.connect(bridge.viewerUrlFor('d1'));
     sockets.push(newer);
     newer.serve(rhwpViewer().handle);
-    await session.ready();
+    await sessions.ready();
 
     expect((await outline()).notices).toEqual(['뷰어를 새로고침해서 저장하지 않은 편집 1개가 사라졌습니다.']);
   });
@@ -265,7 +282,7 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
     const seen = serverState();
     await json('undo');
     await json('insert_paragraph', { after: 'b5', text: '새 문단' });
-    expect(session.document?.edits.depth).toBe(1);
+    expect(sessions.document?.edits.depth).toBe(1);
 
     expect(failure(await userEdit(replaceB11(), seen))).toBe(STALE_USER_EDIT);
     expect(await readText('b11')).toBe(B11_BEFORE);
@@ -293,7 +310,7 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
     expect(await readText('b11')).toBe(B11_BEFORE);
 
     expect(failure(await viewer.userRequest('user_undo', {}))).toBe(NOTHING_TO_UNDO);
-    expect(session.editCount).toBe(0);
+    expect(sessions.editCount).toBe(0);
   });
 
   it('AC-9 사람 편집 뒤 다음 도구 결과에 notices 로 한 번 알린다', async () => {
@@ -321,7 +338,7 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
     expect(failure(await userEdit(replaceB11(), 3))).toBe(STALE_USER_EDIT);
 
     expect(requests('edit')).toEqual([]);
-    expect(session.editCount).toBe(0);
+    expect(sessions.editCount).toBe(0);
     expect((await outline()).notices).toEqual([]);
   });
 
@@ -330,7 +347,7 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
 
     expect(error).toContain('구역 첫 문단은 지울 수 없습니다');
     expect(requests('edit')).toEqual([]);
-    expect(session.editCount).toBe(0);
+    expect(sessions.editCount).toBe(0);
     expect((await outline()).notices).toEqual([]);
   });
 
@@ -379,7 +396,7 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
       expect(failure(await user)).toBe(LATE_USER_REQUEST);
       expect(failure(await undo)).toBe(LATE_USER_REQUEST);
       expect(await readText('b11')).toBe(B11_BEFORE);
-      expect(session.editCount).toBe(1);
+      expect(sessions.editCount).toBe(1);
     } finally {
       vi.useRealTimers();
     }
@@ -410,12 +427,12 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
   });
 
   it('요청을 받는 뷰어가 아닌 이전 탭의 사람 편집은 거부한다', async () => {
-    const newer = await FakeViewer.connect(bridge.viewerUrl);
+    const newer = await FakeViewer.connect(bridge.viewerUrlFor('d1'));
     sockets.push(newer);
     newer.serve(rhwpViewer().handle);
-    await session.ready();
+    await sessions.ready();
 
     expect(failure(await userEdit(replaceB11()))).toBe(INACTIVE_VIEWER);
-    expect(session.editCount).toBe(0);
+    expect(sessions.editCount).toBe(0);
   });
 });

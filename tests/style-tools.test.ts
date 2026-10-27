@@ -13,10 +13,11 @@ import { createBlankDocument } from '../src/core/rhwp-node.ts';
 import { findStyle } from '../src/core/styles.ts';
 import { startBridge, type Bridge } from '../src/server/bridge.ts';
 import { createMcpServer } from '../src/server/mcp.ts';
-import { DocumentSession } from '../src/server/session.ts';
+import { DocumentSessions } from '../src/server/documents.ts';
 import type { RequestMessage } from '../src/shared/protocol.ts';
 import { FakeViewer } from './fake-viewer.ts';
 import { fixturePath } from './fixtures.ts';
+import { withoutDoc } from './tool-result.ts';
 import { rhwpViewer, type RhwpViewer } from './rhwp-viewer.ts';
 
 const toolResultSchema = z.object({
@@ -33,7 +34,7 @@ const styleAtSchema = z.object({ name: z.string() });
 
 describe('SPEC-003 스타일 도구 (list_styles · insert_paragraph style · set_style)', () => {
   let bridge: Bridge;
-  let session: DocumentSession;
+  let sessions: DocumentSessions;
   let client: Client;
   let viewer: FakeViewer;
   let rhwp: RhwpViewer;
@@ -43,7 +44,12 @@ describe('SPEC-003 스타일 도구 (list_styles · insert_paragraph style · se
   const json = async (name: string, args: Record<string, unknown> = {}): Promise<unknown> => {
     const result = await call(name, args);
     if (result.isError) throw new Error(result.content[0]?.text);
-    return JSON.parse(result.content[0]?.text ?? '');
+    return withoutDoc(JSON.parse(result.content[0]?.text ?? ''));
+  };
+  /** 다른 파일을 이 탭에서 연다: 지금 문서를 닫고(빈 탭이 된다) 연다 — 문서마다 탭이라(SPEC-007) 그냥 열면 새 탭이 필요하다 */
+  const openInPlace = async (path: string) => {
+    await json('close_document', { discard: true });
+    return json('open_document', { path });
   };
   const errorText = async (name: string, args: Record<string, unknown> = {}) => {
     const result = await call(name, args);
@@ -60,7 +66,7 @@ describe('SPEC-003 스타일 도구 (list_styles · insert_paragraph style · se
     );
   /** 뷰어 문서에서 블록 id 의 문단 위치(테스트가 rhwp 로 모양을 직접 읽는다) */
   const paragraphOf = (id: string) => {
-    const anchor = session.document?.ids.anchor(id);
+    const anchor = sessions.document?.ids.anchor(id);
     if (anchor === undefined) throw new Error(`${id} 가 id 표에 없다`);
     return anchor.paragraph;
   };
@@ -71,9 +77,9 @@ describe('SPEC-003 스타일 도구 (list_styles · insert_paragraph style · se
 
   beforeEach(async () => {
     bridge = await startBridge({ port: 0, viewerDir: tmpdir() });
-    session = new DocumentSession(bridge, { openBrowser: vi.fn() });
+    sessions = new DocumentSessions(bridge, { openBrowser: vi.fn() });
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
-    await createMcpServer(session).connect(serverSide);
+    await createMcpServer(sessions).connect(serverSide);
     client = new Client({ name: 'docbridge-test', version: '0.0.0' });
     await client.connect(clientSide);
     viewer = await FakeViewer.connect(bridge.viewerUrl);
@@ -106,7 +112,7 @@ describe('SPEC-003 스타일 도구 (list_styles · insert_paragraph style · se
     blank.updateStyleShapes(findStyle(blank, '개요 1').id, '{}', JSON.stringify({ headType: 'None' }));
     const path = join(await mkdtemp(join(tmpdir(), 'docbridge-styles-')), '양식.hwpx');
     await writeFile(path, exportVerifiedHwpx(blank).bytes);
-    await json('open_document', { path });
+    await openInPlace(path);
 
     const { styles } = z.object({ styles: z.array(z.looseObject({ name: z.string() })) }).parse(await json('list_styles'));
 
@@ -170,7 +176,7 @@ describe('SPEC-003 스타일 도구 (list_styles · insert_paragraph style · se
     expect(await errorText('insert_paragraph', { after: 'b1', text: '요약', style: '큰제목' })).toBe(
       '없는 스타일입니다: 큰제목. list_styles 로 목록을 보세요.',
     );
-    expect(session.editCount).toBe(0);
+    expect(sessions.editCount).toBe(0);
     expect(await numbered()).toEqual(before);
   });
 
@@ -213,14 +219,14 @@ describe('SPEC-003 스타일 도구 (list_styles · insert_paragraph style · se
   });
 
   it('AC-5 표·누름틀 블록은 뷰어에 보내지 않고 거부한다', async () => {
-    await json('open_document', { path: fixturePath('notice.hwpx') });
+    await openInPlace(fixturePath('notice.hwpx'));
 
     // notice: b12 = 표, b3 = 누름틀
     expect(await errorText('set_style', { ids: ['b11', 'b12', 'b3'], style: '개요 1' })).toBe(
       '표·누름틀 블록은 스타일을 바꿀 수 없습니다: b12, b3. 문단 블록 id 를 주세요(표·누름틀이 든 문단은 get_outline 의 그 문단 블록).',
     );
     expect(requests('edit')).toHaveLength(0);
-    expect(session.editCount).toBe(0);
+    expect(sessions.editCount).toBe(0);
   });
 
   it('AC-5 없는 스타일·없는 id 는 바꾸지 않고 거부한다', async () => {
@@ -230,7 +236,7 @@ describe('SPEC-003 스타일 도구 (list_styles · insert_paragraph style · se
     expect(await errorText('set_style', { ids: ['b99'], style: '개요 1' })).toBe(
       '없는 블록 id 입니다: b99. get_outline 을 다시 불러 지금 블록 id 를 확인하세요.',
     );
-    expect(session.editCount).toBe(0);
+    expect(sessions.editCount).toBe(0);
     expect(await numbered()).toEqual(before);
   });
 });

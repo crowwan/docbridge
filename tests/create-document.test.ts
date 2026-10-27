@@ -24,9 +24,11 @@ import {
   writeSave,
 } from '../src/server/save-path.ts';
 import { saveDocument } from '../src/server/save-tool.ts';
-import { discardedNewDocumentMessage, DocumentSession, NO_DOCUMENT, newDocumentLostMessage } from '../src/server/session.ts';
+import { DocumentSessions } from '../src/server/documents.ts';
+import { discardedNewDocumentMessage, NO_DOCUMENT, newDocumentLostMessage } from '../src/server/session.ts';
 import { FakeViewer } from './fake-viewer.ts';
 import { fixturePath, openFixture } from './fixtures.ts';
+import { withoutDoc } from './tool-result.ts';
 import { rhwpViewer, type RhwpViewer } from './rhwp-viewer.ts';
 
 const toolResultSchema = z.object({
@@ -54,7 +56,7 @@ const outlineSchema = z.object({ blocks: z.array(z.object({ id: z.string(), kind
 const headerFooterSchema = z.looseObject({ exists: z.boolean(), text: z.string().optional() });
 
 let bridge: Bridge;
-let session: DocumentSession;
+let sessions: DocumentSessions;
 let client: Client;
 let dir: string;
 const sockets: FakeViewer[] = [];
@@ -65,7 +67,7 @@ const call = async (name: string, args: Record<string, unknown> = {}) =>
 const json = async (name: string, args: Record<string, unknown> = {}): Promise<unknown> => {
   const result = await call(name, args);
   if (result.isError) throw new Error(result.content[0]?.text);
-  return JSON.parse(result.content[0]?.text ?? '');
+  return withoutDoc(JSON.parse(result.content[0]?.text ?? ''));
 };
 const toolError = async (name: string, args: Record<string, unknown> = {}) => {
   const result = await call(name, args);
@@ -81,21 +83,23 @@ const outline = async () => {
 };
 const outlineTexts = async () => (await outline()).map((block) => block.text);
 
-const connectRhwp = async (): Promise<RhwpViewer> => {
-  const socket = await FakeViewer.connect(bridge.viewerUrl);
+/** rhwp 테스트 뷰어를 붙인다. doc 을 주면 그 문서 탭 주소로(새로고침한 탭), 없으면 빈 탭 */
+const connectRhwp = async (doc?: string): Promise<RhwpViewer> => {
+  const socket = await FakeViewer.connect(doc === undefined ? bridge.viewerUrl : bridge.viewerUrlFor(doc));
   sockets.push(socket);
   const viewer = rhwpViewer();
   socket.serve(viewer.handle);
   return viewer;
 };
 
-/** 뷰어 탭 새로고침: 연결이 끊기고 같은 주소로 새 (빈) 뷰어가 붙는다 */
+/** 뷰어 탭 새로고침: 연결이 끊기고 같은 주소(문서 이름 포함)로 새 (빈) 뷰어가 붙는다 */
 const refresh = async (): Promise<RhwpViewer> => {
+  const doc = sessions.current?.name;
   const disconnected = once(bridge.events, 'disconnected');
   sockets.at(-1)?.close();
   await disconnected;
-  const viewer = await connectRhwp();
-  await session.ready();
+  const viewer = await connectRhwp(doc);
+  await sessions.ready();
   return viewer;
 };
 
@@ -127,9 +131,9 @@ const makeTemplate = async (name: string): Promise<string> => {
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'docbridge-create-'));
   bridge = await startBridge({ port: 0, viewerDir: tmpdir() });
-  session = new DocumentSession(bridge, { openBrowser: () => {} });
+  sessions = new DocumentSessions(bridge, { openBrowser: () => {} });
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
-  await createMcpServer(session).connect(serverSide);
+  await createMcpServer(sessions).connect(serverSide);
   client = new Client({ name: 'docbridge-test', version: '0.0.0' });
   await client.connect(clientSide);
 });
@@ -147,7 +151,7 @@ describe('SPEC-003 새 문서 만들기 (create_document)', () => {
 
     const result = await create({ path });
 
-    expect(result).toMatchObject({ path, pageCount: 1, blockCount: 1, firstBlock: 'b1', viewerUrl: bridge.viewerUrl });
+    expect(result).toMatchObject({ path, pageCount: 1, blockCount: 1, firstBlock: 'b1', viewerUrl: bridge.viewerUrlFor('d1') });
     expect(result.warnings).toBeUndefined();
     expect(result.template).toBeUndefined();
     expect(result.styles).toContainEqual({ name: TITLE_STYLE.name, englishName: TITLE_STYLE.englishName });
@@ -157,7 +161,7 @@ describe('SPEC-003 새 문서 만들기 (create_document)', () => {
     expect(await outline()).toEqual([{ id: 'b1', kind: 'paragraph', text: '' }]);
     expect(viewer.editor().blocks).toEqual([{ kind: 'paragraph', section: 0, paragraph: 0, page: 1, text: '' }]);
     expect(await readdir(dir)).toEqual([]);
-    expect(session.document?.location).toEqual({ kind: 'new', savePath: path });
+    expect(sessions.document?.location).toEqual({ kind: 'new', savePath: path });
   });
 
   it('AC-1 확장자가 없으면 .hwpx 를 붙이고, ~ 는 홈 폴더다', async () => {
@@ -188,7 +192,8 @@ describe('SPEC-003 새 문서 만들기 (create_document)', () => {
     expect(await readFile(existing)).toEqual(await readFile(fixturePath('notice.hwpx')));
   });
 
-  it('저장하지 않은 편집이 있는 문서를 대신하면 버린 편집 수를 알린다', async () => {
+  it('SPEC-007 저장하지 않은 편집이 있는 문서가 있어도 대신하지 않고 새 탭(새 doc)에 만든다 — 앞 문서의 편집은 그대로다', async () => {
+    await connectRhwp();
     await connectRhwp();
     const source = join(dir, '공문.hwpx');
     await copyFile(fixturePath('notice.hwpx'), source);
@@ -196,24 +201,27 @@ describe('SPEC-003 새 문서 만들기 (create_document)', () => {
     await json('replace_text', { target: { id: 'b1' }, text: '고친 제목' });
     await json('replace_text', { target: { id: 'b2' }, text: '고친 둘째' });
 
-    const result = await create({ path: join(dir, '새 문서.hwpx') });
+    const created = await call('create_document', { path: join(dir, '새 문서.hwpx') });
 
-    expect(result.warnings).toEqual(['저장하지 않은 편집 2개를 버렸습니다']);
+    expect(JSON.parse(created.content[0]?.text ?? '')).toMatchObject({ doc: 'd2', firstBlock: 'b1' });
+    expect(JSON.parse(created.content[0]?.text ?? '')).not.toHaveProperty('warnings');
     expect(await outlineTexts()).toEqual(['']);
+    expect(sessions.get('d1').unsavedEdits).toBe(2);
+    expect(sessions.get('d1').document?.fileName).toBe('공문.hwpx');
   });
 
-  it('한 번도 저장하지 않은 새 문서를 다른 create_document·open_document 로 대신하면 편집이 없어도 새 문서를 버렸다고 알린다', async () => {
+  it('SPEC-007 한 번도 저장하지 않은 새 문서는 편집이 없어도 close_document 가 discard 없이는 닫지 않고, discard 로 닫으면 새 문서를 버렸다고 알린다', async () => {
     await connectRhwp();
     const template = join(dir, '공문 양식.hwpx');
     await copyFile(fixturePath('notice.hwpx'), template);
     await create({ path: join(dir, '양식 그대로.hwpx'), template, keep_content: true });
 
-    const replaced = await create({ path: join(dir, '제안서.hwpx') });
-    expect(replaced.warnings).toEqual([discardedNewDocumentMessage('양식 그대로.hwpx', 0)]);
-
-    await json('replace_text', { target: { id: replaced.firstBlock }, text: '제목' });
-    const opened = z.object({ warnings: z.array(z.string()).optional() }).parse(await json('open_document', { path: template }));
-    expect(opened.warnings).toEqual([discardedNewDocumentMessage('제안서.hwpx', 1)]);
+    expect(await toolError('close_document')).toBe('저장하지 않은 새 문서 양식 그대로.hwpx 입니다(편집 0개). 저장하거나 discard: true 로 닫아 주세요.');
+    expect(await json('close_document', { discard: true })).toEqual({
+      closed: true,
+      warnings: [discardedNewDocumentMessage('양식 그대로.hwpx', 0)],
+    });
+    expect(sessions.list().documents).toEqual([]);
   });
 
   it('AC-2 template 을 주면 양식의 스타일·쪽 설정·머리말·꼬리말을 쓰고 본문(표 포함)은 비우며, 지운 개체·남긴 개체를 알리고 양식 파일은 그대로다', async () => {
@@ -268,7 +276,7 @@ describe('SPEC-003 새 문서 만들기 (create_document)', () => {
     const broken = join(dir, '깨진 양식.hwpx');
     await writeFile(broken, 'hwpx 가 아님');
     expect(await toolError('create_document', { path, template: broken })).toMatch(/^문서를 열 수 없습니다: /);
-    expect(session.document).toBeUndefined();
+    expect(sessions.document).toBeUndefined();
   });
 });
 
@@ -285,7 +293,7 @@ describe('SPEC-003 새 문서 저장 (save_document)', () => {
     expect(result.path).toBe(path);
     expect(await readdir(dir)).toEqual(['제안서.hwpx']);
     expect(await fileTexts(path)).toEqual(['DocBridge 도입 제안서', '제안 배경']);
-    expect(session.document?.location).toEqual({ kind: 'file', path, sourcePath: path });
+    expect(sessions.document?.location).toEqual({ kind: 'file', path, sourcePath: path });
     await json('open_document', { path });
     expect(await outlineTexts()).toEqual(['DocBridge 도입 제안서', '제안 배경']);
   });
@@ -310,7 +318,7 @@ describe('SPEC-003 새 문서 저장 (save_document)', () => {
 
     expect(await toolError('save_document')).toBe(newDocumentTakenMessage(path));
     expect(await readFile(path, 'utf8')).toBe('다른 프로그램이 만든 파일');
-    expect(session.document?.location.kind).toBe('new');
+    expect(sessions.document?.location.kind).toBe('new');
   });
 
   it('경로를 정한 뒤 쓰기 전에 그 자리에 파일이 생겨도 번호를 붙이거나 덮지 않고 거부한다', async () => {
@@ -322,7 +330,7 @@ describe('SPEC-003 새 문서 저장 (save_document)', () => {
       return writeSave(target, bytes);
     };
 
-    await expect(saveDocument(session, {}, raced)).rejects.toThrow(newDocumentTakenMessage(path));
+    await expect(saveDocument(sessions.get(), {}, raced)).rejects.toThrow(newDocumentTakenMessage(path));
     expect(await readFile(path, 'utf8')).toBe('그사이 생긴 파일');
     expect(await readdir(dir)).toEqual(['제안서.hwpx']);
   });
@@ -347,7 +355,7 @@ describe('SPEC-003 새 문서와 새로고침', () => {
     const result = await call('get_outline');
     expect(result.isError).toBe(true);
     expect(result.content.map((c) => c.text)).toEqual([NO_DOCUMENT, newDocumentLostMessage(path, 1)]);
-    expect(session.document).toBeUndefined();
+    expect(sessions.document).toBeUndefined();
     // 알림은 한 번만
     expect((await call('get_outline')).content.map((c) => c.text)).toEqual([NO_DOCUMENT]);
   });
@@ -386,11 +394,11 @@ describe('SPEC-003 블록이 없는 문서의 첫 블록', () => {
     const saved = await save();
 
     expect(saved.verified).toEqual({ blockCount: 1 });
-    expect(session.document?.blocks).toEqual([{ kind: 'paragraph', section: 0, paragraph: 0 }]);
-    const ids = session.document?.ids;
+    expect(sessions.document?.blocks).toEqual([{ kind: 'paragraph', section: 0, paragraph: 0 }]);
+    const ids = sessions.document?.ids;
     await refresh();
     // 블록 위치가 같으면 새로고침은 id 표를 그대로 둔다(다시 매기면 새 표가 된다)
-    expect(session.document?.ids).toBe(ids);
+    expect(sessions.document?.ids).toBe(ids);
     expect(await outline()).toEqual([{ id: firstBlock, kind: 'paragraph', text: '' }]);
   });
 
@@ -469,9 +477,9 @@ describe('SPEC-003 새 문서에서의 편집 (SPEC-002 도구)', () => {
 
     expect(z.object({ undone: z.number() }).parse(await json('undo', { steps: 2 })).undone).toBe(2);
     expect(await outlineTexts()).toEqual(['제안서', '하나', '둘']);
-    expect(session.unsavedEdits).toBe(3);
+    expect(sessions.unsavedEdits).toBe(3);
     await json('undo', { steps: 3 });
     expect(await outline()).toEqual([{ id: firstBlock, kind: 'paragraph', text: '' }]);
-    expect(session.unsavedEdits).toBe(0);
+    expect(sessions.unsavedEdits).toBe(0);
   });
 });

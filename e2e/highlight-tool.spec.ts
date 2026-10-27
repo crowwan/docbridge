@@ -6,7 +6,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 import { startBridge, type Bridge } from '../src/server/bridge.ts';
 import { clearHighlight, highlight } from '../src/server/highlight-tools.ts';
 import { findText, getOutline } from '../src/server/read-tools.ts';
-import { DocumentSession } from '../src/server/session.ts';
+import { DocumentSessions } from '../src/server/documents.ts';
 import type { TextTarget } from '../src/shared/protocol.ts';
 import { inkBounds } from './viewer.ts';
 
@@ -20,11 +20,11 @@ const EDGE_GAP = 4;
 const BAND_MARGIN = INK_TOLERANCE + 1;
 
 let bridge: Bridge;
-let session: DocumentSession;
+let sessions: DocumentSessions;
 
 test.beforeEach(async ({ page }) => {
   bridge = await startBridge({ port: 0, viewerDir });
-  session = new DocumentSession(bridge, { openBrowser: (url) => void page.goto(url) });
+  sessions = new DocumentSessions(bridge, { openBrowser: (url) => void page.goto(url) });
 });
 
 test.afterEach(async () => {
@@ -87,7 +87,7 @@ async function expectNoteClearOfText(page: Page): Promise<void> {
 }
 
 async function firstMatch(query: string): Promise<TextTarget> {
-  const [match] = (await findText(session, query)).matches;
+  const [match] = (await findText(sessions.get(), query)).matches;
   if (match === undefined) throw new Error(`${query} 를 찾지 못했다`);
   const { before: _before, after: _after, ...target } = match;
   return target;
@@ -95,9 +95,9 @@ async function firstMatch(query: string): Promise<TextTarget> {
 
 test.describe('SPEC-001 근거 하이라이트 (서버가 내주는 뷰어)', () => {
   test('find_text 로 찾은 문단 일부(날짜)를 highlight 하면 그 글자만 덮는다', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
+    await sessions.open(fixturePath('notice.hwpx'));
 
-    const result = await highlight(session, [await firstMatch('2026. 11. 14.')]);
+    const result = await highlight(sessions.get(), [await firstMatch('2026. 11. 14.')]);
 
     expect(result).toEqual({ highlighted: 1, pages: [1] });
     await expect(overlays(page)).toHaveCount(1);
@@ -106,10 +106,10 @@ test.describe('SPEC-001 근거 하이라이트 (서버가 내주는 뷰어)', ()
   });
 
   test('여러 줄 문단 블록 전체와 다음 문단을 함께 고르면 줄마다 글자 위에 겹친다', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
+    await sessions.open(fixturePath('notice.hwpx'));
 
     // b7 = "하반기 주민 안전교육을 …"(두 줄, 번호 "2."), b8 = "교육 대상: …"(번호 "가.")
-    await highlight(session, [{ id: 'b7' }, { id: 'b8' }]);
+    await highlight(sessions.get(), [{ id: 'b7' }, { id: 'b8' }]);
 
     await expect(overlays(page)).toHaveCount(3);
     await expectOverlaysCoverInk(page);
@@ -117,14 +117,14 @@ test.describe('SPEC-001 근거 하이라이트 (서버가 내주는 뷰어)', ()
   });
 
   test('표 칸을 고르면 그 칸 글자를, 표만 고르면 표 전체를 덮는다', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
+    await sessions.open(fixturePath('notice.hwpx'));
 
-    await highlight(session, [{ id: 'b12', cell: { row: 2, col: 2 } }]);
+    await highlight(sessions.get(), [{ id: 'b12', cell: { row: 2, col: 2 } }]);
     await expect(overlays(page)).toHaveCount(1);
     await expectOverlaysCoverInk(page);
     await page.getByRole('region', { name: '1쪽' }).screenshot({ path: 'test-results/screens/highlight-tool-cell.png' });
 
-    await highlight(session, [{ id: 'b12' }]);
+    await highlight(sessions.get(), [{ id: 'b12' }]);
     await expect(overlays(page)).toHaveCount(1);
     const table = await overlayOnPage(page, page.getByTestId('highlight-0'));
     expect(table.width).toBeGreaterThan(500);
@@ -132,19 +132,19 @@ test.describe('SPEC-001 근거 하이라이트 (서버가 내주는 뷰어)', ()
   });
 
   test('값이 빈 누름틀을 고르면 그 자리에 그려진 안내문을 덮는다', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
+    await sessions.open(fixturePath('notice.hwpx'));
 
-    await highlight(session, [{ id: 'b3' }]);
+    await highlight(sessions.get(), [{ id: 'b3' }]);
 
     await expect(overlays(page)).toHaveCount(1);
     await expectOverlaysCoverInk(page);
   });
 
   test('note 를 주면 첫 대상 바로 옆(위)에 짧게 보인다 — 위 줄이 비어 있으면 바로 위', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
+    await sessions.open(fixturePath('notice.hwpx'));
 
     // b1 = 맨 위 기관명 "가나다구청". 위에 글자가 없다
-    await highlight(session, [{ id: 'b1' }, { id: 'b12', cell: { row: 1, col: 1 } }], '보낸 기관');
+    await highlight(sessions.get(), [{ id: 'b1' }, { id: 'b12', cell: { row: 1, col: 1 } }], '보낸 기관');
 
     const note = page.getByRole('note');
     await expect(note).toHaveText('보낸 기관');
@@ -161,10 +161,10 @@ test.describe('SPEC-001 근거 하이라이트 (서버가 내주는 뷰어)', ()
 
   test('앞 줄에 글자가 있고 쪽 오른쪽 바깥 여백이 넉넉하면 note 를 여백에 두어 문서 글자를 덮지 않는다(#51)', async ({ page }) => {
     await page.setViewportSize({ width: 1400, height: 1200 });
-    await session.open(fixturePath('notice.hwpx'));
+    await sessions.open(fixturePath('notice.hwpx'));
 
     // b7 = "2. 하반기 주민 안전교육을 …" 바로 위가 "1. 관련: …" 줄. 세 줄쯤 되는 긴 note(사용자 QA 상황)
-    await highlight(session, [{ id: 'b7' }], LONG_NOTE);
+    await highlight(sessions.get(), [{ id: 'b7' }], LONG_NOTE);
 
     const note = page.getByRole('note');
     await expect(note).toBeInViewport();
@@ -183,9 +183,9 @@ test.describe('SPEC-001 근거 하이라이트 (서버가 내주는 뷰어)', ()
 
   test('앞 줄에 글자가 있고 바깥 여백도 좁으면 note 를 하이라이트 마지막 사각형 아래에 둔다(#51)', async ({ page }) => {
     await page.setViewportSize({ width: 800, height: 1200 });
-    await session.open(fixturePath('notice.hwpx'));
+    await sessions.open(fixturePath('notice.hwpx'));
 
-    await highlight(session, [{ id: 'b7' }], LONG_NOTE);
+    await highlight(sessions.get(), [{ id: 'b7' }], LONG_NOTE);
 
     const note = page.getByRole('note');
     await expect(note).toBeInViewport();
@@ -198,16 +198,16 @@ test.describe('SPEC-001 근거 하이라이트 (서버가 내주는 뷰어)', ()
   });
 
   test('highlight 를 부르면 첫 대상이 화면에 보이도록 스크롤되고, 이전 하이라이트는 지워진다', async ({ page }) => {
-    const opened = await session.open(fixturePath('report.hwpx'));
-    const outline = await getOutline(session);
+    const opened = await sessions.open(fixturePath('report.hwpx'));
+    const outline = await getOutline(sessions.get());
     const first = outline.blocks[0];
     const last = outline.blocks.at(-1);
     if (first === undefined || last === undefined) throw new Error('블록이 없다');
 
-    await highlight(session, [{ id: first.id }], '첫 블록');
+    await highlight(sessions.get(), [{ id: first.id }], '첫 블록');
     await expect(page.getByTestId('highlight-0')).toBeInViewport();
 
-    const result = await highlight(session, [{ id: last.id }]);
+    const result = await highlight(sessions.get(), [{ id: last.id }]);
 
     expect(result.pages).toEqual([opened.pageCount]);
     await expect(page.getByRole('note')).toHaveCount(0);
@@ -221,13 +221,13 @@ test.describe('SPEC-001 근거 하이라이트 (서버가 내주는 뷰어)', ()
   });
 
   test('뒤쪽 대상을 먼저 주면 문서 순서가 아니라 첫 대상(과 note)이 보이도록 스크롤한다(PR #14 리뷰)', async ({ page }) => {
-    const opened = await session.open(fixturePath('report.hwpx'));
-    const outline = await getOutline(session);
+    const opened = await sessions.open(fixturePath('report.hwpx'));
+    const outline = await getOutline(sessions.get());
     const first = outline.blocks[0];
     const last = outline.blocks.at(-1);
     if (first === undefined || last === undefined) throw new Error('블록이 없다');
 
-    const result = await highlight(session, [{ id: last.id }, { id: first.id }], '마지막 블록');
+    const result = await highlight(sessions.get(), [{ id: last.id }, { id: first.id }], '마지막 블록');
 
     expect(result.pages).toEqual([1, opened.pageCount]);
     const lastRegion = page.getByRole('region', { name: `${opened.pageCount}쪽` });
@@ -236,39 +236,39 @@ test.describe('SPEC-001 근거 하이라이트 (서버가 내주는 뷰어)', ()
   });
 
   test('대상 하나라도 틀리면 오류를 돌려주고 이전 하이라이트를 그대로 둔다', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
-    await highlight(session, [{ id: 'b1' }], '제목');
+    await sessions.open(fixturePath('notice.hwpx'));
+    await highlight(sessions.get(), [{ id: 'b1' }], '제목');
 
-    await expect(highlight(session, [{ id: 'b5' }, { id: 'b1', start: 0, end: 99 }])).rejects.toThrow('b1: 글자 범위가 맞지 않습니다');
+    await expect(highlight(sessions.get(), [{ id: 'b5' }, { id: 'b1', start: 0, end: 99 }])).rejects.toThrow('b1: 글자 범위가 맞지 않습니다');
 
     await expect(overlays(page)).toHaveCount(1);
     await expect(page.getByRole('note')).toHaveText('제목');
   });
 
   test('clear_highlight 는 하이라이트와 note 를 모두 지운다', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
-    await highlight(session, [{ id: 'b1' }, { id: 'b12' }], '근거');
+    await sessions.open(fixturePath('notice.hwpx'));
+    await highlight(sessions.get(), [{ id: 'b1' }, { id: 'b12' }], '근거');
 
-    expect(await clearHighlight(session)).toEqual({ cleared: true });
+    expect(await clearHighlight(sessions.get())).toEqual({ cleared: true });
 
     await expect(overlays(page)).toHaveCount(0);
     await expect(page.getByRole('note')).toHaveCount(0);
   });
 
   test('새 문서를 열거나 새로고침하면 하이라이트가 비워진다', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
-    await highlight(session, [{ id: 'b1' }], '근거');
+    await sessions.open(fixturePath('notice.hwpx'));
+    await highlight(sessions.get(), [{ id: 'b1' }], '근거');
 
-    await session.open(fixturePath('application.hwpx'));
+    await sessions.open(fixturePath('application.hwpx'));
     await expect(page.getByRole('status')).toHaveText('application.hwpx — 1쪽');
     await expect(overlays(page)).toHaveCount(0);
     await expect(page.getByRole('note')).toHaveCount(0);
 
-    await highlight(session, [{ id: 'b1' }], '근거');
+    await highlight(sessions.get(), [{ id: 'b1' }], '근거');
     const reconnected = once(bridge.events, 'connected');
     await page.reload();
     await reconnected;
-    await session.ready();
+    await sessions.ready();
     await expect(page.getByRole('status')).toHaveText('application.hwpx — 1쪽');
     await expect(overlays(page)).toHaveCount(0);
   });

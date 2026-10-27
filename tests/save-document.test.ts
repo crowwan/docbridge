@@ -12,10 +12,12 @@ import { startBridge, type Bridge } from '../src/server/bridge.ts';
 import { createMcpServer } from '../src/server/mcp.ts';
 import { writeSave } from '../src/server/save-path.ts';
 import { decodeExport, saveDocument } from '../src/server/save-tool.ts';
-import { DocumentSession, type OpenedDocument } from '../src/server/session.ts';
+import { DocumentSessions } from '../src/server/documents.ts';
+import { type OpenedDocument } from '../src/server/session.ts';
 import { tooLargeMessage } from '../src/shared/limits.ts';
 import { FakeViewer } from './fake-viewer.ts';
 import { fixturePath } from './fixtures.ts';
+import { withoutDoc } from './tool-result.ts';
 import { rhwpViewer, type RhwpViewer, type RhwpViewerOptions } from './rhwp-viewer.ts';
 
 const toolResultSchema = z.object({
@@ -35,7 +37,7 @@ const VERIFY_FAILED = '저장 전 검증에 실패해 파일을 쓰지 않았습
 
 // 두 묶음이 같이 쓰는 준비: 브리지·세션·MCP 클라이언트, 임시 폴더, rhwp 테스트 뷰어
 let bridge: Bridge;
-let session: DocumentSession;
+let sessions: DocumentSessions;
 let client: Client;
 let dir: string;
 const sockets: FakeViewer[] = [];
@@ -57,9 +59,9 @@ const outline = async () => {
   return { blocks: outlineSchema.parse(JSON.parse(result.content[0]?.text ?? '')).blocks, notices: result.content.slice(1).map((c) => c.text) };
 };
 
-/** rhwp 테스트 뷰어를 붙인다 */
-const connectRhwp = async (options: RhwpViewerOptions = {}): Promise<RhwpViewer> => {
-  const socket = await FakeViewer.connect(bridge.viewerUrl);
+/** rhwp 테스트 뷰어를 붙인다. doc 을 주면 그 문서 탭 주소로(새로고침한 탭), 없으면 빈 탭 */
+const connectRhwp = async (options: RhwpViewerOptions = {}, doc?: string): Promise<RhwpViewer> => {
+  const socket = await FakeViewer.connect(doc === undefined ? bridge.viewerUrl : bridge.viewerUrlFor(doc));
   sockets.push(socket);
   const viewer = rhwpViewer(options);
   socket.serve(viewer.handle);
@@ -70,12 +72,12 @@ const connectRhwp = async (options: RhwpViewerOptions = {}): Promise<RhwpViewer>
 const openCopy = async (fixture: string, name: string) => {
   const path = join(dir, name);
   await copyFile(fixturePath(fixture), path);
-  await session.open(path);
+  await sessions.open(path);
   return path;
 };
 
 const opened = (): OpenedDocument => {
-  const document = session.document;
+  const document = sessions.document;
   if (document === undefined) throw new Error('열린 문서가 없습니다');
   return document;
 };
@@ -99,16 +101,17 @@ const replaceFirst = async (text: string): Promise<string> => {
 const json = async (name: string, args: Record<string, unknown>): Promise<unknown> => {
   const result = await call(name, args);
   if (result.isError) throw new Error(result.content[0]?.text);
-  return JSON.parse(result.content[0]?.text ?? '');
+  return withoutDoc(JSON.parse(result.content[0]?.text ?? ''));
 };
 
-/** 뷰어 탭 새로고침: 연결이 끊기고 같은 주소로 새 (빈) 뷰어가 붙는다 */
+/** 뷰어 탭 새로고침: 연결이 끊기고 같은 주소(문서 이름 포함)로 새 (빈) 뷰어가 붙는다 */
 const refresh = async (): Promise<RhwpViewer> => {
+  const doc = sessions.current?.name;
   const disconnected = once(bridge.events, 'disconnected');
   sockets.at(-1)?.close();
   await disconnected;
-  const viewer = await connectRhwp();
-  await session.ready();
+  const viewer = await connectRhwp({}, doc);
+  await sessions.ready();
   return viewer;
 };
 
@@ -124,9 +127,9 @@ const blockTexts = (bytes: Uint8Array) => {
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'docbridge-save-'));
   bridge = await startBridge({ port: 0, viewerDir: tmpdir() });
-  session = new DocumentSession(bridge, { openBrowser: () => {} });
+  sessions = new DocumentSessions(bridge, { openBrowser: () => {} });
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
-  await createMcpServer(session).connect(serverSide);
+  await createMcpServer(sessions).connect(serverSide);
   client = new Client({ name: 'docbridge-test', version: '0.0.0' });
   await client.connect(clientSide);
 });
@@ -188,7 +191,7 @@ describe('SPEC-002 저장 (save_document)', () => {
     await openCopy('notice.hwpx', '공문.hwpx');
 
     // 경로를 정한 뒤 쓰기 전에 기본 이름 파일이 생긴다(다른 프로그램)
-    const result = await saveDocument(session, { overwrite: true }, async (target, bytes) => {
+    const result = await saveDocument(sessions.get(), { overwrite: true }, async (target, bytes) => {
       await writeFile(join(dir, '공문-수정.hwpx'), '먼저 있던 파일');
       return writeSave(target, bytes);
     });
@@ -219,7 +222,7 @@ describe('SPEC-002 저장 (save_document)', () => {
 
     expect(error).toBe(`${VERIFY_FAILED} 다시 연 문서와 다른 블록: ${edited}.`);
     expect(await readdir(dir)).toEqual(['공문.hwpx']);
-    expect(session.unsavedEdits).toBe(1);
+    expect(sessions.unsavedEdits).toBe(1);
     expect(opened().location).toMatchObject({ path: source });
   });
 
@@ -263,7 +266,7 @@ describe('SPEC-002 저장 (save_document)', () => {
     await replaceFirst('저장해 둔 문단');
     const { path } = await save();
 
-    await session.open(path);
+    await sessions.open(path);
 
     expect((await outline()).blocks.map((b) => b.text)).toContain('저장해 둔 문단');
   });
@@ -275,7 +278,7 @@ describe('SPEC-002 저장 (save_document)', () => {
 
     const { path } = await save();
 
-    expect(session.unsavedEdits).toBe(0);
+    expect(sessions.unsavedEdits).toBe(0);
     expect(viewer.editStates).toEqual([{ fileName: '공문-수정.hwpx', unsavedEdits: 0, newDocument: false, state: 1 }]);
     expect(viewer.unsavedEdits()).toBe(0);
     const disconnected = once(bridge.events, 'disconnected');
@@ -303,17 +306,16 @@ describe('SPEC-002 저장 (save_document)', () => {
     expect(methods).toEqual(['load_document', 'edit', 'export_hwpx', 'edit_state', 'undo']);
   });
 
-  it('저장하는 사이 들어온 문서 열기·편집은 저장이 끝난 뒤에 한다(저장한 문서의 상태가 섞이지 않는다)', async () => {
+  it('저장하는 사이 들어온 같은 파일 다시 열기·편집은 저장이 끝난 뒤에 한다(저장한 문서의 상태가 섞이지 않는다)', async () => {
     const viewer = await connectRhwp();
-    await openCopy('notice.hwpx', '공문.hwpx');
+    // 다른 파일은 새 탭(다른 문서 세션)이라 이 문서의 저장과 줄이 따로다(SPEC-007). 같은 파일 다시 열기는 이 문서의 줄에 선다
+    const source = await openCopy('notice.hwpx', '공문.hwpx');
     const id = await replaceFirst('저장할 글자');
-    const other = join(dir, '보고서.hwpx');
-    await copyFile(fixturePath('report.hwpx'), other);
     let later: Promise<unknown> = Promise.resolve();
 
-    const result = await saveDocument(session, {}, async (target, bytes) => {
-      // 파일을 쓰는 중에 편집과 다른 문서 열기가 들어온다
-      later = Promise.all([call('replace_text', { target: { id }, text: '저장 뒤 글자' }), session.open(other)]);
+    const result = await saveDocument(sessions.get(), {}, async (target, bytes) => {
+      // 파일을 쓰는 중에 편집과 같은 파일 다시 열기가 들어온다
+      later = Promise.all([call('replace_text', { target: { id }, text: '저장 뒤 글자' }), sessions.open(source)]);
       return writeSave(target, bytes);
     });
     await later;
@@ -321,9 +323,8 @@ describe('SPEC-002 저장 (save_document)', () => {
     expect(result).toMatchObject({ path: join(dir, '공문-수정.hwpx') });
     expect(result.warnings).toBeUndefined();
     expect(blockTexts(new Uint8Array(await readFile(result.path)))).toContain('저장할 글자');
-    expect(opened().location).toMatchObject({ path: other });
+    expect(opened().location).toMatchObject({ path: source });
     expect(viewer.editStates.map((state) => state.fileName)).toEqual(['공문-수정.hwpx']);
-    expect(viewer.unsavedEdits()).toBe(0);
   });
 
   it('파일을 쓰지 못하면 이유를 돌려주고 마지막 파일과 저장하지 않은 편집 수를 그대로 둔다', async () => {
@@ -335,7 +336,7 @@ describe('SPEC-002 저장 (save_document)', () => {
     expect(await saveError()).toMatch(/^저장하지 못했습니다: .*EACCES/);
 
     expect(opened().location).toMatchObject({ path: source });
-    expect(session.unsavedEdits).toBe(1);
+    expect(sessions.unsavedEdits).toBe(1);
     expect(viewer.editStates).toEqual([]);
     expect(viewer.unsavedEdits()).toBe(1);
   });
@@ -375,8 +376,8 @@ describe('SPEC-002 새로고침과 저장하지 않은 편집', () => {
     expect(after.blocks).toEqual(atSave.blocks);
     expect(after.blocks.map((b) => b.text)).toContain('저장한 글자');
     expect(after.notices).toEqual(['뷰어를 새로고침해서 저장하지 않은 편집 2개가 사라졌습니다.']);
-    expect(session.unsavedEdits).toBe(0);
-    expect(session.editCount).toBe(0);
+    expect(sessions.unsavedEdits).toBe(0);
+    expect(sessions.editCount).toBe(0);
     // 알림은 한 번만
     expect((await outline()).notices).toEqual([]);
   });
@@ -425,11 +426,11 @@ describe('SPEC-002 새로고침과 저장하지 않은 편집', () => {
     expect(opened().edits.depth).toBe(0);
     expect(viewer.editor().depth).toBe(0);
     await replaceFirst('새로고침 뒤 글자');
-    expect(session.unsavedEdits).toBe(1);
+    expect(sessions.unsavedEdits).toBe(1);
     expect(viewer.editor().depth).toBe(1);
     const undone = await call('undo');
     expect(undone.isError).toBeUndefined();
-    expect(session.unsavedEdits).toBe(0);
+    expect(sessions.unsavedEdits).toBe(0);
     expect(viewer.unsavedEdits()).toBe(0);
   });
 
@@ -442,15 +443,15 @@ describe('SPEC-002 새로고침과 저장하지 않은 편집', () => {
     const disconnected = once(bridge.events, 'disconnected');
     sockets.at(-1)?.close();
     await disconnected;
-    const flaky = await FakeViewer.connect(bridge.viewerUrl);
+    const flaky = await FakeViewer.connect(bridge.viewerUrlFor('d1'));
     await flaky.nextRequest();
     const flakyGone = once(bridge.events, 'disconnected');
     flaky.close();
     await flakyGone;
-    await session.ready();
+    await sessions.ready();
     // 두 번째 새로고침은 제대로 붙는다
-    await connectRhwp();
-    await session.ready();
+    await connectRhwp({}, 'd1');
+    await sessions.ready();
 
     expect((await outline()).notices).toEqual(['뷰어를 새로고침해서 저장하지 않은 편집 1개가 사라졌습니다.']);
   });
@@ -463,14 +464,14 @@ describe('SPEC-002 새로고침과 저장하지 않은 편집', () => {
     const disconnected = once(bridge.events, 'disconnected');
     sockets.at(-1)?.close();
     await disconnected;
-    const broken = await FakeViewer.connect(bridge.viewerUrl);
+    const broken = await FakeViewer.connect(bridge.viewerUrlFor('d1'));
     sockets.push(broken);
     broken.serve(() => {
       throw new Error('손상된 파일입니다');
     });
-    await session.ready();
+    await sessions.ready();
 
-    expect(session.document).toBeUndefined();
+    expect(sessions.document).toBeUndefined();
     const result = await call('get_outline');
     expect(result.content.slice(1).map((c) => c.text)).toEqual(['뷰어를 새로고침해서 저장하지 않은 편집 1개가 사라졌습니다.']);
   });

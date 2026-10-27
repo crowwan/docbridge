@@ -10,10 +10,11 @@ import { isHeaderCell } from '../src/core/create-document.ts';
 import { parseJson } from '../src/core/json.ts';
 import { startBridge, type Bridge } from '../src/server/bridge.ts';
 import { createMcpServer } from '../src/server/mcp.ts';
-import { DocumentSession } from '../src/server/session.ts';
+import { DocumentSessions } from '../src/server/documents.ts';
 import type { RequestMessage } from '../src/shared/protocol.ts';
 import { FakeViewer } from './fake-viewer.ts';
 import { fixturePath } from './fixtures.ts';
+import { withoutDoc } from './tool-result.ts';
 import { rhwpViewer, type RhwpViewer } from './rhwp-viewer.ts';
 
 const toolResultSchema = z.object({
@@ -40,7 +41,7 @@ const cellWidthSchema = z.looseObject({ width: z.number() });
 
 describe('SPEC-003 표 만들기 (insert_table)', () => {
   let bridge: Bridge;
-  let session: DocumentSession;
+  let sessions: DocumentSessions;
   let client: Client;
   let viewer: FakeViewer;
   let rhwp: RhwpViewer;
@@ -50,7 +51,7 @@ describe('SPEC-003 표 만들기 (insert_table)', () => {
   const json = async (name: string, args: Record<string, unknown> = {}): Promise<unknown> => {
     const result = await call(name, args);
     if (result.isError) throw new Error(result.content[0]?.text);
-    return JSON.parse(result.content[0]?.text ?? '');
+    return withoutDoc(JSON.parse(result.content[0]?.text ?? ''));
   };
   const errorText = async (name: string, args: Record<string, unknown> = {}) => {
     const result = await call(name, args);
@@ -65,7 +66,7 @@ describe('SPEC-003 표 만들기 (insert_table)', () => {
   const readTable = async (id: string) => tableBlocksSchema.parse(await json('read_blocks', { ids: [id] })).blocks[0];
   /** 테스트 뷰어 문서에서 블록 id 의 표 주소 */
   const tableAddress = (id: string) => {
-    const anchor = session.document?.ids.anchor(id);
+    const anchor = sessions.document?.ids.anchor(id);
     const match = /^table:(\d+)$/.exec(anchor?.part ?? '');
     if (anchor === undefined || match?.[1] === undefined) throw new Error(`${id} 는 표가 아닙니다`);
     return { section: anchor.section, paragraph: anchor.paragraph, controlIndex: Number(match[1]) };
@@ -75,9 +76,9 @@ describe('SPEC-003 표 만들기 (insert_table)', () => {
 
   beforeEach(async () => {
     bridge = await startBridge({ port: 0, viewerDir: tmpdir() });
-    session = new DocumentSession(bridge, { openBrowser: vi.fn() });
+    sessions = new DocumentSessions(bridge, { openBrowser: vi.fn() });
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
-    await createMcpServer(session).connect(serverSide);
+    await createMcpServer(sessions).connect(serverSide);
     client = new Client({ name: 'docbridge-test', version: '0.0.0' });
     await client.connect(clientSide);
     viewer = await FakeViewer.connect(bridge.viewerUrl);
@@ -205,7 +206,7 @@ describe('SPEC-003 표 만들기 (insert_table)', () => {
     expect(await errorText('insert_table', { after: 'b5', rows: 0, cols: 2 })).toBe('표 크기는 행·열 1~50 입니다(행 0, 열 2).');
     expect(await errorText('insert_table', { after: 'b5', rows: 2, cols: 51 })).toBe('표 크기는 행·열 1~50 입니다(행 2, 열 51).');
     expect(requests('edit')).toHaveLength(0);
-    expect(session.editCount).toBe(0);
+    expect(sessions.editCount).toBe(0);
   });
 
   it('AC-6 rows·cols 가 정수가 아니면 스펙 문구로 거부하고, 크기 검사는 id 확인보다 먼저다', async () => {
@@ -232,7 +233,7 @@ describe('SPEC-003 표 만들기 (insert_table)', () => {
     expect(await errorText('insert_table', { after: 'b5', rows: 1, cols: 1 })).toBe(
       '표를 넣으며 생긴 문단(2개)을 확인하지 못해 표를 넣지 않았습니다.',
     );
-    expect(session.editCount).toBe(0);
+    expect(sessions.editCount).toBe(0);
     expect(doc.getParagraphCount(0)).toBe(paragraphs);
     expect(await outline()).toEqual(before);
   });
@@ -282,7 +283,7 @@ describe('SPEC-003 표 만들기 (insert_table)', () => {
     expect(await errorText('insert_table', { before: 'b1', rows: 1, cols: 1 })).toBe(
       '구역 첫 문단 앞에는 표를 넣을 수 없습니다. 첫 문단 뒤에 넣으세요.',
     );
-    expect(session.editCount).toBe(0);
+    expect(sessions.editCount).toBe(0);
     expect(await outline()).toEqual(before);
     expect(rhwp.editor().doc.getParagraphCount(0)).toBe(paragraphs);
   });

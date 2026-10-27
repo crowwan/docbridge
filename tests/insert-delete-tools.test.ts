@@ -8,10 +8,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { startBridge, type Bridge } from '../src/server/bridge.ts';
 import { createMcpServer } from '../src/server/mcp.ts';
-import { DocumentSession } from '../src/server/session.ts';
+import { DocumentSessions } from '../src/server/documents.ts';
 import type { RequestMessage } from '../src/shared/protocol.ts';
 import { FakeViewer } from './fake-viewer.ts';
 import { fixturePath, openFixture } from './fixtures.ts';
+import { withoutDoc } from './tool-result.ts';
 import { rhwpViewer, type RhwpViewer } from './rhwp-viewer.ts';
 
 const toolResultSchema = z.object({
@@ -25,7 +26,7 @@ const outlineSchema = z.object({
 
 describe('SPEC-002 문단 넣기·지우기 도구 (insert_paragraph · delete_blocks)', () => {
   let bridge: Bridge;
-  let session: DocumentSession;
+  let sessions: DocumentSessions;
   let client: Client;
   let viewer: FakeViewer;
   let rhwp: RhwpViewer;
@@ -35,7 +36,12 @@ describe('SPEC-002 문단 넣기·지우기 도구 (insert_paragraph · delete_b
   const json = async (name: string, args: Record<string, unknown> = {}): Promise<unknown> => {
     const result = await call(name, args);
     if (result.isError) throw new Error(result.content[0]?.text);
-    return JSON.parse(result.content[0]?.text ?? '');
+    return withoutDoc(JSON.parse(result.content[0]?.text ?? ''));
+  };
+  /** 다른 파일을 이 탭에서 연다: 지금 문서를 닫고(빈 탭이 된다) 연다 — 문서마다 탭이라(SPEC-007) 그냥 열면 새 탭이 필요하다 */
+  const openInPlace = async (path: string) => {
+    await json('close_document', { discard: true });
+    return json('open_document', { path });
   };
   const errorText = async (name: string, args: Record<string, unknown> = {}) => {
     const result = await call(name, args);
@@ -55,9 +61,9 @@ describe('SPEC-002 문단 넣기·지우기 도구 (insert_paragraph · delete_b
 
   beforeEach(async () => {
     bridge = await startBridge({ port: 0, viewerDir: tmpdir() });
-    session = new DocumentSession(bridge, { openBrowser: vi.fn() });
+    sessions = new DocumentSessions(bridge, { openBrowser: vi.fn() });
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
-    await createMcpServer(session).connect(serverSide);
+    await createMcpServer(sessions).connect(serverSide);
     client = new Client({ name: 'docbridge-test', version: '0.0.0' });
     await client.connect(clientSide);
     viewer = await FakeViewer.connect(bridge.viewerUrl);
@@ -122,8 +128,8 @@ describe('SPEC-002 문단 넣기·지우기 도구 (insert_paragraph · delete_b
     expect(await errorText('insert_paragraph', { before: 'b1', text: '맨 앞' })).toBe(
       '구역 첫 문단 앞에는 문단을 넣을 수 없습니다. 첫 문단 뒤에 넣으세요.',
     );
-    expect(session.editCount).toBe(0);
-    expect(session.document?.ids.anchor('b15')).toBeUndefined();
+    expect(sessions.editCount).toBe(0);
+    expect(sessions.document?.ids.anchor('b15')).toBeUndefined();
   });
 
   it('AC-3 delete_blocks 는 문단 여러 개를 한 편집으로 지우고 나머지 id 는 같은 블록을 가리킨다. undo 한 번에 모두 돌아온다', async () => {
@@ -154,7 +160,7 @@ describe('SPEC-002 문단 넣기·지우기 도구 (insert_paragraph · delete_b
     doc.insertText(0, 11, doc.getParagraphLength(0, 11), '표 아래 설명');
     const path = join(await mkdtemp(join(tmpdir(), 'docbridge-delete-')), '표와 글자.hwpx');
     await writeFile(path, doc.exportHwpx());
-    await json('open_document', { path });
+    await openInPlace(path);
     const before = await outline();
     expect([before.get('b12'), before.get('b13')]).toEqual(['paragraph:표 아래 설명', expect.stringMatching(/^table:/)]);
 
@@ -164,7 +170,7 @@ describe('SPEC-002 문단 넣기·지우기 도구 (insert_paragraph · delete_b
     expectIdsKept(before, after, ['b13']);
     expect(after.has('b13')).toBe(false);
     // 지운 표 id 는 id 표에서도 사라져 다시 쓰이지 않는다
-    expect(session.document?.ids.anchor('b13')).toBeUndefined();
+    expect(sessions.document?.ids.anchor('b13')).toBeUndefined();
   });
 
   it('AC-3 누름틀 블록과 구역 첫 문단(구역을 비우는 삭제)은 뷰어에 보내지 않고 거부한다', async () => {
@@ -179,14 +185,14 @@ describe('SPEC-002 문단 넣기·지우기 도구 (insert_paragraph · delete_b
       '없는 블록 id 입니다: b99. get_outline 을 다시 불러 지금 블록 id 를 확인하세요.',
     );
     expect(requests('edit')).toHaveLength(0);
-    expect(session.editCount).toBe(0);
+    expect(sessions.editCount).toBe(0);
   });
 
   it('서버는 뷰어가 실제로 지운 문단·넣은 자리로 id 표를 옮긴다 — 서버 생각과 달라도 id 가 엉뚱한 블록을 가리키지 않는다 (PR #29 리뷰)', async () => {
     const before = await outline();
-    const b8 = session.document?.ids.anchor('b8');
-    const b10 = session.document?.ids.anchor('b10');
-    const b6 = session.document?.ids.anchor('b6');
+    const b8 = sessions.document?.ids.anchor('b8');
+    const b10 = sessions.document?.ids.anchor('b10');
+    const b6 = sessions.document?.ids.anchor('b6');
     if (b8 === undefined || b10 === undefined || b6 === undefined) throw new Error('블록이 없다');
     // 어긋남 흉내: 뷰어가 받은 대상과 다른 블록(b8 대신 b10, b11 뒤 대신 b6 앞)에 편집을 적용한다
     viewer.serve((request) => {

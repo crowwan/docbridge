@@ -51,23 +51,34 @@ export interface Bridge {
   readonly host: string;
   readonly port: number;
   readonly token: string;
+  /** 문서 이름 없는 뷰어 주소(빈 탭 — 다음에 여는 문서가 쓴다) */
   readonly viewerUrl: string;
-  /** 뷰어가 붙으면 'connected', 요청을 받던 뷰어가 끊기면 'disconnected' */
-  readonly events: EventEmitter<BridgeEvents>;
-  hasViewer(): boolean;
-  /** 마지막으로 붙은 뷰어에 요청을 보내고 응답을 기다린다. 뷰어가 없거나 도중에 끊기면 ViewerNotConnectedError */
-  request<M extends ViewerMethod>(method: M, params: ViewerParams<M>): Promise<ViewerResult<M>>;
+  /** 문서 doc 의 탭 주소(&doc=d2, SPEC-007). 이 주소로 붙은 탭은 그 문서 탭이고, 새로고침해도 같은 문서로 다시 붙는다 */
+  viewerUrlFor(doc: string): string;
   /**
-   * 뷰어가 보낸 요청(사람 편집·⌘Z, SPEC-006)을 handler 로 처리해 그 뷰어에 응답한다. 요청을 받는 뷰어(마지막에 붙은 탭)의 것만 처리하고
-   * 다른 탭의 요청은 INACTIVE_VIEWER 로 거부한다. handler 가 던지면 그 문구로 실패 응답
+   * 뷰어가 붙으면 'connected', 문서 탭(또는 빈 탭)의 요청을 받던 연결이 끊기면 'disconnected'. 인자는 그 연결의 문서 이름(빈 탭은 undefined)
    */
-  serveUserRequests(handler: (request: UserRequestMessage) => Promise<unknown>): void;
+  readonly events: EventEmitter<BridgeEvents>;
+  /** doc 을 주면 그 문서 탭이 붙어 있는지, 없으면 붙은 뷰어(빈 탭 포함)가 하나라도 있는지 */
+  hasViewer(doc?: string): boolean;
+  /** 문서 이름 없이 붙은 빈 탭(마지막에 붙은 것)을 doc 탭으로 삼는다. 이미 doc 탭이 있으면 true, 빈 탭이 없으면 false */
+  claimViewer(doc: string): boolean;
+  /** doc 탭 연결을 빈 탭으로 돌린다(문서를 열지 못했거나 닫았을 때 — 그 탭을 다음 문서가 쓴다) */
+  releaseViewer(doc: string): void;
+  /** doc 탭(마지막으로 붙은 연결)에 요청을 보내고 응답을 기다린다. 탭이 없거나 도중에 끊기면 ViewerNotConnectedError */
+  request<M extends ViewerMethod>(doc: string, method: M, params: ViewerParams<M>): Promise<ViewerResult<M>>;
+  /**
+   * 뷰어가 보낸 요청(사람 편집·⌘Z, SPEC-006)을 handler 로 처리해 그 뷰어에 응답한다. handler 는 보낸 탭의 문서 이름을 받는다.
+   * 문서 탭마다 요청을 받는 연결(마지막에 붙은 것)의 것만 처리하고, 같은 문서의 이전 탭·빈 탭의 요청은 INACTIVE_VIEWER 로 거부한다.
+   * handler 가 던지면 그 문구로 실패 응답
+   */
+  serveUserRequests(handler: (doc: string, request: UserRequestMessage) => Promise<unknown>): void;
   close(): Promise<void>;
 }
 
 export interface BridgeEvents {
-  connected: [];
-  disconnected: [];
+  connected: [doc: string | undefined];
+  disconnected: [doc: string | undefined];
 }
 
 /** 요청을 받을 뷰어가 없다. 사용자에게 보일 문구는 세션이 마지막 파일 경로와 함께 만든다 */
@@ -78,14 +89,19 @@ export class ViewerNotConnectedError extends Error {
   }
 }
 
-export const INACTIVE_VIEWER = '다른 뷰어 탭이 docbridge 에 붙어 있어 이 탭에서는 고칠 수 없습니다. 마지막에 연 탭에서 고치세요.';
+export const INACTIVE_VIEWER = '다른 뷰어 탭이 이 문서로 docbridge 에 붙어 있어 이 탭에서는 고칠 수 없습니다. 마지막에 연 탭에서 고치세요.';
 const NO_USER_HANDLER = 'docbridge 가 뷰어 편집을 받을 준비가 되지 않았습니다.';
 
 /** 뷰어 요청 모양(type user_request 와 id)은 맞지만 메서드·입력을 읽지 못한 것 — id 로 오류 응답한다 */
 const looseUserRequestSchema = z.object({ type: z.literal('user_request'), id: z.number() });
 
-function tokenOf(url: string | undefined): string | null {
-  return new URL(url ?? '/', `http://${HOST}`).searchParams.get('token');
+const searchParam = (url: string | undefined, name: string): string | null => new URL(url ?? '/', `http://${HOST}`).searchParams.get(name);
+
+/** 뷰어 연결 하나: 그 탭의 문서 이름(빈 탭은 undefined)과 그 연결로 보낸 요청(응답은 같은 연결로 온다) */
+interface Connection {
+  ws: WebSocket;
+  doc: string | undefined;
+  tracker: RequestTracker;
 }
 
 async function serveViewerFile(viewerDir: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -148,22 +164,20 @@ export async function startBridge(options: BridgeOptions): Promise<Bridge> {
   });
   const wss = new WebSocketServer({ noServer: true });
   const events = new EventEmitter<BridgeEvents>();
-  const tracker = new RequestTracker();
-  // 붙은 순서. 요청은 마지막에 붙은 뷰어(새로고침하면 새 연결)가 받는다
-  const viewers: WebSocket[] = [];
-  const activeViewer = () => viewers.at(-1);
+  // 붙은 순서. 문서마다 요청은 그 문서의 마지막에 붙은 연결(새로고침하면 새 연결)이 받는다
+  const connections: Connection[] = [];
+  const activeFor = (doc: string | undefined) => connections.findLast((connection) => connection.doc === doc);
 
-  const removeViewer = (ws: WebSocket) => {
-    const index = viewers.indexOf(ws);
+  const removeConnection = (connection: Connection) => {
+    const index = connections.indexOf(connection);
     if (index === -1) return;
-    const wasActive = index === viewers.length - 1;
-    viewers.splice(index, 1);
-    if (!wasActive) return;
-    tracker.failAll(new ViewerNotConnectedError());
-    events.emit('disconnected');
+    const wasActive = activeFor(connection.doc) === connection;
+    connections.splice(index, 1);
+    connection.tracker.failAll(new ViewerNotConnectedError());
+    if (wasActive) events.emit('disconnected', connection.doc);
   };
 
-  let userHandler: ((request: UserRequestMessage) => Promise<unknown>) | undefined;
+  let userHandler: ((doc: string, request: UserRequestMessage) => Promise<unknown>) | undefined;
 
   /** 뷰어 요청을 처리해 보낸 뷰어에 응답한다. 응답 전에 그 뷰어가 끊겼으면 보내지 않는다 */
   const answerUser = async (ws: WebSocket, id: number, run: () => Promise<unknown>) => {
@@ -176,15 +190,17 @@ export async function startBridge(options: BridgeOptions): Promise<Bridge> {
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(response));
   };
 
-  const receive = (ws: WebSocket, data: unknown) => {
+  const receive = (connection: Connection, data: unknown) => {
+    const { ws } = connection;
     const message: unknown = JSON.parse(String(data));
     const userRequest = userRequestMessageSchema.safeParse(message);
     if (userRequest.success) {
       const request = userRequest.data;
       void answerUser(ws, request.id, async () => {
-        if (ws !== activeViewer()) throw new Error(INACTIVE_VIEWER);
+        const { doc } = connection;
+        if (doc === undefined || connection !== activeFor(doc)) throw new Error(INACTIVE_VIEWER);
         if (userHandler === undefined) throw new Error(NO_USER_HANDLER);
-        return userHandler(request);
+        return userHandler(doc, request);
       });
       return;
     }
@@ -194,7 +210,7 @@ export async function startBridge(options: BridgeOptions): Promise<Bridge> {
       return;
     }
     const parsed = responseMessageSchema.safeParse(message);
-    if (parsed.success) tracker.settle(parsed.data);
+    if (parsed.success) connection.tracker.settle(parsed.data);
     else log(`뷰어 메시지를 읽지 못했습니다: ${parsed.error.message}`);
   };
 
@@ -205,58 +221,73 @@ export async function startBridge(options: BridgeOptions): Promise<Bridge> {
       log(`뷰어 연결 소켓 오류: ${error.message}`);
       socket.destroy();
     });
-    if (tokenOf(req.url) !== token) {
+    if (searchParam(req.url, 'token') !== token) {
       socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n');
       return;
     }
+    // 탭 주소의 문서 이름(SPEC-007). 없으면 빈 탭 — 다음에 여는 문서가 쓴다
+    const doc = searchParam(req.url, 'doc') || undefined;
     wss.handleUpgrade(req, socket, head, (ws) => {
-      viewers.push(ws);
+      const connection: Connection = { ws, doc, tracker: new RequestTracker() };
+      connections.push(connection);
       ws.on('message', (data) => {
         try {
-          receive(ws, data);
+          receive(connection, data);
         } catch (error) {
           log(`뷰어 메시지 처리 오류: ${String(error)}`);
         }
       });
-      ws.on('close', () => removeViewer(ws));
+      ws.on('close', () => removeConnection(connection));
       ws.on('error', (error) => {
         log(`뷰어 WebSocket 오류: ${error.message}`);
-        removeViewer(ws);
+        removeConnection(connection);
         ws.terminate();
       });
-      events.emit('connected');
+      events.emit('connected', doc);
     });
   });
 
   const { address: host, port } = await listenOnFreePort(http, options.port, options.portAttempts ?? PORT_ATTEMPTS);
 
+  const viewerUrl = `http://${HOST}:${port}/?token=${token}`;
   return {
     host,
     port,
     token,
-    viewerUrl: `http://${HOST}:${port}/?token=${token}`,
+    viewerUrl,
+    viewerUrlFor: (doc) => `${viewerUrl}&doc=${encodeURIComponent(doc)}`,
     events,
-    hasViewer: () => viewers.length > 0,
+    hasViewer: (doc) => (doc === undefined ? connections.length > 0 : activeFor(doc) !== undefined),
+    claimViewer(doc) {
+      if (activeFor(doc) !== undefined) return true;
+      const blank = activeFor(undefined);
+      if (blank === undefined) return false;
+      blank.doc = doc;
+      return true;
+    },
+    releaseViewer(doc) {
+      for (const connection of connections) if (connection.doc === doc) connection.doc = undefined;
+    },
     serveUserRequests(handler) {
       userHandler = handler;
     },
-    request(method, params) {
-      const viewer = activeViewer();
+    request(doc, method, params) {
+      const viewer = activeFor(doc);
       if (viewer === undefined) return Promise.reject(new ViewerNotConnectedError());
-      const { id, promise } = tracker.start(method, parseViewerResult[method]);
+      const { id, promise } = viewer.tracker.start(method, parseViewerResult[method]);
       // 뷰어가 읽는 스키마로 먼저 확인한다. 맞지 않으면 보내지 않고 바로 실패(뷰어 타임아웃까지 기다리지 않게)
       const message = requestMessageSchema.safeParse({ type: 'request', id, method, params });
       if (!message.success) {
-        tracker.settle({ type: 'response', id, ok: false, error: `뷰어에 보낼 수 없는 요청입니다(${method}): ${message.error.message}` });
+        viewer.tracker.settle({ type: 'response', id, ok: false, error: `뷰어에 보낼 수 없는 요청입니다(${method}): ${message.error.message}` });
         return promise;
       }
       const request: RequestMessage = message.data;
-      viewer.send(JSON.stringify(request));
+      viewer.ws.send(JSON.stringify(request));
       return promise;
     },
     async close() {
-      tracker.failAll(new ViewerNotConnectedError());
-      for (const ws of viewers) ws.terminate();
+      for (const connection of connections) connection.tracker.failAll(new ViewerNotConnectedError());
+      for (const { ws } of connections) ws.terminate();
       await new Promise<void>((resolve) => wss.close(() => resolve()));
       await new Promise<void>((resolve, reject) => http.close((error) => (error ? reject(error) : resolve())));
     },

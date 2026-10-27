@@ -7,18 +7,18 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 import { startBridge, type Bridge } from '../src/server/bridge.ts';
-import { DocumentSession } from '../src/server/session.ts';
+import { DocumentSessions } from '../src/server/documents.ts';
 
 const viewerDir = fileURLToPath(new URL('../dist/viewer/', import.meta.url));
 const fixturePath = (name: string) => fileURLToPath(new URL(`../fixtures/${name}`, import.meta.url));
 
 let bridge: Bridge;
-let session: DocumentSession;
+let sessions: DocumentSessions;
 let browserOpens: string[];
 
 function startSession(page: Page): void {
   browserOpens = [];
-  session = new DocumentSession(bridge, {
+  sessions = new DocumentSessions(bridge, {
     openBrowser: (url) => {
       browserOpens.push(url);
       void page.goto(url);
@@ -38,7 +38,7 @@ test.afterEach(async () => {
 test.describe('SPEC-001 문서 열기 (서버가 내주는 뷰어)', () => {
   for (const name of ['notice.hwpx', 'notice.hwp']) {
     test(`open_document 에 ${name} 경로를 주면 뷰어가 문서를 렌더링하고 쪽 수·블록 수를 돌려준다`, async ({ page }) => {
-      const result = await session.open(fixturePath(name));
+      const result = await sessions.open(fixturePath(name));
 
       expect(result).toEqual({ fileName: name, pageCount: 1, blockCount: 14, viewerUrl: bridge.viewerUrl });
       expect(browserOpens).toEqual([bridge.viewerUrl]);
@@ -48,9 +48,9 @@ test.describe('SPEC-001 문서 열기 (서버가 내주는 뷰어)', () => {
   }
 
   test('이미 연결된 뷰어가 있으면 새 탭을 열지 않고 그 탭의 문서를 바꾼다', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
+    await sessions.open(fixturePath('notice.hwpx'));
 
-    const second = await session.open(fixturePath('report.hwpx'));
+    const second = await sessions.open(fixturePath('report.hwpx'));
 
     expect(browserOpens).toHaveLength(1);
     expect(second.pageCount).toBe(2);
@@ -59,18 +59,18 @@ test.describe('SPEC-001 문서 열기 (서버가 내주는 뷰어)', () => {
   });
 
   test('뷰어 탭을 새로고침해도 같은 문서가 다시 뜨고 블록 id 가 그대로다', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
-    const ids = session.document?.ids;
+    await sessions.open(fixturePath('notice.hwpx'));
+    const ids = sessions.document?.ids;
     const reconnected = once(bridge.events, 'connected');
 
     await page.reload();
     await reconnected;
-    await session.ready();
+    await sessions.ready();
 
     await expect(page.getByRole('status')).toHaveText('notice.hwpx — 1쪽');
     await expect(page.getByTestId('page-canvas-0')).toBeVisible();
-    expect(session.document?.ids).toBe(ids);
-    expect(session.document?.blockCount).toBe(14);
+    expect(sessions.document?.ids).toBe(ids);
+    expect(sessions.document?.blockCount).toBe(14);
     expect(browserOpens).toHaveLength(1);
   });
 
@@ -78,7 +78,7 @@ test.describe('SPEC-001 문서 열기 (서버가 내주는 뷰어)', () => {
     const path = join(await mkdtemp(join(tmpdir(), 'docbridge-broken-')), '손상된 공문.hwpx');
     await writeFile(path, 'HWPX 가 아닌 글자');
 
-    await expect(session.open(path)).rejects.toThrow(/^문서를 열 수 없습니다: .+/);
+    await expect(sessions.open(path)).rejects.toThrow(/^문서를 열 수 없습니다: .+/);
 
     await expect(page.getByRole('heading', { name: '문서를 열 수 없습니다' })).toBeVisible();
     await expect(page.getByText(/^손상된 공문\.hwpx: .+/)).toBeVisible();

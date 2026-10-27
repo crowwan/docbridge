@@ -4,17 +4,17 @@ import { fileURLToPath } from 'node:url';
 import { expect, test } from '@playwright/test';
 import { startBridge, type Bridge } from '../src/server/bridge.ts';
 import { findText, getOutline, readBlockContents } from '../src/server/read-tools.ts';
-import { DocumentSession } from '../src/server/session.ts';
+import { DocumentSessions } from '../src/server/documents.ts';
 
 const viewerDir = fileURLToPath(new URL('../dist/viewer/', import.meta.url));
 const fixturePath = (name: string) => fileURLToPath(new URL(`../fixtures/${name}`, import.meta.url));
 
 let bridge: Bridge;
-let session: DocumentSession;
+let sessions: DocumentSessions;
 
 test.beforeEach(async ({ page }) => {
   bridge = await startBridge({ port: 0, viewerDir });
-  session = new DocumentSession(bridge, { openBrowser: (url) => void page.goto(url) });
+  sessions = new DocumentSessions(bridge, { openBrowser: (url) => void page.goto(url) });
 });
 
 test.afterEach(async () => {
@@ -23,9 +23,9 @@ test.afterEach(async () => {
 
 test.describe('SPEC-001 문서 구조 읽기 도구 (서버가 내주는 뷰어)', () => {
   test('get_outline 은 본문 문단·표·누름틀을 문서 순서대로 id·kind·쪽·앞 40자와 함께 돌려주고, 자동 번호 문단은 번호 문자열을 포함한다', async () => {
-    await session.open(fixturePath('notice.hwpx'));
+    await sessions.open(fixturePath('notice.hwpx'));
 
-    const outline = await getOutline(session);
+    const outline = await getOutline(sessions.get());
 
     expect(outline.blockCount).toBe(14);
     expect(outline.blocks.map((b) => b.kind)).toEqual([
@@ -38,10 +38,10 @@ test.describe('SPEC-001 문서 구조 읽기 도구 (서버가 내주는 뷰어)
   });
 
   test('여러 쪽 문서에서 쪽 번호는 뷰어 조판 기준이고, 쪽 범위로 읽으면 그 쪽 블록만 온다', async () => {
-    await session.open(fixturePath('report.hwpx'));
+    await sessions.open(fixturePath('report.hwpx'));
 
-    const outline = await getOutline(session);
-    const secondPage = await readBlockContents(session, { fromPage: 2, toPage: 2 });
+    const outline = await getOutline(sessions.get());
+    const secondPage = await readBlockContents(sessions.get(), { fromPage: 2, toPage: 2 });
 
     expect(Math.max(...outline.blocks.map((b) => b.page))).toBe(2);
     expect(secondPage.blocks.length).toBeGreaterThan(0);
@@ -49,21 +49,21 @@ test.describe('SPEC-001 문서 구조 읽기 도구 (서버가 내주는 뷰어)
   });
 
   test('read_blocks 는 표 블록에 대해 칸마다 행,열·텍스트·같은 행 첫 칸 텍스트를 돌려준다', async () => {
-    await session.open(fixturePath('notice.hwpx'));
-    const table = (await getOutline(session)).blocks.find((b) => b.kind === 'table');
+    await sessions.open(fixturePath('notice.hwpx'));
+    const table = (await getOutline(sessions.get())).blocks.find((b) => b.kind === 'table');
 
-    const result = await readBlockContents(session, { ids: [table?.id ?? ''] });
+    const result = await readBlockContents(sessions.get(), { ids: [table?.id ?? ''] });
 
     const [block] = result.blocks;
     expect(block?.kind === 'table' ? block.cells : []).toContainEqual({ row: 2, col: 2, text: '구민회관 소강당', rowLabel: '2회차' });
   });
 
   test('find_text 는 일치하는 모든 위치의 블록 id·범위·앞뒤 20자를 돌려준다', async () => {
-    await session.open(fixturePath('notice.hwpx'));
-    const outline = await getOutline(session);
+    await sessions.open(fixturePath('notice.hwpx'));
+    const outline = await getOutline(sessions.get());
 
-    const deadline = await findText(session, '회신 기한');
-    const cell = await findText(session, '소강당');
+    const deadline = await findText(sessions.get(), '회신 기한');
+    const cell = await findText(sessions.get(), '소강당');
 
     expect(deadline.matches).toHaveLength(1);
     const [match] = deadline.matches;
