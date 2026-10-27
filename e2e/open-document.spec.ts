@@ -40,22 +40,24 @@ test.describe('SPEC-001 문서 열기 (서버가 내주는 뷰어)', () => {
     test(`open_document 에 ${name} 경로를 주면 뷰어가 문서를 렌더링하고 쪽 수·블록 수를 돌려준다`, async ({ page }) => {
       const result = await sessions.open(fixturePath(name));
 
-      expect(result).toEqual({ fileName: name, pageCount: 1, blockCount: 14, viewerUrl: bridge.viewerUrl });
-      expect(browserOpens).toEqual([bridge.viewerUrl]);
+      expect(result).toEqual({ doc: 'd1', fileName: name, pageCount: 1, blockCount: 14, viewerUrl: bridge.viewerUrlFor('d1') });
+      expect(browserOpens).toEqual([bridge.viewerUrlFor('d1')]);
       await expect(page.getByRole('status')).toHaveText(`${name} — 1쪽`);
       await expect(page.getByTestId('page-canvas-0')).toBeVisible();
     });
   }
 
-  test('이미 연결된 뷰어가 있으면 새 탭을 열지 않고 그 탭의 문서를 바꾼다', async ({ page }) => {
-    await sessions.open(fixturePath('notice.hwpx'));
+  test('SPEC-007 이미 열린 파일을 다시 열면 새 탭을 열지 않고 그 탭에 다시 띄운다', async ({ page }) => {
+    await sessions.open(fixturePath('report.hwpx'));
 
     const second = await sessions.open(fixturePath('report.hwpx'));
 
     expect(browserOpens).toHaveLength(1);
-    expect(second.pageCount).toBe(2);
+    expect(second).toMatchObject({ doc: 'd1', pageCount: 2 });
     await expect(page.getByRole('status')).toHaveText('report.hwpx — 2쪽');
     await expect(page.getByRole('region', { name: /쪽$/ })).toHaveCount(2);
+    await expect(page).toHaveTitle('report.hwpx');
+    await expect(page.getByTestId('doc-name')).toHaveText('d1');
   });
 
   test('뷰어 탭을 새로고침해도 같은 문서가 다시 뜨고 블록 id 가 그대로다', async ({ page }) => {
@@ -65,6 +67,8 @@ test.describe('SPEC-001 문서 열기 (서버가 내주는 뷰어)', () => {
 
     await page.reload();
     await reconnected;
+    // 다시 붙은 탭 주소에 문서 이름이 있다(그 이름으로 다시 붙어 같은 문서를 받는다)
+    expect(new URL(page.url()).searchParams.get('doc')).toBe('d1');
     await sessions.ready();
 
     await expect(page.getByRole('status')).toHaveText('notice.hwpx — 1쪽');
