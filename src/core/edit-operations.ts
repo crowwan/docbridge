@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { anchorsOf, blockIndexByAnchor, fieldOrdinal } from './block-ids.ts';
 import { anchoredTargetSchema, blockAnchorSchema, type AnchoredTarget, type Block, type FieldBlock, type TableBlock } from './block-schema.ts';
 import { deleteBlocks } from './delete-blocks.ts';
+import { isCellStep } from './fields.ts';
 import { insertParagraphNear, listFields, moveParagraphs, replaceCellText, replaceFieldText, replaceParagraphText } from './edits.ts';
 import { noParagraphChanges, type ParagraphChanges, type ParagraphPosition } from './paragraph-changes.ts';
 import { spanIn, targetLabel } from './text-targets.ts';
@@ -110,7 +111,7 @@ function replaceInField(doc: HwpDocument, block: FieldBlock, target: AnchoredTar
   )[ordinal];
   if (field === undefined) throw new Error(`${target.id}: 뷰어 문서에서 이 누름틀을 찾지 못했습니다. get_outline 을 다시 부르세요.`);
   const path = field.location.path ?? [];
-  if (path.length > 1 || path.some((step) => step.type !== 'cell')) {
+  if (path.length > 1 || !path.every(isCellStep)) {
     throw new Error(`${target.id}: 표 안 표나 글상자에 든 누름틀은 아직 바꿀 수 없습니다.`);
   }
   const { start, end } = spanIn(target, block.value, EDIT_SPAN);

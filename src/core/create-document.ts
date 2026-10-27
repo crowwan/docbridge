@@ -9,7 +9,7 @@
 import { HwpDocument } from '@rhwp/core';
 import { z } from 'zod';
 import { blockPositionSchema, type Block } from './block-schema.ts';
-import { BODY_LIST, bodyParagraphLocator } from './body-paragraphs.ts';
+import { bodyControlsAt, type BodyControl } from './body-paragraphs.ts';
 import { charLength } from './chars.ts';
 import { paraShapeIdOf } from './edits.ts';
 import { parseJson } from './json.ts';
@@ -221,10 +221,6 @@ export const isHeaderCell = (doc: HwpDocument, section: number, paragraph: numbe
 /** 남길 문단을 정하는 개체: 구역·단 정의, 머리말·꼬리말, 쪽 번호 위치. 이것이 든 문단은 지우지 않고 글자·다른 개체만 지운다 */
 const KEEP_CONTROLS = new Set(['secd', 'cold', 'head', 'foot', 'pgnp']);
 
-const controlListSchema = z.array(
-  z.object({ ctrlId: z.string(), userDesc: z.string(), list: z.number(), para: z.number(), controlIndex: z.number() }),
-);
-type ControlInfo = z.infer<typeof controlListSchema>[number];
 
 export interface ClearedBody {
   /** 남긴 문단(구역, 문단 — 비운 뒤 위치) */
@@ -235,28 +231,17 @@ export interface ClearedBody {
   keptObjects: Record<string, number>;
 }
 
-/** 본문 컨트롤과 그 구역 안 문단 번호(para 는 getControls 의 문서 전체 문단 번호 그대로) */
-interface BodyControl extends ControlInfo {
-  section: number;
-  paragraph: number;
-}
-
 /** 본문 문단 컨트롤을 구역마다 모은다 */
 function bodyControlsBySection(doc: HwpDocument): BodyControl[][] {
-  const locate = bodyParagraphLocator(doc);
   const bySection: BodyControl[][] = Array.from({ length: doc.getSectionCount() }, () => []);
-  for (const control of parseJson(controlListSchema, doc.getControls())) {
-    if (control.list !== BODY_LIST) continue;
-    const position = locate(control.para);
-    bySection[position.section]?.push({ ...control, ...position });
-  }
+  for (const controls of bodyControlsAt(doc).values()) for (const control of controls) bySection[control.section]?.push(control);
   return bySection;
 }
 
 const countInto = (counts: Record<string, number>, name: string) => {
   counts[name] = (counts[name] ?? 0) + 1;
 };
-const nameOf = ({ userDesc, ctrlId }: ControlInfo) => userDesc || ctrlId || '누름틀';
+const nameOf = ({ userDesc, ctrlId }: BodyControl) => userDesc || ctrlId || '누름틀';
 
 /**
  * 양식 문서의 본문을 비운다. 스타일·쪽 설정·머리말·꼬리말은 문서 정의·구역 첫 문단에 있어 그대로 남는다.

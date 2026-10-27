@@ -133,10 +133,10 @@ SPEC-003(새 문서 만들기)의 기능 이슈(#36~#39)에 들어가기 전에,
 | 양식 비우기를 `deleteParagraph` 반복 | 코드가 단순하다 | 74쪽 13.4초 |
 | 양식 비우기를 SPEC-002 `delete_blocks` 로 | 규칙 재사용 | 숨은 개체가 든 문단을 거부하는 규칙이라 양식(그림·머리말이 많은)에 맞지 않고, 여러 구역 문서에서 동작하지 않는다(아래) |
 
-## 같이 찾은 것 (SPEC-002 결함, 이 이슈에서 고치지 않음)
+## 같이 찾은 것 (SPEC-002 결함, 이 이슈에서 고치지 않음 — #41·#42 에서 고침)
 
-- **`delete_blocks` 가 여러 구역 문서에서 문단째 지우기를 모두 거부한다.** `delete-blocks.ts` `bodyControls` 가 구역마다 본문 목록이 따로 있다고 보고 `secd` 의 `para === 0` 만 세는데, `getControls` 는 본문을 목록 0 하나로 보고 문단 번호를 구역을 이어 센다. 로컬 2구역 문서 2개에서 구역 0 문단을 지워도 "문단에 든 개체를 확인하지 못해 지울 수 없습니다". ADR 002 의 "여러 구역 문서는 fixture 가 없어 확인 못 함" 이 실제로 틀린 경우. 고치는 법: `body-paragraphs.ts` `bodyParagraphLocator` 를 쓴다.
-- **`listFields`(edits.ts) 스키마가 글상자 안 하이퍼링크 위치를 받지 못한다.** `getFieldList` 의 `location.path` 가 `{type:"textbox", controlIndex, paraIndex}` 로 오면(로컬 제안요청서) `cellIndex` 가 없어 zod 오류로 `delete_blocks` 가 던진다. 블록 추출(`blocks.ts`)은 다른 스키마라 괜찮다.
+- **`delete_blocks` 가 여러 구역 문서에서 문단째 지우기를 모두 거부한다.** `delete-blocks.ts` `bodyControls` 가 구역마다 본문 목록이 따로 있다고 보고 `secd` 의 `para === 0` 만 세는데, `getControls` 는 본문을 목록 0 하나로 보고 문단 번호를 구역을 이어 센다. 로컬 2구역 문서 2개에서 구역 0 문단을 지워도 "문단에 든 개체를 확인하지 못해 지울 수 없습니다". ADR 002 의 "여러 구역 문서는 fixture 가 없어 확인 못 함" 이 실제로 틀린 경우. 고치는 법: `body-paragraphs.ts` `bodyParagraphLocator` 를 쓴다. → **#41 에서 고침**(본문 목록 0 컨트롤을 문서 전체 문단 번호로 구역·문단에 맞춘다).
+- **`listFields`(edits.ts) 스키마가 글상자 안 하이퍼링크 위치를 받지 못한다.** `getFieldList` 의 `location.path` 가 `{type:"textbox", controlIndex, paraIndex}` 로 오면(로컬 제안요청서) `cellIndex` 가 없어 zod 오류로 `delete_blocks` 가 던진다. 블록 추출(`blocks.ts`)은 다른 스키마라 괜찮다. → **#42 에서 고침**(누름틀이 아닌 필드는 종류만 읽고 거르고, 경로 칸은 표 칸(`cellIndex`)과 그 밖(종류·컨트롤 번호)을 나눠 읽는다).
 
 ## 결과
 
