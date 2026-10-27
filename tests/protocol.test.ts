@@ -80,6 +80,7 @@ const sampleParams: { [M in ViewerMethod]: ViewerParams<M> } = {
   find_text: { query: '회신' },
   highlight: { targets: [{ id: 'b1', anchor: { section: 0, paragraph: 0, part: 'text' }, start: 0, end: 2 }], note: '근거' },
   clear_highlight: {},
+  list_styles: {},
   edit: {
     operation: { kind: 'replace_text', target: { id: 'b1', anchor: { section: 0, paragraph: 0, part: 'text' } }, text: '새 글자' },
     depth: 0,

@@ -15,6 +15,7 @@ import { editOperationSchema } from '../core/edit-operations.ts';
 import { textMatchSchema } from '../core/find-text.ts';
 import { paragraphChangesSchema } from '../core/paragraph-changes.ts';
 import { saveExportSchema } from '../core/hwpx-export.ts';
+import { paragraphStyleSchema } from '../core/styles.ts';
 import { errorMessage } from './errors.ts';
 
 // 하이라이트·찾기·편집 공용 대상(TextTarget)과 서버가 위치를 붙인 대상은 core/block-schema.ts 에 있다(뷰어 편집 코드가 같이 쓴다)
@@ -74,6 +75,8 @@ export const viewerMethodSchemas = {
   find_text: { params: z.object({ query: z.string() }), result: z.array(textMatchSchema) },
   /** 이전 하이라이트를 지우고 대상마다 하이라이트를 그린 뒤 첫 대상으로 스크롤한다. 결과는 하이라이트가 있는 모든 쪽(1부터, 오름차순)과 정확하지 않을 수 있는 대상 안내 */
   highlight: { params: highlightParamsSchema, result: z.object({ pages: z.array(z.number()), warnings: z.array(z.string()).optional() }) },
+  /** 열린 문서의 문단 스타일(글자 스타일 빼고, 문서의 스타일 순서). 개요 여부는 스타일 문단 모양으로(core/styles.ts) */
+  list_styles: { params: z.object({}), result: z.array(paragraphStyleSchema) },
   /** 하이라이트를 모두 지운다 */
   clear_highlight: { params: z.object({}), result: z.object({}) },
   /**
@@ -110,6 +113,7 @@ export const parseViewerResult: { [M in ViewerMethod]: (result: unknown) => View
   find_text: (result) => viewerMethodSchemas.find_text.result.parse(result),
   highlight: (result) => viewerMethodSchemas.highlight.result.parse(result),
   clear_highlight: (result) => viewerMethodSchemas.clear_highlight.result.parse(result),
+  list_styles: (result) => viewerMethodSchemas.list_styles.result.parse(result),
   edit: (result) => viewerMethodSchemas.edit.result.parse(result),
   undo: (result) => viewerMethodSchemas.undo.result.parse(result),
   export_hwpx: (result) => viewerMethodSchemas.export_hwpx.result.parse(result),
@@ -126,6 +130,7 @@ const requestSchemas = {
   find_text: requestSchema('find_text', viewerMethodSchemas.find_text.params),
   highlight: requestSchema('highlight', viewerMethodSchemas.highlight.params),
   clear_highlight: requestSchema('clear_highlight', viewerMethodSchemas.clear_highlight.params),
+  list_styles: requestSchema('list_styles', viewerMethodSchemas.list_styles.params),
   edit: requestSchema('edit', viewerMethodSchemas.edit.params),
   undo: requestSchema('undo', viewerMethodSchemas.undo.params),
   export_hwpx: requestSchema('export_hwpx', viewerMethodSchemas.export_hwpx.params),
@@ -139,6 +144,7 @@ export const requestMessageSchema = z.discriminatedUnion('method', [
   requestSchemas.find_text,
   requestSchemas.highlight,
   requestSchemas.clear_highlight,
+  requestSchemas.list_styles,
   requestSchemas.edit,
   requestSchemas.undo,
   requestSchemas.export_hwpx,

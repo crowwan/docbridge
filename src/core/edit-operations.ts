@@ -10,6 +10,7 @@ import { deleteBlocks } from './delete-blocks.ts';
 import { isCellStep } from './fields.ts';
 import { insertParagraphNear, listFields, moveParagraphs, replaceCellText, replaceFieldText, replaceParagraphText } from './edits.ts';
 import { noParagraphChanges, type ParagraphChanges, type ParagraphPosition } from './paragraph-changes.ts';
+import { applyParagraphStyle, assertStylable, resetToStyle, styleIdByName } from './styles.ts';
 import { spanIn, targetLabel } from './text-targets.ts';
 
 export type { ParagraphPosition } from './paragraph-changes.ts';
@@ -30,11 +31,20 @@ export const insertParagraphOperationSchema = z.object({
   reference: anchoredBlockSchema,
   where: z.enum(['before', 'after']),
   text: z.string(),
+  /** 문단 스타일 이름(한글·영문). 주면 새 문단을 그 스타일 모양 그대로로(SPEC-003) */
+  style: z.string().optional(),
 });
 
 export const deleteBlocksOperationSchema = z.object({
   kind: z.literal('delete_blocks'),
   targets: z.array(anchoredBlockSchema).min(1),
+});
+
+/** set_style(SPEC-003): 문단 블록들의 문단 스타일을 바꾼다. 스타일 이름은 한글·영문 이름 */
+export const setStyleOperationSchema = z.object({
+  kind: z.literal('set_style'),
+  targets: z.array(anchoredBlockSchema).min(1),
+  style: z.string(),
 });
 
 const paragraphIndexSchema = z.number().int().min(0);
@@ -59,12 +69,14 @@ export const editOperationSchema = z.discriminatedUnion('kind', [
   insertParagraphOperationSchema,
   deleteBlocksOperationSchema,
   moveBlocksOperationSchema,
+  setStyleOperationSchema,
 ]);
 export type EditOperation = z.infer<typeof editOperationSchema>;
 export type ReplaceTextOperation = z.infer<typeof replaceTextOperationSchema>;
 export type InsertParagraphOperation = z.infer<typeof insertParagraphOperationSchema>;
 export type DeleteBlocksOperation = z.infer<typeof deleteBlocksOperationSchema>;
 export type MoveBlocksOperation = z.infer<typeof moveBlocksOperationSchema>;
+export type SetStyleOperation = z.infer<typeof setStyleOperationSchema>;
 
 /**
  * 편집이 바꾼 본문 문단(편집 뒤 위치). 그 문단에 걸린 블록(문단 글자·표·누름틀)을 모두 바뀐 블록으로 본다 —
@@ -147,12 +159,32 @@ function replaceText(doc: HwpDocument, blocks: Block[], { target, text }: Replac
   return { paragraphs: [{ section: block.section, paragraph: block.paragraph }] };
 }
 
-/** insert_paragraph: 기준 블록이 든 문단 앞·뒤에 새 문단을 넣는다. 서식은 기준 문단을 따른다(edits.ts insertParagraphNear) */
-function insertParagraph(doc: HwpDocument, blocks: Block[], { reference, where, text }: InsertParagraphOperation): EditApplied {
+/**
+ * insert_paragraph: 기준 블록이 든 문단 앞·뒤에 새 문단을 넣는다. 서식은 기준 문단을 따른다(edits.ts insertParagraphNear).
+ * style 을 주면 새 문단을 그 스타일 모양 그대로로 덮는다(문단·글자 모두 — 기준 문단의 직접 서식을 물려받지 않는다, SPEC-003)
+ */
+function insertParagraph(doc: HwpDocument, blocks: Block[], { reference, where, text, style }: InsertParagraphOperation): EditApplied {
   // 표 칸 안 문단은 블록이 아니므로 기준은 언제나 본문 문단이다(표·누름틀 블록이면 그것을 품은 문단). 줄바꿈 거부는 edits.ts
   const { section, paragraph } = blockAt(blocks, reference);
+  // 없는 스타일은 문서를 건드리기 전에 거부한다
+  const styleId = style === undefined ? undefined : styleIdByName(doc, style);
   const position = { section, paragraph: insertParagraphNear(doc, section, paragraph, where, text) };
+  if (styleId !== undefined) resetToStyle(doc, section, position.paragraph, styleId);
   return { paragraphs: [position], changes: { ...noParagraphChanges(), inserted: [position] } };
+}
+
+/** set_style: 문단 블록마다 스타일을 건다(styles.ts applyParagraphStyle). 번호가 바뀐 다른 문단은 공용 경로가 바뀐 블록에 더한다 */
+function setStyle(doc: HwpDocument, blocks: Block[], { targets, style }: SetStyleOperation): EditApplied {
+  assertStylable(targets);
+  const styleId = styleIdByName(doc, style);
+  const paragraphs = targets.map((target) => {
+    const block = blockAt(blocks, target);
+    // 서버 id 표와 뷰어 블록 종류가 다르면(있으면 안 된다) 문단이 아닌 블록에 걸지 않는다
+    if (block.kind !== 'paragraph') throw new Error(`${target.id}: 뷰어 문서에서 이 블록은 문단이 아닙니다. get_outline 을 다시 부르세요.`);
+    return { section: block.section, paragraph: block.paragraph };
+  });
+  for (const { section, paragraph } of paragraphs) applyParagraphStyle(doc, section, paragraph, styleId);
+  return { paragraphs };
 }
 
 export const moveRejectedMessage = (reason: string, label: string) =>
@@ -206,6 +238,8 @@ export function applyEdit(doc: HwpDocument, blocks: Block[], operation: EditOper
       return { paragraphs: [], changes: deleteBlocks(doc, blocks, operation.targets) };
     case 'move_blocks':
       return moveBlocks(doc, blocks, operation);
+    case 'set_style':
+      return setStyle(doc, blocks, operation);
     default: {
       // 편집 종류를 더하고 여기 처리를 빠뜨리면 컴파일 오류가 난다
       const unhandled: never = operation;

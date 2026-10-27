@@ -10,12 +10,14 @@ import { exportVerifiedHwpx } from '../src/core/hwpx-export.ts';
 import { parseJson } from '../src/core/json.ts';
 import { createBlankDocument } from '../src/core/rhwp-node.ts';
 import { applyParagraphStyle, assertStylable, ensureTitleStyle, paragraphStyles, styleIdByName, TITLE_STYLE } from '../src/core/styles.ts';
+import { openFixture } from './fixtures.ts';
 
 const S = 0;
 
 const paraPropsSchema = z.looseObject({ paraShapeId: z.number(), headType: z.string(), alignment: z.string() });
 const charPropsSchema = z.looseObject({ fontSize: z.number(), bold: z.boolean() });
 const styleAtSchema = z.object({ id: z.number(), name: z.string() });
+const styleDetailSchema = z.object({ paraProps: z.looseObject({ paraShapeId: z.number(), headType: z.string() }) });
 
 const paraProps = (doc: HwpDocument, p: number) => parseJson(paraPropsSchema, doc.getParaPropertiesAt(S, p));
 const charProps = (doc: HwpDocument, p: number, offset: number) => parseJson(charPropsSchema, doc.getCharPropertiesAt(S, p, offset));
@@ -53,6 +55,22 @@ describe('SPEC-003 문단 스타일 목록 (paragraphStyles)', () => {
       { id: 2, name: '개요 1', englishName: 'Outline 1', outlineLevel: 1 },
       { id: 3, name: '개요 2', englishName: 'Outline 2', outlineLevel: 2 },
     ]);
+  });
+
+  it('rhwp getStyleDetail 은 스타일 문단 모양에 번호가 없으면 그 스타일을 쓰는 번호 문단의 모양을 준다 (근거)', () => {
+    // report.hwpx: 모든 문단이 바탕글 스타일이고, 개요 문단은 직접 문단 모양으로 개요를 건다
+    const doc = openFixture('report.hwpx');
+    const detail = parseJson(styleDetailSchema, doc.getStyleDetail(0)).paraProps;
+
+    expect(detail).toMatchObject({ headType: 'Outline' });
+    expect(detail.paraShapeId).not.toBe(0);
+  });
+
+  it('AC-3 바탕글 문단에 직접 개요 모양을 건 문서에서도 바탕글은 개요 스타일이 아니다', () => {
+    const styles = paragraphStyles(openFixture('report.hwpx'));
+
+    expect(styles.find(({ name }) => name === '바탕글')).toEqual({ id: 0, name: '바탕글', englishName: 'Normal' });
+    expect(styles.find(({ name }) => name === '개요 1')).toMatchObject({ outlineLevel: 1 });
   });
 
   it('"개요 1" 이라도 스타일 문단 모양에 개요가 없으면 개요 스타일로 보지 않고 번호도 붙지 않는다', () => {

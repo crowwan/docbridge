@@ -24,16 +24,18 @@ const styleListSchema = z.array(
 );
 type StyleEntry = z.infer<typeof styleListSchema>[number];
 const styleDetailSchema = z.object({
-  paraProps: z.looseObject({ headType: z.string(), paraLevel: z.number() }),
+  paraProps: z.looseObject({ paraShapeId: z.number(), headType: z.string(), paraLevel: z.number() }),
 });
 
-export interface ParagraphStyle {
-  id: number;
-  name: string;
-  englishName: string;
+/** 문단 스타일 하나(뷰어 list_styles 결과) */
+export const paragraphStyleSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  englishName: z.string(),
   /** 개요 스타일이면 개요 수준(1부터). 이 스타일 문단은 개요 번호를 받는다 */
-  outlineLevel?: number;
-}
+  outlineLevel: z.number().optional(),
+});
+export type ParagraphStyle = z.infer<typeof paragraphStyleSchema>;
 
 /**
  * rhwp getStyleList 의 type 은 HWP 스타일 속성 바이트 그대로다. 문단 0 / 글자 1 인데, 한컴 HWP 5 바이너리 일부는
@@ -50,12 +52,15 @@ const styleEntry = (doc: HwpDocument, styleId: number): StyleEntry | undefined =
 
 /**
  * 문서의 문단 스타일(글자 스타일 빼고, 문서의 스타일 순서). 개요 번호 여부는 스타일 이름이 아니라 스타일 문단 모양의 headType 으로 본다
- * (한컴 공문 양식은 "개요 1" 을 번호 없는 모양으로 바꿔 쓰기도 한다 — 로컬 한컴 기안문)
+ * (한컴 공문 양식은 "개요 1" 을 번호 없는 모양으로 바꿔 쓰기도 한다 — 로컬 한컴 기안문).
+ * rhwp getStyleDetail 은 스타일 문단 모양에 번호가 없으면 그 스타일을 쓰는 문단 중 번호 있는 첫 문단의 모양을 준다
+ * (바탕글 문단에 직접 개요 모양을 건 문서에서 바탕글이 개요로 나온다 — #37). 그래서 돌려준 모양이 스타일 것일 때만 믿는다
  */
 export function paragraphStyles(doc: HwpDocument): ParagraphStyle[] {
-  return paragraphStyleEntries(doc).map(({ id, name, englishName }) => {
+  return paragraphStyleEntries(doc).map(({ id, name, englishName, paraShapeId }) => {
     const { paraProps } = parseJson(styleDetailSchema, doc.getStyleDetail(id));
-    return paraProps.headType === 'Outline' ? { id, name, englishName, outlineLevel: paraProps.paraLevel + 1 } : { id, name, englishName };
+    const outline = paraProps.headType === 'Outline' && paraProps.paraShapeId === paraShapeId;
+    return outline ? { id, name, englishName, outlineLevel: paraProps.paraLevel + 1 } : { id, name, englishName };
   });
 }
 
