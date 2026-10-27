@@ -13,6 +13,7 @@ import {
 } from '../core/block-schema.ts';
 import { editOperationSchema } from '../core/edit-operations.ts';
 import { textMatchSchema } from '../core/find-text.ts';
+import { saveExportSchema } from '../core/hwpx-export.ts';
 import { errorMessage } from './errors.ts';
 
 // 하이라이트·찾기·편집 공용 대상(TextTarget)과 서버가 위치를 붙인 대상은 core/block-schema.ts 에 있다(뷰어 편집 코드가 같이 쓴다)
@@ -74,6 +75,13 @@ export const viewerMethodSchemas = {
     params: z.object({ steps: z.number().int().min(1), depth: depthSchema }),
     result: z.object({ undone: z.number(), pageCount: z.number() }),
   },
+  /** 지금 문서를 HWPX 로 내보내 다시 열어 비교한다(저장 전 검증). 같을 때만 바이트(base64)를 싣는다. 50MB 를 넘으면 오류 */
+  export_hwpx: { params: z.object({}), result: saveExportSchema },
+  /**
+   * 서버 편집 기록의 상태를 뷰어에 맞춘다(저장·편집·되돌리기 뒤). 뷰어는 unsavedEdits 가 0 이 아니면 탭을 닫거나 새로고침할 때
+   * 확인 창을 띄우고, 상태 줄을 마지막 파일 이름으로 둔다. 저장하지 않은 편집 수는 서버(EditLog)만 센다
+   */
+  edit_state: { params: z.object({ fileName: z.string(), unsavedEdits: z.number().int().min(0) }), result: z.object({}) },
 } as const;
 
 type MethodSchemas = typeof viewerMethodSchemas;
@@ -92,6 +100,8 @@ export const parseViewerResult: { [M in ViewerMethod]: (result: unknown) => View
   clear_highlight: (result) => viewerMethodSchemas.clear_highlight.result.parse(result),
   edit: (result) => viewerMethodSchemas.edit.result.parse(result),
   undo: (result) => viewerMethodSchemas.undo.result.parse(result),
+  export_hwpx: (result) => viewerMethodSchemas.export_hwpx.result.parse(result),
+  edit_state: (result) => viewerMethodSchemas.edit_state.result.parse(result),
 };
 
 const requestSchema = <M extends ViewerMethod, P extends z.ZodType>(method: M, params: P) =>
@@ -106,6 +116,8 @@ const requestSchemas = {
   clear_highlight: requestSchema('clear_highlight', viewerMethodSchemas.clear_highlight.params),
   edit: requestSchema('edit', viewerMethodSchemas.edit.params),
   undo: requestSchema('undo', viewerMethodSchemas.undo.params),
+  export_hwpx: requestSchema('export_hwpx', viewerMethodSchemas.export_hwpx.params),
+  edit_state: requestSchema('edit_state', viewerMethodSchemas.edit_state.params),
 } satisfies { [M in ViewerMethod]: z.ZodObject };
 
 /** 뷰어가 요청을 읽는 스키마. 메서드마다 입력 모양이 다르다 */
@@ -117,6 +129,8 @@ export const requestMessageSchema = z.discriminatedUnion('method', [
   requestSchemas.clear_highlight,
   requestSchemas.edit,
   requestSchemas.undo,
+  requestSchemas.export_hwpx,
+  requestSchemas.edit_state,
 ]);
 export type RequestMessage = z.infer<typeof requestMessageSchema>;
 

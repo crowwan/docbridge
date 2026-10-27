@@ -3,27 +3,29 @@
 // 보고서(exportHwpxWithReport().contentLoss())에 손실이 있으면 경고로 돌려준다.
 import { HwpDocument } from '@rhwp/core';
 import { z } from 'zod';
+import { bytesToBase64 } from '../shared/base64.ts';
 import { errorMessage } from '../shared/errors.ts';
-import type { Block } from './block-schema.ts';
+import { MAX_DOCUMENT_BYTES, tooLargeMessage } from '../shared/limits.ts';
+import { blockPositionSchema, type Block } from './block-schema.ts';
 import { extractBlocks } from './blocks.ts';
+
+// rhwp src/serializer/content_loss.rs ContentLoss (code·subject·path·reason·resourceId?)
+export const contentLossItemSchema = z.object({
+  code: z.string(),
+  subject: z.string(),
+  path: z.string(),
+  reason: z.string(),
+  resourceId: z.number().optional(),
+});
 
 const contentLossSchema = z.object({
   schemaVersion: z.number(),
   outputFormat: z.string(),
   count: z.number(),
-  // rhwp src/serializer/content_loss.rs ContentLoss (code·subject·path·reason·resourceId?)
-  losses: z.array(
-    z.object({
-      code: z.string(),
-      subject: z.string(),
-      path: z.string(),
-      reason: z.string(),
-      resourceId: z.number().optional(),
-    }),
-  ),
+  losses: z.array(contentLossItemSchema),
 });
 
-export type ContentLoss = z.infer<typeof contentLossSchema>['losses'][number];
+export type ContentLoss = z.infer<typeof contentLossItemSchema>;
 
 /** 블록 비교용 내용. 쪽(page)은 조판 결과라 빼고, 위치·글자·번호·칸·누름틀 값을 본다 */
 export function blockContent(block: Block): string {
@@ -102,4 +104,54 @@ export function exportVerifiedHwpx(
   } finally {
     reopened.free();
   }
+}
+
+/**
+ * 뷰어 export_hwpx 의 결과(서버로 간다). 검증을 통과해야만 바이트(base64)가 실린다(AC-10: 다르면 파일을 쓰지 않는다).
+ * blocks 는 지금 문서의 블록 위치(문서 순서) — 서버가 id 를 붙이고, 저장하면 새로고침 때 비교할 기준으로 들고 있는다
+ */
+export const saveExportSchema = z.discriminatedUnion('verified', [
+  z.object({
+    verified: z.literal(true),
+    data: z.string(),
+    byteLength: z.number(),
+    losses: z.array(contentLossItemSchema),
+    blocks: z.array(blockPositionSchema),
+  }),
+  z.object({
+    verified: z.literal(false),
+    blocks: z.array(blockPositionSchema),
+    /** 다시 연 문서와 달라진 블록의 blocks 안 순서(누름틀은 같은 문단 안 순서로 id 가 갈려 위치 목록 전체가 필요하다) */
+    different: z.array(z.number()),
+    /** 다시 연 문서에만 있는 블록 수(지금 문서에 없어 id 를 댈 수 없다) */
+    extraBlocks: z.number(),
+    reopenError: z.string().optional(),
+    losses: z.array(contentLossItemSchema),
+  }),
+]);
+export type SaveExport = z.infer<typeof saveExportSchema>;
+
+export interface SaveExportOptions {
+  reopen?: Reopen;
+  /** 이보다 큰 HWPX 는 서버로 보내지 않는다(기본 MAX_DOCUMENT_BYTES) */
+  maxBytes?: number;
+}
+
+/** 저장용 내보내기: 내보내 다시 열어 비교하고, 같으면 바이트를 base64 로 싣는다. 크기 상한을 넘으면 던진다 */
+export function exportForSave(doc: HwpDocument, options: SaveExportOptions = {}): SaveExport {
+  const { reopen = reopenWithRhwp, maxBytes = MAX_DOCUMENT_BYTES } = options;
+  const current = extractBlocks(doc);
+  const exported = exportVerifiedHwpx(doc, current, reopen);
+  const { bytes, losses, different, reopenError } = exported;
+  if (bytes.length > maxBytes) throw new Error(tooLargeMessage(bytes.length, maxBytes));
+  const blocks = current.map((block) => blockPositionSchema.parse(block));
+  if (reopenError !== undefined) {
+    // 다시 열지 못하면 모든 블록이 다르다고 보지만, 알릴 것은 이유다
+    return { verified: false, blocks, different: [], extraBlocks: 0, reopenError, losses };
+  }
+  if (different.length > 0) {
+    const inCurrent = different.filter((index) => index < current.length);
+    return { verified: false, blocks, different: inCurrent, extraBlocks: different.length - inCurrent.length, losses };
+  }
+  return { verified: true, data: bytesToBase64(bytes), byteLength: bytes.length, losses, blocks };
 }

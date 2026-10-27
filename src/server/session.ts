@@ -1,6 +1,7 @@
 // 문서 세션: 지금 열린 문서 하나(마지막 파일 경로와 블록 id 표)를 기억하고,
 // 문서가 필요한 도구의 뷰어 요청을 한 곳에서 처리한다.
 // 문서 상태의 기준은 뷰어다. 서버는 파일을 읽어 넘기고 id 표만 들고 있다(SPEC-001 구성).
+// 저장하면 저장 경로가 마지막 파일이 되고, 그때 id 표를 기준 표로 떠 둔다. 새로고침하면 마지막 파일과 기준 표로 돌아간다(SPEC-002, ADR 002).
 import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, extname, join, resolve } from 'node:path';
@@ -9,13 +10,13 @@ import type { Block } from '../core/block-schema.ts';
 import type { EditOperation } from '../core/edit-operations.ts';
 import type { LoadDocumentResult, ViewerMethod, ViewerParams, ViewerResult } from '../shared/protocol.ts';
 import { errorMessage } from '../shared/errors.ts';
+import { MAX_DOCUMENT_BYTES, MB } from '../shared/limits.ts';
 import { ViewerNotConnectedError, type Bridge } from './bridge.ts';
 import { EditLog } from './edit-log.ts';
 import { log } from './log.ts';
 
-const MB = 1024 * 1024;
 /** 이보다 큰 파일은 읽지 않는다 */
-export const MAX_FILE_BYTES = 50 * MB;
+export const MAX_FILE_BYTES = MAX_DOCUMENT_BYTES;
 /** 브라우저를 띄운 뒤 뷰어가 붙기를 기다리는 시간 */
 export const VIEWER_CONNECT_TIMEOUT_MS = 30_000;
 export const VIEWER_NOT_CONNECTED = '뷰어가 연결되어 있지 않습니다. open_document 로 다시 여세요.';
@@ -24,14 +25,19 @@ export const NO_DOCUMENT = '열린 문서가 없습니다. open_document 로 문
 const OPENABLE_EXTENSIONS = ['.hwp', '.hwpx'];
 
 export interface OpenedDocument {
-  /** 절대 경로 */
+  /** 마지막 파일(연 파일, 저장했으면 저장한 파일)의 절대 경로. 새로고침 때 다시 읽고 미연결 오류에 붙인다 */
   path: string;
+  /** 마지막 파일 이름 */
   fileName: string;
+  /** open_document 로 연 파일(원본). 저장 기본 이름·상대 경로의 기준, 원본 덮어쓰기 판단 */
+  sourcePath: string;
   pageCount: number;
   blockCount: number;
-  /** 열 때 뷰어가 준 블록 위치. 새로고침 때 파일이 바뀌었는지 가린다 */
+  /** 마지막 파일을 열거나 저장했을 때의 블록 위치. 새로고침 때 파일이 바뀌었는지 가린다 */
   blocks: BlockPosition[];
   ids: BlockIdTable;
+  /** 마지막 파일을 열거나 저장했을 때의 id 표 사본(기준 표). 새로고침하면 이것으로 돌아간다(AC-14) */
+  savedIds: BlockIdTable;
   /** 편집 기록: 되돌리기 칸(편집 전 id 표 사본)과 저장하지 않은 편집 수. 뷰어 스냅샷과 같은 순서로 쌓인다 */
   edits: EditLog<BlockIdTable>;
 }
@@ -60,6 +66,7 @@ export interface OpenResult {
 }
 
 export const discardedEditsMessage = (count: number) => `저장하지 않은 편집 ${count}개를 버렸습니다`;
+export const reloadLostEditsMessage = (count: number) => `뷰어를 새로고침해서 저장하지 않은 편집 ${count}개가 사라졌습니다.`;
 
 
 export interface SessionOptions {
@@ -92,6 +99,8 @@ export class DocumentSession {
   private readonly openBrowser: (url: string) => void;
   private readonly readFile: (path: string) => Promise<Uint8Array>;
   private current: OpenedDocument | undefined;
+  /** 다음 도구 결과에 붙일 알림(새로고침으로 사라진 편집 등). takeNotices 로 꺼내면 비워진다 */
+  private notices: string[] = [];
   /** 뷰어에 문서를 보내는 일(열기·새로고침 다시 띄우기)을 한 줄로 세운다. 보낸 순서 = 뷰어에 남는 순서 */
   private loads: Promise<void> = Promise.resolve();
 
@@ -99,7 +108,7 @@ export class DocumentSession {
     this.bridge = bridge;
     this.openBrowser = options.openBrowser;
     this.readFile = options.readFile ?? readFile;
-    // 새로고침: 같은 탭이 다시 붙으면 마지막 문서를 다시 보내고 id 표는 그대로 둔다
+    // 새로고침: 같은 탭이 다시 붙으면 마지막 파일을 다시 보내고 id 표는 기준 표로 둔다
     bridge.events.on('connected', () => {
       const document = this.current;
       if (document === undefined) return;
@@ -124,6 +133,38 @@ export class DocumentSession {
   /** 저장하지 않은 편집이 있는지 */
   get dirty(): boolean {
     return this.current?.edits.dirty ?? false;
+  }
+
+  /** 쌓인 알림을 꺼낸다(도구 결과에 붙인다). 꺼내면 비워진다 */
+  takeNotices(): string[] {
+    return this.notices.splice(0);
+  }
+
+  /**
+   * 저장을 마쳤다: 저장 경로가 마지막 파일이 되고, 지금 id 표를 기준 표로 떠 두고, 저장하지 않은 편집 수를 0 으로.
+   * blocks 는 저장한 문서의 블록 위치(저장 전 검증으로 다시 연 파일과 같다고 확인한 것)
+   */
+  recordSave(document: OpenedDocument, path: string, blocks: BlockPosition[]): void {
+    document.path = path;
+    document.fileName = basename(path);
+    document.blocks = blocks;
+    document.blockCount = blocks.length;
+    document.savedIds = document.ids.clone();
+    document.edits.markSaved();
+  }
+
+  /**
+   * 뷰어에 편집 상태(마지막 파일 이름·저장하지 않은 편집 수)를 보낸다. 저장·편집·되돌리기 뒤에 부른다.
+   * 실패해도(뷰어가 끊김 등) 도구는 실패시키지 않는다 — 확인 창 상태만 어긋나고, 새 뷰어는 0 에서 시작한다
+   */
+  async syncViewerEditState(): Promise<void> {
+    const document = this.current;
+    if (document === undefined) return;
+    try {
+      await this.requestViewer('edit_state', { fileName: document.fileName, unsavedEdits: document.edits.unsavedEdits });
+    } catch (error) {
+      log(`뷰어에 편집 상태를 보내지 못했습니다: ${String(error)}`);
+    }
   }
 
   /** 문서를 여는 중이거나 새로고침으로 다시 띄우는 중이면 끝날 때까지 기다린다 */
@@ -151,13 +192,16 @@ export class DocumentSession {
       // 뷰어는 새 문서를 열며 이전 문서와 그 되돌리기 스냅샷을 닫는다(AC-12)
       const discarded = this.unsavedEdits;
       const loaded = await this.load(fileName, bytes, discarded);
+      const ids = BlockIdTable.assign(loaded.blocks);
       this.current = {
         path,
         fileName,
+        sourcePath: path,
         pageCount: loaded.pageCount,
         blockCount: loaded.blocks.length,
         blocks: loaded.blocks,
-        ids: BlockIdTable.assign(loaded.blocks),
+        ids,
+        savedIds: ids.clone(),
         edits: new EditLog(),
       };
       return {
@@ -251,6 +295,14 @@ export class DocumentSession {
     }
   }
 
+  /** 문서가 필요한 도구의 시작: 열기·새로고침을 기다린 뒤 뷰어와 열린 문서가 있는지 본다(없으면 requestViewer 와 같은 오류) */
+  async documentForTool(): Promise<OpenedDocument> {
+    await this.ready();
+    if (!this.bridge.hasViewer()) throw new Error(this.notConnectedMessage());
+    if (this.current === undefined) throw new Error(NO_DOCUMENT);
+    return this.current;
+  }
+
   private notConnectedMessage(): string {
     return this.current === undefined ? VIEWER_NOT_CONNECTED : `${VIEWER_NOT_CONNECTED} 마지막 파일: ${this.current.path}`;
   }
@@ -295,9 +347,18 @@ export class DocumentSession {
     return connected;
   }
 
-  /** 줄 안에서만 부른다. 줄을 기다리는 사이 다른 문서를 열었으면 보내지 않는다 */
+  /**
+   * 줄 안에서만 부른다. 줄을 기다리는 사이 다른 문서를 열었으면 보내지 않는다.
+   * 새로 붙은 뷰어는 빈 탭이라 저장하지 않은 편집과 되돌리기 스냅샷이 이미 사라졌다. 마지막 파일을 다시 보내고,
+   * id 표를 기준 표(그 파일을 열거나 저장했을 때)로, 편집 기록을 새로 만들고, 사라진 편집 수를 다음 도구 결과에 알린다(AC-14)
+   */
   private async reload(document: OpenedDocument): Promise<void> {
     if (this.current !== document) return;
+    const lost = document.edits.unsavedEdits;
+    // 알림은 편집이 정말 사라졌을 때(다시 띄우기 성공, 또는 파일이 없어 문서를 비움) 한 번만. 띄우다 끊기면 다음 새로고침이 다시 센다
+    const notifyLost = () => {
+      if (lost > 0) this.notices.push(reloadLostEditsMessage(lost));
+    };
     let bytes: Uint8Array;
     try {
       bytes = await readDocumentFile(document.path, this.readFile);
@@ -305,6 +366,7 @@ export class DocumentSession {
       // 파일이 사라졌거나 더는 열 수 없다. 이전 id 표를 들고 있을 이유가 없다
       log(`새로고침: 파일을 다시 읽지 못해 열린 문서를 비웁니다: ${String(error)}`);
       this.current = undefined;
+      notifyLost();
       return;
     }
     try {
@@ -312,13 +374,18 @@ export class DocumentSession {
       // 파일이 바뀌어 블록 위치가 달라졌으면 옛 id 표는 다른 블록을 가리킨다
       const changed = !samePositions(document.blocks, loaded.blocks);
       if (changed) log(`새로고침: ${document.fileName} 이 바뀌어 블록 id 를 새로 붙입니다`);
+      // 편집이 없었으면 지금 표가 곧 기준 표다(같은 표를 그대로 둔다)
+      const ids = changed ? BlockIdTable.assign(loaded.blocks) : lost === 0 ? document.ids : document.savedIds.clone();
       this.current = {
         ...document,
         pageCount: loaded.pageCount,
         blockCount: loaded.blocks.length,
         blocks: loaded.blocks,
-        ids: changed ? BlockIdTable.assign(loaded.blocks) : document.ids,
+        ids,
+        savedIds: changed ? ids.clone() : document.savedIds,
+        edits: new EditLog(),
       };
+      notifyLost();
     } catch (error) {
       log(`새로고침한 뷰어에 문서를 다시 띄우지 못했습니다: ${String(error)}`);
     }

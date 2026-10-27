@@ -85,6 +85,8 @@ const sampleParams: { [M in ViewerMethod]: ViewerParams<M> } = {
     depth: 0,
   },
   undo: { steps: 1, depth: 1 },
+  export_hwpx: {},
+  edit_state: { fileName: '공문-수정.hwpx', unsavedEdits: 0 },
 };
 
 describe('SPEC-001 뷰어의 요청 처리', () => {

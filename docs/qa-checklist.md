@@ -28,3 +28,4 @@
 - [ ] SPEC-001 뷰어가 없을 때 `open_document` 를 부르면 macOS 기본 브라우저에 뷰어 탭이 실제로 열린다(자동 테스트는 브라우저 여는 함수를 가짜로 바꿔 넣음, #5)
 - [ ] SPEC-002 AC-13 이동·바꾸기·표 칸 채우기·저장한 실제 공문이 한글 프로그램에서 손상 경고 없이 열리고 편집 내용과 번호가 맞다
 - [ ] SPEC-002 기술 검증(#18): `node scripts/make-hwp-check.ts` 로 만든 `~/Downloads/docbridge-hwp-check/` 의 파일들이 한글 프로그램에서 경고 없이 열리고 `README.txt` 의 "확인할 것"이 맞다(경고가 나면 `기준-편집없음/` 같은 번호 파일도 열어 원인을 가른다, ADR 002 "NO-GO 일 때")
+- [ ] SPEC-002 저장(#22): 실제로 쓰는 기본 브라우저(Safari·Chrome)에서 편집한 뒤 뷰어 탭을 새로고침하면 확인 창이 뜨고, `save_document` 뒤에는 뜨지 않는다(E2E 는 Playwright Chromium 만, 편집은 검증 API 로 흉내냄)
