@@ -6,7 +6,7 @@
 //   (개요 문단 뒤면 모두 개요 번호를, 굵은 문단 뒤면 칸 글자가 굵게) → 새 문단을 바탕글 모양으로 맞춘 뒤 표를 넣고,
 //   rhwp 가 덧붙인 표 아래 빈 문단은 지운다
 // - 양식 본문 비우기: 구역 첫 문단(구역·단 정의)과 머리말·꼬리말·쪽 번호 위치가 든 문단은 남기고 글자·다른 개체를 지운다
-import type { HwpDocument } from '@rhwp/core';
+import { HwpDocument } from '@rhwp/core';
 import { z } from 'zod';
 import { BODY_LIST, bodyParagraphLocator } from './body-paragraphs.ts';
 import { charLength } from './chars.ts';
@@ -310,3 +310,46 @@ export function bodyTextLength(doc: HwpDocument): number {
   }
   return total;
 }
+
+// 새 문서 만들기(create_document, #36) -------------------------------------------------------------
+
+/** rhwp 빈 문서 템플릿(blank2010.hwp, 구역·단 정의가 든 빈 문단 하나). createEmpty 는 구역·단 정의가 없어 쓰지 않는다(ADR 003) */
+export function blankDocument(): HwpDocument {
+  const doc = HwpDocument.createEmpty();
+  doc.createBlankDocument();
+  return doc;
+}
+
+export interface CreatedDocument {
+  doc: HwpDocument;
+  /** 양식 본문을 비웠으면 지운 개체·남긴 개체(keepContent 나 빈 문서면 undefined) */
+  cleared: ClearedBody | undefined;
+}
+
+/**
+ * create_document 의 문서 만들기(뷰어·테스트 뷰어 공용). 양식이 없으면 빈 문서, 있으면 양식을 열어 본문을 비운다(keepContent 면 그대로).
+ * 그다음 제목 스타일이 없으면 더한다. 실패하면 만든 문서를 닫고 던진다(양식을 rhwp 가 읽지 못함 등)
+ */
+export function createNewDocument(template: Uint8Array | undefined, keepContent: boolean): CreatedDocument {
+  const doc = template === undefined ? blankDocument() : new HwpDocument(template);
+  try {
+    const cleared = template !== undefined && !keepContent ? clearTemplateBody(doc) : undefined;
+    ensureTitleStyle(doc);
+    return { doc, cleared };
+  } catch (error) {
+    doc.free();
+    throw error;
+  }
+}
+
+/**
+ * 새 문서의 첫 블록: 첫 구역 첫 문단(구역·단 정의가 든 빈 문단)은 비어 있어도 문단 블록으로 남긴다(ADR 003 결정 10).
+ * 빈 문서·비운 양식은 블록이 0개라 insert_paragraph 의 기준이 없다
+ */
+export const isFirstParagraph = (section: number, paragraph: number): boolean => section === 0 && paragraph === 0;
+
+/** create_document 결과에 싣는 스타일 목록(이름·영문 이름·개요 수준). 스타일 id 는 문서 안 번호라 싣지 않는다 */
+export const styleSummaries = (doc: HwpDocument): Omit<ParagraphStyle, 'id'>[] =>
+  paragraphStyles(doc).map(({ name, englishName, outlineLevel }) =>
+    outlineLevel === undefined ? { name, englishName } : { name, englishName, outlineLevel },
+  );

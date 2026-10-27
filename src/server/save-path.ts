@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { chmod, copyFile, link, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, dirname, extname, join } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join } from 'node:path';
 import { errorMessage } from '../shared/errors.ts';
 import { absolutePath } from './paths.ts';
 
@@ -68,10 +68,26 @@ export const protectedSource = (sourcePath: string): string | undefined =>
 export async function resolveSavePath(request: SavePathRequest, home = homedir()): Promise<string> {
   const { sourcePath, overwrite } = request;
   if (request.path === undefined) return defaultPath(sourcePath);
-  const given = absolutePath(request.path, dirname(sourcePath), home);
+  return checkGivenPath(request.path, absolutePath(request.path, dirname(sourcePath), home), { overwrite, sourcePath });
+}
+
+interface GivenPathRules {
+  overwrite: boolean;
+  /** 연 파일(원본). 새 문서는 없다 — 원본 덮어쓰기 판정을 건너뛴다 */
+  sourcePath?: string;
+  /** 이미 있는 파일이고 overwrite 가 아닐 때의 이유 */
+  existing?: (path: string) => string;
+}
+
+/**
+ * 사용자가 준 경로(raw, 절대 경로로 바꾼 것이 given)의 SPEC-002 저장 규칙: 폴더 아님, 확장자(없으면 .hwpx, 다른 것 거부),
+ * .hwp 원본 보호, 저장할 폴더 있음, 이미 있는 파일은 overwrite 일 때만. 확장자를 붙인 절대 경로를 돌려준다
+ */
+async function checkGivenPath(raw: string, given: string, rules: GivenPathRules): Promise<string> {
+  const { overwrite, sourcePath, existing: existingMessage = existingFileMessage } = rules;
   // 폴더를 먼저 본다. 확장자를 붙인 뒤에 보면 ~/Downloads 가 ~/Downloads.hwpx 가 된다
-  if (request.path.endsWith('/') || (await statOf(given))?.isDirectory() === true) throw new Error(folderMessage(given));
-  const hwpSource = protectedSource(sourcePath);
+  if (raw.endsWith('/') || (await statOf(given))?.isDirectory() === true) throw new Error(folderMessage(given));
+  const hwpSource = sourcePath === undefined ? undefined : protectedSource(sourcePath);
   // 원본 경로를 그대로 준 경우(.hwp 라 아래 확장자 검사에 걸리기 전에 이유를 알린다)
   if (hwpSource !== undefined && (await sameFile(given, hwpSource))) throw new Error(await hwpSourceMessage(hwpSource));
   const extension = extname(given);
@@ -87,10 +103,51 @@ export async function resolveSavePath(request: SavePathRequest, home = homedir()
   if (existing === undefined) return path;
   if (existing.isDirectory()) throw new Error(folderMessage(path));
   if (!overwrite) {
-    if (await sameFile(path, sourcePath)) throw new Error(`원본 파일입니다: ${path}. 덮어쓰려면 overwrite: true 를 주세요.`);
-    throw new Error(existingFileMessage(path));
+    if (sourcePath !== undefined && (await sameFile(path, sourcePath))) {
+      throw new Error(`원본 파일입니다: ${path}. 덮어쓰려면 overwrite: true 를 주세요.`);
+    }
+    throw new Error(existingMessage(path));
   }
   return path;
+}
+
+// 새 문서(SPEC-003) ----------------------------------------------------------------------------------
+
+export const RELATIVE_NEW_PATH = '새 문서 경로는 절대 경로나 ~ 로 주세요(예: ~/Downloads/제안서.hwpx).';
+export const newDocumentExistsMessage = (path: string) => `이미 있는 파일입니다: ${path}. 새 문서는 없는 파일 자리에 만듭니다 — 다른 경로를 주세요.`;
+
+/**
+ * create_document 의 path → 처음 저장할 절대 경로. 절대 경로나 ~ 만 받는다(새 문서에는 상대 경로의 기준인 원본 폴더가 없고,
+ * MCP 서버 작업 폴더는 사용자가 모른다). 확장자·폴더 규칙은 저장과 같고, 이미 있는 파일이면 거부한다(ADR 003)
+ */
+export async function resolveNewDocumentPath(raw: string, home = homedir()): Promise<string> {
+  if (!(raw === '~' || raw.startsWith('~/') || isAbsolute(raw))) throw new Error(RELATIVE_NEW_PATH);
+  return checkGivenPath(raw, absolutePath(raw, home, home), { overwrite: false, existing: newDocumentExistsMessage });
+}
+
+export interface NewDocumentSaveRequest {
+  /** create_document 로 정한 처음 저장할 자리 */
+  savePath: string;
+  /** save_document 의 path. 없으면 savePath */
+  path?: string;
+  overwrite: boolean;
+}
+
+/**
+ * 한 번도 저장하지 않은 새 문서의 저장 경로. path 가 없으면 savePath(덮지 않는다 — 그사이 파일이 생겼으면 거부),
+ * 있으면 SPEC-002 규칙 그대로이고 상대 경로는 savePath 폴더 기준이다
+ */
+export async function resolveNewDocumentSavePath(request: NewDocumentSaveRequest, home = homedir()): Promise<string> {
+  const { savePath, overwrite } = request;
+  if (request.path === undefined) {
+    if ((await statOf(savePath)) !== undefined) {
+      throw new Error(`이미 있는 파일입니다: ${savePath}. 덮어쓰려면 path 에 그 경로와 overwrite: true 를 주거나 다른 경로를 주세요.`);
+    }
+    const folder = await statOf(dirname(savePath));
+    if (folder === undefined || !folder.isDirectory()) throw new Error(`저장할 폴더가 없습니다: ${dirname(savePath)}`);
+    return savePath;
+  }
+  return checkGivenPath(request.path, absolutePath(request.path, dirname(savePath), home), { overwrite });
 }
 
 export interface SaveTarget {

@@ -3,7 +3,7 @@
 import type { ContentLoss } from '../core/hwpx-export.ts';
 import { base64Length, MAX_DOCUMENT_BYTES, tooLargeMessage } from '../shared/limits.ts';
 import type { ViewerResult } from '../shared/protocol.ts';
-import { protectedSource, resolveSavePath, writeSave } from './save-path.ts';
+import { protectedSource, resolveNewDocumentSavePath, resolveSavePath, writeSave } from './save-path.ts';
 import type { DocumentSession, OpenedDocument } from './session.ts';
 
 export interface SaveArgs {
@@ -64,13 +64,24 @@ export function saveDocument(session: DocumentSession, args: SaveArgs, write = w
     // overwrite 는 path 를 줬을 때만 뜻이 있다. path 가 없으면 늘 기본 이름을 새로 만든다(겹치면 번호)
     const overwrite = args.path !== undefined && (args.overwrite ?? false);
     // 경로가 틀렸으면 내보내기(큰 문서는 0.5초)를 하지 않는다
-    const resolved = await resolveSavePath({ sourcePath: document.sourcePath, path: args.path, overwrite });
+    // 한 번도 저장하지 않은 새 문서는 원본이 없다: 경로가 없으면 create_document 의 자리, 상대 경로는 그 폴더 기준(SPEC-003)
+    const { location } = document;
+    const resolved =
+      location.kind === 'file'
+        ? await resolveSavePath({ sourcePath: location.sourcePath, path: args.path, overwrite })
+        : await resolveNewDocumentSavePath({ savePath: location.savePath, path: args.path, overwrite });
     const exported = await send('export_hwpx', {});
     if (!exported.verified) throw verificationError(document, exported);
     const bytes = decodeExport(exported.data, exported.byteLength);
-    // 기본 이름은 그사이 같은 이름이 생기면(동시 저장, 다른 프로그램) 다음 번호로 쓴다
+    // 기본 이름(<이름>-수정)은 그사이 같은 이름이 생기면(동시 저장, 다른 프로그램) 다음 번호로 쓴다. 새 문서의 자리는 번호를 붙이지 않고 덮지 않는다
+    const protectedPath = location.kind === 'file' ? protectedSource(location.sourcePath) : undefined;
     const path = await write(
-      { path: resolved, overwrite, numbered: args.path === undefined, protectedPath: protectedSource(document.sourcePath) },
+      {
+        path: resolved,
+        overwrite,
+        numbered: args.path === undefined && location.kind === 'file',
+        ...(protectedPath === undefined ? {} : { protectedPath }),
+      },
       bytes,
     );
     await session.recordSave(document, path, exported.blocks);

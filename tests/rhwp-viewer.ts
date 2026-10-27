@@ -3,6 +3,7 @@
 // 편집·되돌리기는 뷰어와 같은 공용 경로(core/document-editor.ts)를, 저장 전 검증은 뷰어와 같은 exportForSave 를 쓴다.
 import { HwpDocument } from '@rhwp/core';
 import { blockPositionSchema } from '../src/core/block-schema.ts';
+import { createNewDocument, isFirstParagraph, styleSummaries } from '../src/core/create-document.ts';
 import { DocumentEditor } from '../src/core/document-editor.ts';
 import { findInBlocks } from '../src/core/find-text.ts';
 import { blockBoxes, highlightTargets } from '../src/core/highlight-targets.ts';
@@ -24,6 +25,8 @@ export interface RhwpViewer {
   readonly editStates: Array<ViewerParams<'edit_state'>>;
   /** 뷰어가 아는 저장하지 않은 편집 수(확인 창 기준): 편집·되돌리기 요청에 실려 오거나 edit_state 로 온 값 */
   unsavedEdits(): number;
+  /** 탭을 닫거나 새로고침할 때 확인 창을 띄울지: 저장하지 않은 편집이 있거나 한 번도 저장하지 않은 새 문서(뷰어 beforeunload 와 같은 판단) */
+  confirmsUnload(): boolean;
 }
 
 export function rhwpViewer(options: RhwpViewerOptions = {}): RhwpViewer {
@@ -31,6 +34,12 @@ export function rhwpViewer(options: RhwpViewerOptions = {}): RhwpViewer {
   let editor: DocumentEditor | undefined;
   const editStates: Array<ViewerParams<'edit_state'>> = [];
   let unsaved = 0;
+  let newDocument = false;
+  const close = () => {
+    editor?.dispose();
+    editor?.doc.free();
+    editor = undefined;
+  };
   const opened = () => {
     if (editor === undefined) throw new Error('뷰어에 열린 문서가 없습니다');
     return editor;
@@ -38,12 +47,30 @@ export function rhwpViewer(options: RhwpViewerOptions = {}): RhwpViewer {
   const handle = (request: RequestMessage): unknown => {
     switch (request.method) {
       case 'load_document': {
-        editor?.dispose();
-        editor?.doc.free();
-        editor = undefined;
+        close();
         editor = new DocumentEditor(new HwpDocument(new Uint8Array(Buffer.from(request.params.data, 'base64'))));
         unsaved = 0;
+        newDocument = false;
         return { pageCount: editor.doc.pageCount(), blocks: editor.blocks.map((block) => blockPositionSchema.parse(block)) };
+      }
+      case 'create_document': {
+        // 뷰어와 같은 함수로 만든다. 실패하면 뷰어처럼 이전 문서도 닫혀 있다
+        close();
+        unsaved = 0;
+        newDocument = false;
+        const { template } = request.params;
+        const { doc, cleared } = createNewDocument(
+          template === undefined ? undefined : new Uint8Array(Buffer.from(template.data, 'base64')),
+          template?.keepContent ?? false,
+        );
+        editor = new DocumentEditor(doc, isFirstParagraph);
+        newDocument = true;
+        return {
+          pageCount: doc.pageCount(),
+          blocks: editor.blocks.map((block) => blockPositionSchema.parse(block)),
+          styles: styleSummaries(doc),
+          ...(cleared === undefined ? {} : { cleared: { removedObjects: cleared.removedObjects, keptObjects: cleared.keptObjects } }),
+        };
       }
       case 'get_blocks':
         return opened().blocks;
@@ -76,10 +103,11 @@ export function rhwpViewer(options: RhwpViewerOptions = {}): RhwpViewer {
       case 'edit_state':
         editStates.push(request.params);
         unsaved = request.params.unsavedEdits;
+        newDocument = request.params.newDocument;
         return {};
     }
   };
-  return { handle, editor: opened, editStates, unsavedEdits: () => unsaved };
+  return { handle, editor: opened, editStates, unsavedEdits: () => unsaved, confirmsUnload: () => unsaved > 0 || newDocument };
 }
 
 /** 요청 처리 함수만 쓰는 테스트용 */

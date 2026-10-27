@@ -35,10 +35,11 @@ export class DocumentEditor {
   private current: Block[];
   private appliedDepth = 0;
 
-  constructor(doc: HwpDocument) {
+  /** keepEmpty: 처음 블록을 뽑을 때 비어 있어도 문단 블록으로 남길 문단(새 문서의 첫 문단, SPEC-003). 연 문서는 빈 문단을 뺀다 */
+  constructor(doc: HwpDocument, keepEmpty?: (section: number, paragraph: number) => boolean) {
     this.doc = doc;
     this.history = new EditHistory<Block[]>(doc);
-    this.current = extractBlocks(doc);
+    this.current = extractBlocks(doc, keepEmpty);
   }
 
   /** 지금 문서의 블록(문서 순서). 편집·되돌리기 때마다 다시 뽑는다 */

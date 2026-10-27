@@ -8,13 +8,14 @@ import { BlockIdTable, tableControlIndex, type BlockPosition } from '../core/blo
 import type { ParagraphChanges } from '../core/paragraph-changes.ts';
 import type { Block } from '../core/block-schema.ts';
 import type { EditOperation } from '../core/edit-operations.ts';
-import type { LoadDocumentResult, ViewerMethod, ViewerParams, ViewerResult } from '../shared/protocol.ts';
+import type { CreateDocumentResult, LoadDocumentResult, ViewerMethod, ViewerParams, ViewerResult } from '../shared/protocol.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { MAX_DOCUMENT_BYTES, MB } from '../shared/limits.ts';
 import { ViewerNotConnectedError, type Bridge } from './bridge.ts';
 import { EditLog } from './edit-log.ts';
 import { log } from './log.ts';
 import { absolutePath } from './paths.ts';
+import { resolveNewDocumentPath } from './save-path.ts';
 
 /** 이보다 큰 파일은 읽지 않는다 */
 export const MAX_FILE_BYTES = MAX_DOCUMENT_BYTES;
@@ -25,13 +26,18 @@ export const NO_DOCUMENT = '열린 문서가 없습니다. open_document 로 문
 
 const OPENABLE_EXTENSIONS = ['.hwp', '.hwpx'];
 
+/**
+ * 문서의 파일 자리.
+ * - file: path = 마지막 파일(연 파일, 저장했으면 저장한 파일)의 절대 경로 — 새로고침 때 다시 읽고 미연결 오류에 붙인다.
+ *   sourcePath = 원본(open_document 로 연 파일, 새 문서는 처음 저장한 파일) — 저장 기본 이름·상대 경로의 기준, 원본 덮어쓰기 판단
+ * - new: 한 번도 저장하지 않은 새 문서(create_document, SPEC-003). 파일이 없고 savePath 는 처음 저장할 자리
+ */
+export type DocumentLocation = { kind: 'file'; path: string; sourcePath: string } | { kind: 'new'; savePath: string };
+
 export interface OpenedDocument {
-  /** 마지막 파일(연 파일, 저장했으면 저장한 파일)의 절대 경로. 새로고침 때 다시 읽고 미연결 오류에 붙인다 */
-  path: string;
-  /** 마지막 파일 이름 */
+  location: DocumentLocation;
+  /** 마지막 파일 이름(새 문서는 저장할 이름) */
   fileName: string;
-  /** open_document 로 연 파일(원본). 저장 기본 이름·상대 경로의 기준, 원본 덮어쓰기 판단 */
-  sourcePath: string;
   pageCount: number;
   blockCount: number;
   /** 마지막 파일을 열거나 저장했을 때의 블록 위치. 새로고침 때 파일이 바뀌었는지 가린다 */
@@ -98,6 +104,33 @@ export interface OpenResult {
 }
 
 export const discardedEditsMessage = (count: number) => `저장하지 않은 편집 ${count}개를 버렸습니다`;
+export const newDocumentLostMessage = (savePath: string, edits: number) =>
+  `뷰어를 새로고침해서 저장하지 않은 새 문서가 사라졌습니다(${savePath}, 편집 ${edits}개). create_document 로 다시 만드세요.`;
+
+export interface CreateArgs {
+  /** 처음 저장할 자리(절대 경로 또는 ~) */
+  path: string;
+  /** 양식 파일 경로(open_document 와 같은 규칙) */
+  template?: string;
+  /** 양식 본문을 남긴다(기본 false) */
+  keepContent?: boolean;
+}
+
+export interface CreateResult {
+  /** 처음 저장할 자리(save_document 를 경로 없이 부르면 여기) */
+  path: string;
+  pageCount: number;
+  blockCount: number;
+  /** 첫 블록 id(첫 구역 첫 문단 — 비어 있어도 블록). replace_text 로 채우고 그 뒤로 넣는다 */
+  firstBlock: string;
+  styles: CreateDocumentResult['styles'];
+  /** 양식을 줬을 때: 지운 개체·남긴 개체 이름별 수, keep_content 면 keptContent */
+  template?:
+    | { fileName: string; removedObjects: Record<string, number>; keptObjects: Record<string, number> }
+    | { fileName: string; keptContent: true };
+  viewerUrl: string;
+  warnings?: string[];
+}
 export const reloadLostEditsMessage = (count: number) => `뷰어를 새로고침해서 저장하지 않은 편집 ${count}개가 사라졌습니다.`;
 
 
@@ -111,6 +144,11 @@ export interface SessionOptions {
   readFile?: (path: string) => Promise<Uint8Array>;
 }
 
+
+/** create_document 결과의 양식 요약: 비웠으면 지운 개체·남긴 개체, keep_content 면 본문을 남겼다는 것 */
+function templateSummary(fileName: string, cleared: CreateDocumentResult['cleared']): NonNullable<CreateResult['template']> {
+  return cleared === undefined ? { fileName, keptContent: true } : { fileName, ...cleared };
+}
 
 async function readDocumentFile(path: string, read: (path: string) => Promise<Uint8Array>): Promise<Uint8Array> {
   const extension = extname(path).toLowerCase();
@@ -176,7 +214,9 @@ export class DocumentSession {
    * 저장하지 않은 편집 수를 0 으로, 뷰어에 편집 상태를 보낸다. blocks 는 저장한 문서의 블록 위치(저장 전 검증으로 다시 연 파일과 같다고 확인한 것)
    */
   async recordSave(document: OpenedDocument, path: string, blocks: BlockPosition[]): Promise<void> {
-    document.path = path;
+    // 새 문서는 처음 저장한 파일이 원본이 된다(다음 경로 없는 저장은 <이름>-수정.hwpx, SPEC-003)
+    const sourcePath = document.location.kind === 'file' ? document.location.sourcePath : path;
+    document.location = { kind: 'file', path, sourcePath };
     document.fileName = basename(path);
     document.blocks = blocks;
     document.blockCount = blocks.length;
@@ -192,7 +232,11 @@ export class DocumentSession {
    */
   private async pushEditState(document: OpenedDocument): Promise<void> {
     try {
-      await this.send('edit_state', { fileName: document.fileName, unsavedEdits: document.edits.unsavedEdits });
+      await this.send('edit_state', {
+        fileName: document.fileName,
+        unsavedEdits: document.edits.unsavedEdits,
+        newDocument: document.location.kind === 'new',
+      });
     } catch (error) {
       log(`뷰어에 편집 상태를 보내지 못했습니다: ${String(error)}`);
     }
@@ -233,9 +277,8 @@ export class DocumentSession {
       const loaded = await this.load(fileName, bytes, discarded);
       const ids = BlockIdTable.assign(loaded.blocks);
       this.current = {
-        path,
+        location: { kind: 'file', path, sourcePath: path },
         fileName,
-        sourcePath: path,
         pageCount: loaded.pageCount,
         blockCount: loaded.blocks.length,
         blocks: loaded.blocks,
@@ -247,6 +290,57 @@ export class DocumentSession {
         fileName,
         pageCount: loaded.pageCount,
         blockCount: loaded.blocks.length,
+        viewerUrl: this.bridge.viewerUrl,
+        ...(discarded === 0 ? {} : { warnings: [discardedEditsMessage(discarded)] }),
+      };
+    });
+  }
+
+  /**
+   * 새 문서를 뷰어에 띄운다(SPEC-003). 경로·양식은 줄에 서기 전에 검사한다(이미 있는 파일·상대 경로·양식을 못 읽음).
+   * 새 문서 바이트는 뷰어가 rhwp 로 만든다 — 서버는 양식 바이트만 보내고 파일 없는 문서(location new)로 기억한다
+   */
+  async create(args: CreateArgs): Promise<CreateResult> {
+    const savePath = await resolveNewDocumentPath(args.path);
+    const templatePath = args.template === undefined ? undefined : absolutePath(args.template, process.cwd());
+    const template =
+      templatePath === undefined
+        ? undefined
+        : {
+            fileName: basename(templatePath),
+            data: Buffer.from(await readDocumentFile(templatePath, this.readFile)).toString('base64'),
+            keepContent: args.keepContent ?? false,
+          };
+    const fileName = basename(savePath);
+    return this.enqueue(async () => {
+      if (!this.bridge.hasViewer()) await this.launchViewer();
+      const discarded = this.unsavedEdits;
+      const failure = template === undefined ? '새 문서를 만들 수 없습니다' : '문서를 열 수 없습니다';
+      const created = await this.present(
+        () => this.bridge.request('create_document', { fileName, ...(template === undefined ? {} : { template }) }),
+        failure,
+        discarded,
+      );
+      const ids = BlockIdTable.assign(created.blocks);
+      const firstBlock = ids.idAt({ section: 0, paragraph: 0, part: 'text' });
+      if (firstBlock === undefined) throw new Error('새 문서의 첫 블록을 찾지 못했습니다.');
+      this.current = {
+        location: { kind: 'new', savePath },
+        fileName,
+        pageCount: created.pageCount,
+        blockCount: created.blocks.length,
+        blocks: created.blocks,
+        ids,
+        savedIds: ids.clone(),
+        edits: new EditLog(),
+      };
+      return {
+        path: savePath,
+        pageCount: created.pageCount,
+        blockCount: created.blocks.length,
+        firstBlock,
+        styles: created.styles,
+        ...(template === undefined ? {} : { template: templateSummary(template.fileName, created.cleared) }),
         viewerUrl: this.bridge.viewerUrl,
         ...(discarded === 0 ? {} : { warnings: [discardedEditsMessage(discarded)] }),
       };
@@ -348,21 +442,31 @@ export class DocumentSession {
   }
 
   private notConnectedMessage(): string {
-    return this.current === undefined ? VIEWER_NOT_CONNECTED : `${VIEWER_NOT_CONNECTED} 마지막 파일: ${this.current.path}`;
+    const location = this.current?.location;
+    if (location === undefined) return VIEWER_NOT_CONNECTED;
+    return location.kind === 'file'
+      ? `${VIEWER_NOT_CONNECTED} 마지막 파일: ${location.path}`
+      : `${VIEWER_NOT_CONNECTED} 저장하지 않은 새 문서: ${location.savePath}`;
   }
 
   /** discarded: 이 문서를 띄우며 버리는 저장하지 않은 편집 수. 열지 못해도 이전 문서는 닫히므로 오류에 붙여 알린다 */
-  private async load(fileName: string, bytes: Uint8Array, discarded = 0): Promise<LoadDocumentResult> {
+  private load(fileName: string, bytes: Uint8Array, discarded = 0): Promise<LoadDocumentResult> {
     const data = Buffer.from(bytes).toString('base64');
+    return this.present(() => this.bridge.request('load_document', { fileName, data }), '문서를 열 수 없습니다', discarded);
+  }
+
+  /**
+   * 뷰어에 문서를 바꿔 띄우는 요청(열기·새 문서). 뷰어가 실패하면 이전 문서도 닫고 오류 화면을 보여주므로 서버도 열린 문서를 비우고,
+   * failure: <뷰어(rhwp)가 문서를 읽거나 만들지 못한 이유>(버린 편집 수) 로 던진다
+   */
+  private async present<T>(request: () => Promise<T>, failure: string, discarded: number): Promise<T> {
     try {
-      return await this.bridge.request('load_document', { fileName, data });
+      return await request();
     } catch (error) {
       if (error instanceof ViewerNotConnectedError) throw new Error(this.notConnectedMessage());
-      // 뷰어는 이전 문서를 닫고 오류 화면을 보여준다. 서버도 열린 문서를 비워 맞춘다
       this.current = undefined;
-      // 뷰어(rhwp)가 문서를 읽지 못한 이유
       const lost = discarded === 0 ? '' : ` (${discardedEditsMessage(discarded)})`;
-      throw new Error(`문서를 열 수 없습니다: ${errorMessage(error)}${lost}`);
+      throw new Error(`${failure}: ${errorMessage(error)}${lost}`);
     }
   }
 
@@ -399,13 +503,20 @@ export class DocumentSession {
   private async reload(document: OpenedDocument): Promise<void> {
     if (this.current !== document) return;
     const lost = document.edits.unsavedEdits;
+    const { location } = document;
+    if (location.kind === 'new') {
+      // 한 번도 저장하지 않은 새 문서는 다시 띄울 파일이 없다 — 새 뷰어는 빈 탭이고 문서는 사라졌다(SPEC-003 AC-8)
+      this.current = undefined;
+      this.notices.push(newDocumentLostMessage(location.savePath, lost));
+      return;
+    }
     // 알림은 편집이 정말 사라졌을 때(다시 띄우기 성공, 또는 파일이 없거나 읽지 못해 문서를 비움) 한 번만. 띄우다 끊기면 다음 새로고침이 다시 센다
     const notifyLost = () => {
       if (lost > 0) this.notices.push(reloadLostEditsMessage(lost));
     };
     let bytes: Uint8Array;
     try {
-      bytes = await readDocumentFile(document.path, this.readFile);
+      bytes = await readDocumentFile(location.path, this.readFile);
     } catch (error) {
       // 파일이 사라졌거나 더는 열 수 없다. 이전 id 표를 들고 있을 이유가 없다
       log(`새로고침: 파일을 다시 읽지 못해 열린 문서를 비웁니다: ${String(error)}`);

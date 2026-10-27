@@ -43,6 +43,8 @@ SPEC-001·002 로 받은 문서를 열고 묻고 고치고 저장할 수 있다.
 
 `create_document` 는 저장하지 않은 편집이 있는 문서를 대신한다(SPEC-002 "새 문서를 열면" 규칙 — 버린 편집 수 알림).
 
+`create_document` 결과 모양: `{ path, pageCount, blockCount, firstBlock, styles: [{ name, englishName, outlineLevel? }], template?, viewerUrl, warnings? }`. `firstBlock` 은 첫 블록 id, `styles` 는 문단 스타일(`outlineLevel` 은 개요 스타일의 수준 1~), `template` 은 양식을 줬을 때 `{ fileName, removedObjects, keptObjects }`(개체 이름별 수, `keep_content: true` 면 `{ fileName, keptContent: true }`), `warnings` 는 버린 편집 수.
+
 ### 새 문서의 스타일·첫 블록
 
 - **"제목" 스타일**: rhwp 빈 문서 템플릿에는 "제목" 스타일이 없다(바탕글·본문·개요 1~10·머리말·각주·미주·메모·차례 제목·차례 1~3·캡션). `create_document` 는 문서에 "제목" 또는 영문 이름 Title 인 문단 스타일이 없으면 하나 더한다: 바탕글 기반, 20pt 굵게, 가운데 정렬, 다음 스타일 본문. 양식에 이미 있으면 그것을 쓴다.
@@ -54,9 +56,12 @@ SPEC-001·002 로 받은 문서를 열고 묻고 고치고 저장할 수 있다.
 
 - 새 문서는 **아직 파일이 없다.** `path` 는 처음 저장할 자리다. 이미 파일이 있으면 `create_document` 단계에서 거부한다("이미 있는 파일입니다 … 다른 경로를 주세요").
 - `path` 는 절대 경로나 `~` 로 시작해야 한다. 상대 경로는 거부한다(새 문서에는 SPEC-002 의 기준인 원본 폴더가 없고, MCP 서버 작업 폴더는 사용자가 모른다): "새 문서 경로는 절대 경로나 ~ 로 주세요(예: ~/Downloads/제안서.hwpx)". 확장자 규칙은 SPEC-002 저장과 같다(없으면 `.hwpx`, 다른 확장자 거부).
-- `save_document` 를 경로 없이 부르면 `path` 에 저장한다(배타 생성, SPEC-002). 저장하면 그 파일이 "마지막 파일"이 된다.
-- 한 번도 저장하지 않은 새 문서는 새로고침하면 사라진다. 뷰어는 확인 창을 띄우고, 다음 도구 결과에 "저장하지 않은 새 문서가 사라졌습니다" 를 알린다(SPEC-002 AC-14 와 같은 방식).
-- `template` 파일은 읽기만 한다. 양식 파일을 덮어쓰지 않는다.
+- `save_document` 를 경로 없이 부르면 `path` 에 저장한다(배타 생성, SPEC-002). 그사이 그 자리에 파일이 생겼으면 덮지 않고 "이미 있는 파일입니다" 로 거부한다(`path` + `overwrite: true` 나 다른 경로로). 저장하면 그 파일이 "마지막 파일"이 된다.
+- 새 문서에 `save_document(path)` 로 경로를 주면 SPEC-002 규칙 그대로다. 상대 경로는 `create_document` 의 `path` 폴더 기준이다(원본 폴더 대신).
+- 처음 저장한 파일은 그 뒤로 원본처럼 쓴다: 다음 경로 없는 저장은 `<이름>-수정.hwpx`, 덮어쓰려면 `path` + `overwrite: true`(SPEC-002 원본 규칙).
+- 한 번도 저장하지 않은 새 문서는 새로고침하면 사라진다. 뷰어는 편집이 없어도 확인 창을 띄우고(저장하기 전까지), 다음 도구 결과에 "뷰어를 새로고침해서 저장하지 않은 새 문서가 사라졌습니다(<path>, 편집 n개). create_document 로 다시 만드세요." 를 알린다(SPEC-002 AC-14 와 같은 방식). 서버의 열린 문서도 비운다.
+- `template` 파일은 읽기만 한다. 양식 파일을 덮어쓰지 않는다. 경로는 `open_document` 와 같다(상대 경로는 서버 작업 폴더 기준, `~` 는 홈).
+- **새 문서는 뷰어가 만든다.** 서버는 `create_document` 요청에 양식 바이트(있으면)만 싣고, 뷰어가 rhwp 로 빈 문서(`createBlankDocument`)나 양식(`clearTemplateBody`)을 만들어 제목 스타일을 더하고 그린 뒤 블록을 돌려준다. 문서 상태의 기준은 뷰어라는 SPEC-001 구성 그대로이고, 서버는 rhwp 를 띄우지 않는다(서버에서 만들어 HWPX 로 보내면 저장 전 HWPX 왕복이 한 번 더 들고 서버에 WASM 이 필요하다). 상태 줄은 저장 전까지 "<이름> (새 문서) — n쪽".
 
 ### 기본 흐름
 
@@ -118,6 +123,7 @@ GO 기준: 빈 문서와 양식 문서 각각으로 제목·개요·본문·표�
 - rhwp 0.8.7 API: `createBlankDocument()`(번들 `blank2010.hwp`, 한글 호환), `HwpDocument.createEmpty()`(구역·단 정의 없음 — 한글 호환이 필요하면 쓰지 않는다고 rhwp 주석이 밝힘), `getStyleList`, `applyStyle(sec, para, styleId)`, `createTable`/`createTableEx({sectionIdx, paraIdx, charOffset, rowCount, colCount, treatAsChar?, colWidths?})`, `insertTableRow`/`insertTableColumn`(범위 밖이지만 있음).
 - 새 도구는 SPEC-002 편집 공용 경로(스냅샷·depth 대조·바뀐 블록 표시·`ParagraphChanges`)에 편집 종류로 더한다. `insert_table` 은 "문단 넣기 + 표 넣기" 한 편집.
 - 새 문서의 "원본"은 없다. 세션의 `sourcePath` 가 비어 있을 때 저장 규칙(원본 덮어쓰기 판정)을 건너뛰고 `path` 를 기본 경로로 쓴다.
+- 새 문서의 바이트 경로(#36): 서버 → 뷰어 `create_document`(파일 이름, 양식 base64·`keepContent`) → 뷰어가 만들어 그림 → 결과(쪽 수·블록 위치·스타일 목록·지운/남긴 개체). 세션은 새 문서를 "파일 없는 문서"(저장할 자리만 있음)로 들고, 처음 저장하면 저장한 파일이 마지막 파일·원본이 된다.
 - 기술 검증 프로토타입: `src/core/create-document.ts` — `paragraphStyles`·`styleIdByName`(한글·영문 이름)·`applyParagraphStyle`(applyStyle + 스타일 문단 모양)·`ensureTitleStyle`·`insertTableParagraph`(새 문단 → 바탕글 → createTable → 표 아래 빈 문단 지우기 → 칸 채우기 → 머리글)·`clearTemplateBody`(남길 문단 사이 deleteRange, 남긴 문단의 다른 컨트롤 deleteControlAt). 근거와 측정은 ADR 003.
 - 스타일 종류는 가장 낮은 비트만 본다(1 = 글자 스타일). 한컴 HWP 5 바이너리 일부는 문단 스타일 종류 값이 4·108 로 온다.
 - `getControls` 는 본문을 목록 0 하나로 보고 문단 번호를 구역을 이어 센다(여러 구역 문서).
@@ -140,3 +146,4 @@ GO 기준: 빈 문서와 양식 문서 각각으로 제목·개요·본문·표�
 | 2026-10-27 | 이슈 분해: #34 (하위 #35 기술 검증, #36 create_document·저장, #37 스타일, #38 insert_table, #39 한글 확인) |
 | 2026-10-27 | PR #40 리뷰 반영: 비운 양식 첫 문단·표 문단은 바탕글 글자 모양까지 맞춤, 제목 스타일은 영문 이름 Title 로도 찾음, 글자 스타일은 비트로 판단 |
 | 2026-10-27 | 기술 검증(#35) rhwp 기준 GO·한글 확인 대기 반영(ADR 003): "제목" 스타일은 docbridge 가 더함, 새 문서 첫 블록(구역 첫 빈 문단), 스타일 적용 = 문단 모양 덮기·직접 글자 서식 유지, 개요 여부는 스타일 모양으로, 영문 스타일 이름도 받음, `insert_table` 새 문단 하나·바탕글·열 너비 고정·머리글 표현, 양식 비우기 범위(머리말·꼬리말·쪽 번호 위치 남김)·여러 구역·남는 그림 데이터, `path` 필수·상대 경로 거부, AC-1·2·4·6 문구, 열린 질문 4개 닫음 |
+| 2026-10-27 | #36: 새 문서는 뷰어가 만든다(바이트 경로), 새 문서 저장의 상대 경로 기준(`path` 폴더)·처음 저장 뒤 원본, 저장 전 확인 창은 편집이 없어도, 새로고침 알림 문구, 양식 경로는 `open_document` 와 같음 |

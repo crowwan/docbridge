@@ -14,10 +14,12 @@ import { findInBlocks } from '../core/find-text.ts';
 import { selectionRects, type SelectionRect } from '../core/highlight-rects.ts';
 import { blockBoxes, highlightTargets } from '../core/highlight-targets.ts';
 import { exportForSave } from '../core/hwpx-export.ts';
+import { createNewDocument, isFirstParagraph, styleSummaries } from '../core/create-document.ts';
 import { base64ToBytes } from '../shared/base64.ts';
 import { errorMessage } from '../shared/errors.ts';
 import {
   answerRequest,
+  type CreateDocumentResult,
   type LoadDocumentResult,
   type RequestMessage,
   type ViewerParams,
@@ -188,11 +190,15 @@ let currentFileName = '';
 /** 서버가 연 문서의 편집 공용 경로(블록·되돌리기 스냅샷). 편집할 때마다 블록을 다시 뽑는다 */
 let currentEditor: DocumentEditor | undefined;
 
-/** 문서를 열어 그린다. 이전 문서는 닫는다. rhwp 가 읽지 못하면 던진다 */
-function showDocument(bytes: Uint8Array, fileName: string): { doc: HwpDocument; parseMs: number; pageRenderMs: number[] } {
+/** 파일 바이트를 rhwp 로 연다. 읽지 못하면 던진다 */
+function parseDocument(bytes: Uint8Array): { doc: HwpDocument; parseMs: number } {
   const parseStarted = performance.now();
   const doc = new HwpDocument(bytes);
-  const parseMs = performance.now() - parseStarted;
+  return { doc, parseMs: performance.now() - parseStarted };
+}
+
+/** 연(또는 만든) 문서를 그린다. 이전 문서는 닫는다 */
+function showDocument(doc: HwpDocument, fileName: string): { pageRenderMs: number[] } {
   closeEditor();
   currentDoc?.free();
   currentDoc = doc;
@@ -205,7 +211,7 @@ function showDocument(bytes: Uint8Array, fileName: string): { doc: HwpDocument; 
     paintHighlights(currentPageEls, [rects]);
     return rects;
   };
-  return { doc, parseMs, pageRenderMs };
+  return { pageRenderMs };
 }
 
 /** 쪽을 모두 다시 그린다(하이라이트·바뀐 블록 표시도 지워진다). 편집 뒤에는 보던 자리를 그대로, 새 문서는 맨 위로 */
@@ -214,7 +220,7 @@ function redraw(doc: HwpDocument, scroll: 'keep' | 'top'): { pageRenderMs: numbe
   const { pageRenderMs, pageEls } = renderPages(doc);
   currentPageEls = pageEls;
   window.scrollTo(0, scrollY);
-  setStatus(`${currentFileName} — ${doc.pageCount()}쪽`);
+  showStatus(doc);
   return { pageRenderMs };
 }
 
@@ -224,22 +230,30 @@ function closeEditor(): void {
   currentEditor = undefined;
 }
 
+/** 상태 줄: 마지막 파일 이름(새 문서는 저장할 이름과 "새 문서")과 쪽 수 */
+function showStatus(doc: HwpDocument): void {
+  setStatus(`${currentFileName}${unsavedNewDocument ? ' (새 문서)' : ''} — ${doc.pageCount()}쪽`);
+}
+
 /**
  * 서버가 알려준 저장하지 않은 편집 수(서버 편집 기록이 기준 — 뷰어는 세지 않는다). 0 이 아니면 탭을 닫거나 새로고침할 때
  * 브라우저 확인 창을 띄운다(SPEC-002 새로고침). 서버가 저장·편집·되돌리기 뒤에 edit_state 로 보내고, 새 문서를 열면 0
  */
 let unsavedEdits = 0;
+/** 한 번도 저장하지 않은 새 문서(SPEC-003). 새로고침하면 사라지므로 편집이 없어도 확인 창을 띄운다. 저장하면 서버가 edit_state 로 끈다 */
+let unsavedNewDocument = false;
 
 window.addEventListener('beforeunload', (event) => {
   // 확인 창 문구는 브라우저가 정한다(사이트가 바꿀 수 없다)
-  if (unsavedEdits > 0) event.preventDefault();
+  if (unsavedEdits > 0 || unsavedNewDocument) event.preventDefault();
 });
 
 /** 서버 편집 상태를 따른다. 저장하면 마지막 파일 이름이 바뀌어 상태 줄도 바꾼다 */
-function applyEditState(fileName: string, count: number): void {
+function applyEditState(fileName: string, count: number, newDocument: boolean): void {
   unsavedEdits = count;
+  unsavedNewDocument = newDocument;
   currentFileName = fileName;
-  if (currentDoc !== undefined) setStatus(`${fileName} — ${currentDoc.pageCount()}쪽`);
+  if (currentDoc !== undefined) showStatus(currentDoc);
 }
 
 function exportHwpx(): ViewerResult<'export_hwpx'> {
@@ -247,12 +261,41 @@ function exportHwpx(): ViewerResult<'export_hwpx'> {
 }
 
 function loadDocument(fileName: string, data: string): LoadDocumentResult {
-  unsavedEdits = 0;
-  try {
-    const { doc } = showDocument(base64ToBytes(data), fileName);
+  return replaceDocument(fileName, false, () => {
+    const { doc } = parseDocument(base64ToBytes(data));
+    showDocument(doc, fileName);
     currentEditor = new DocumentEditor(doc);
     return { pageCount: doc.pageCount(), blocks: currentEditor.blocks.map((block) => blockPositionSchema.parse(block)) };
+  });
+}
+
+/** 새 문서(빈 문서·양식)를 만들어 그린다. 첫 문단은 비어 있어도 블록이다(SPEC-003) */
+function createDocument(params: ViewerParams<'create_document'>): CreateDocumentResult {
+  return replaceDocument(params.fileName, true, () => {
+    const { template } = params;
+    const { doc, cleared } = createNewDocument(template === undefined ? undefined : base64ToBytes(template.data), template?.keepContent ?? false);
+    showDocument(doc, params.fileName);
+    currentEditor = new DocumentEditor(doc, isFirstParagraph);
+    return {
+      pageCount: doc.pageCount(),
+      blocks: currentEditor.blocks.map((block) => blockPositionSchema.parse(block)),
+      styles: styleSummaries(doc),
+      ...(cleared === undefined ? {} : { cleared: { removedObjects: cleared.removedObjects, keptObjects: cleared.keptObjects } }),
+    };
+  });
+}
+
+/**
+ * 열린 문서를 open 이 만든 문서로 바꾼다(열기·새 문서 공용). 실패하면 이전 문서도 닫고 오류 화면을 보여준 뒤 던진다
+ * (서버도 열린 문서를 비운다)
+ */
+function replaceDocument<T>(fileName: string, newDocument: boolean, open: () => T): T {
+  unsavedEdits = 0;
+  unsavedNewDocument = newDocument;
+  try {
+    return open();
   } catch (error) {
+    unsavedNewDocument = false;
     closeEditor();
     currentDoc?.free();
     currentDoc = undefined;
@@ -270,6 +313,8 @@ function handleRequest(request: RequestMessage): unknown {
   switch (request.method) {
     case 'load_document':
       return loadDocument(request.params.fileName, request.params.data);
+    case 'create_document':
+      return createDocument(request.params);
     case 'get_blocks':
       return openedBlocks();
     case 'find_text':
@@ -286,7 +331,7 @@ function handleRequest(request: RequestMessage): unknown {
     case 'export_hwpx':
       return exportHwpx();
     case 'edit_state':
-      applyEditState(request.params.fileName, request.params.unsavedEdits);
+      applyEditState(request.params.fileName, request.params.unsavedEdits, request.params.newDocument);
       return {};
     default: {
       // 메서드를 더하고 여기 처리를 빠뜨리면 컴파일 오류가 난다
@@ -379,7 +424,8 @@ function connect(token: string): void {
 async function openFixture(fixture: string): Promise<Pick<RenderMetrics, 'parseMs' | 'pageRenderMs' | 'pageCount'>> {
   const response = await fetch(`/fixtures/${encodeURIComponent(fixture)}`);
   if (!response.ok) throw new Error(`${fixture} 을 불러오지 못했습니다 (${response.status})`);
-  const { doc, parseMs, pageRenderMs } = showDocument(new Uint8Array(await response.arrayBuffer()), fixture);
+  const { doc, parseMs } = parseDocument(new Uint8Array(await response.arrayBuffer()));
+  const { pageRenderMs } = showDocument(doc, fixture);
   return { parseMs, pageRenderMs, pageCount: doc.pageCount() };
 }
 

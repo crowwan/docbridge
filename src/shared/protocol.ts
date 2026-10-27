@@ -44,6 +44,22 @@ export const loadDocumentResultSchema = z.object({
   blocks: z.array(blockPositionSchema),
 });
 
+/** 새 문서 만들기(SPEC-003): 새 문서 이름(상태 줄), 양식이 있으면 그 바이트(base64)와 본문을 남길지 */
+export const createDocumentParamsSchema = z.object({
+  fileName: z.string(),
+  template: z.object({ fileName: z.string(), data: z.string(), keepContent: z.boolean() }).optional(),
+});
+
+const objectCountsSchema = z.record(z.string(), z.number());
+
+/** 만든 새 문서: 쪽 수, 블록 위치(첫 문단은 비어 있어도 블록), 문단 스타일, 양식을 비웠으면 지운 개체·남긴 개체 이름별 수 */
+export const createDocumentResultSchema = z.object({
+  pageCount: z.number(),
+  blocks: z.array(blockPositionSchema),
+  styles: z.array(z.object({ name: z.string(), englishName: z.string(), outlineLevel: z.number().optional() })),
+  cleared: z.object({ removedObjects: objectCountsSchema, keptObjects: objectCountsSchema }).optional(),
+});
+
 /**
  * 편집 결과: 바뀐 블록(편집 뒤 위치와 내용), 화면에 표시하지 못한 블록, 다시 그린 쪽 수,
  * 문단 수를 바꾼 편집이면 실제로 넣고 지운 문단·표(서버는 이것으로 id 표를 옮긴다 — core/paragraph-changes.ts)
@@ -68,6 +84,8 @@ const unsavedEditsSchema = z.number().int().min(0);
 export const viewerMethodSchemas = {
   /** 문서를 열어 렌더링하고 블록을 추출한다. 이전 문서는 닫는다 */
   load_document: { params: loadDocumentParamsSchema, result: loadDocumentResultSchema },
+  /** 새 문서(빈 문서 또는 양식)를 뷰어가 rhwp 로 만들어 렌더링하고 블록을 추출한다. 이전 문서는 닫는다. 서버는 새 문서 바이트를 갖지 않는다 */
+  create_document: { params: createDocumentParamsSchema, result: createDocumentResultSchema },
   /** 열린 문서의 블록 전문(문서 순서). 열 때 뽑아 둔 것 */
   get_blocks: { params: z.object({}), result: z.array(blockSchema) },
   /** 문단·표 칸에서 query 와 일치하는 위치 */
@@ -93,7 +111,11 @@ export const viewerMethodSchemas = {
    * 서버 편집 기록의 상태를 뷰어에 맞춘다(저장 뒤, 되돌리기가 덜 되돌렸을 때). 뷰어는 unsavedEdits 가 0 이 아니면 탭을 닫거나 새로고침할 때
    * 확인 창을 띄우고, 상태 줄을 마지막 파일 이름으로 둔다. 저장하지 않은 편집 수는 서버(EditLog)만 센다
    */
-  edit_state: { params: z.object({ fileName: z.string(), unsavedEdits: z.number().int().min(0) }), result: z.object({}) },
+  // newDocument: 한 번도 저장하지 않은 새 문서(SPEC-003). 편집이 없어도 확인 창을 띄운다
+  edit_state: {
+    params: z.object({ fileName: z.string(), unsavedEdits: z.number().int().min(0), newDocument: z.boolean() }),
+    result: z.object({}),
+  },
 } as const;
 
 type MethodSchemas = typeof viewerMethodSchemas;
@@ -102,10 +124,12 @@ export type ViewerParams<M extends ViewerMethod> = z.infer<MethodSchemas[M]['par
 export type ViewerResult<M extends ViewerMethod> = z.infer<MethodSchemas[M]['result']>;
 export type LoadDocumentParams = ViewerParams<'load_document'>;
 export type LoadDocumentResult = ViewerResult<'load_document'>;
+export type CreateDocumentResult = ViewerResult<'create_document'>;
 
 /** 서버가 뷰어 응답의 결과를 메서드 M 의 결과 타입으로 읽는다 */
 export const parseViewerResult: { [M in ViewerMethod]: (result: unknown) => ViewerResult<M> } = {
   load_document: (result) => viewerMethodSchemas.load_document.result.parse(result),
+  create_document: (result) => viewerMethodSchemas.create_document.result.parse(result),
   get_blocks: (result) => viewerMethodSchemas.get_blocks.result.parse(result),
   find_text: (result) => viewerMethodSchemas.find_text.result.parse(result),
   highlight: (result) => viewerMethodSchemas.highlight.result.parse(result),
@@ -122,6 +146,7 @@ const requestSchema = <M extends ViewerMethod, P extends z.ZodType>(method: M, p
 /** 메서드별 요청 스키마. viewerMethodSchemas 의 메서드를 하나라도 빠뜨리면 satisfies 에서 컴파일 오류가 난다 */
 const requestSchemas = {
   load_document: requestSchema('load_document', viewerMethodSchemas.load_document.params),
+  create_document: requestSchema('create_document', viewerMethodSchemas.create_document.params),
   get_blocks: requestSchema('get_blocks', viewerMethodSchemas.get_blocks.params),
   find_text: requestSchema('find_text', viewerMethodSchemas.find_text.params),
   highlight: requestSchema('highlight', viewerMethodSchemas.highlight.params),
@@ -135,6 +160,7 @@ const requestSchemas = {
 /** 뷰어가 요청을 읽는 스키마. 메서드마다 입력 모양이 다르다 */
 export const requestMessageSchema = z.discriminatedUnion('method', [
   requestSchemas.load_document,
+  requestSchemas.create_document,
   requestSchemas.get_blocks,
   requestSchemas.find_text,
   requestSchemas.highlight,
