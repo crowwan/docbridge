@@ -74,7 +74,9 @@ function fieldTableOf(fields: FieldInfo[]): (anchor: BlockAnchor) => number | un
     const field = fields.filter(
       ({ location }) => location.sectionIndex === anchor.section && location.paraIndex === anchor.paragraph,
     )[ordinal];
-    return field?.location.path?.[0]?.controlIndex;
+    const step = field?.location.path?.[0];
+    // 표 칸 안만 표에 든 누름틀이다(글상자 안은 칸 번호가 없다, #42)
+    return step !== undefined && 'cellIndex' in step ? step.controlIndex : undefined;
   };
 }
 

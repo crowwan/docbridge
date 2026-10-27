@@ -153,7 +153,13 @@ function cellOffset(lengths: number[], position: number): { paragraph: number; o
   return { paragraph: Math.max(0, lengths.length - 1), offset: lengths.at(-1) ?? 0 };
 }
 
-const fieldListSchema = z.array(
+// getFieldList 의 location.path 한 칸. 표 칸은 칸 번호가 있고, 글상자 등 칸이 아닌 자리는 칸 번호가 없다
+// ({type:"textbox", controlIndex, paraIndex}, #42). 칸이 아닌 자리는 종류와 컨트롤 번호만 읽는다
+const cellPathStepSchema = z.object({ type: z.literal('cell'), controlIndex: z.number(), cellIndex: z.number(), paraIndex: z.number() });
+const otherPathStepSchema = z.object({ type: z.string(), controlIndex: z.number() });
+// 하이퍼링크 등 누름틀이 아닌 필드는 모양이 달라도 던지지 않게 종류만 먼저 읽고 거른다(#42)
+const fieldKindListSchema = z.array(z.looseObject({ fieldType: z.string() }));
+const clickHereListSchema = z.array(
   z.object({
     fieldId: z.number(),
     fieldType: z.string(),
@@ -164,17 +170,17 @@ const fieldListSchema = z.array(
     location: z.object({
       sectionIndex: z.number(),
       paraIndex: z.number(),
-      path: z
-        .array(z.object({ type: z.string(), controlIndex: z.number(), cellIndex: z.number(), paraIndex: z.number() }))
-        .optional(),
+      path: z.array(z.union([cellPathStepSchema, otherPathStepSchema])).optional(),
     }),
   }),
 );
 
-export type FieldInfo = z.infer<typeof fieldListSchema>[number];
+export type FieldInfo = z.infer<typeof clickHereListSchema>[number];
 
+/** 누름틀만. 표 칸 안 누름틀은 path 가 칸 번호(cellIndex)를 가진다 */
 export function listFields(doc: HwpDocument): FieldInfo[] {
-  return parseJson(fieldListSchema, doc.getFieldList()).filter((field) => field.fieldType === 'clickhere');
+  const clickHeres = parseJson(fieldKindListSchema, doc.getFieldList()).filter((field) => field.fieldType === 'clickhere');
+  return clickHereListSchema.parse(clickHeres);
 }
 
 /**
@@ -193,16 +199,12 @@ export function replaceFieldText(doc: HwpDocument, fieldId: number, text: string
     doc.setFieldValue(fieldId, text);
     return;
   }
-  const { sectionIndex, paraIndex, path } = field.location;
-  const spot =
-    path === undefined || path.length === 0
-      ? bodySpot(doc, sectionIndex, paraIndex)
-      : cellSpot(
-          doc,
-          sectionIndex,
-          paraIndex,
-          path.map(({ controlIndex, cellIndex, paraIndex: cellParaIndex }) => ({ controlIndex, cellIndex, cellParaIndex })),
-        );
+  const { sectionIndex, paraIndex, path = [] } = field.location;
+  const cells = path.flatMap((step) =>
+    'cellIndex' in step ? [{ controlIndex: step.controlIndex, cellIndex: step.cellIndex, cellParaIndex: step.paraIndex }] : [],
+  );
+  if (cells.length !== path.length) throw new Error(`글상자 안 누름틀 ${field.name} 은 아직 바꿀 수 없습니다.`);
+  const spot = cells.length === 0 ? bodySpot(doc, sectionIndex, paraIndex) : cellSpot(doc, sectionIndex, paraIndex, cells);
   const at = field.startCharIdx;
   const appending = start === to && start === length;
   const prepending = start === to && start === 0;
