@@ -1,6 +1,6 @@
 // 뷰어에서 고칠 자리(SPEC-006 글자 고치기): 쪽 위 한 점(더블클릭·마우스 올림) → rhwp hitTest → 블록·칸·누름틀과 글자 위치.
 // 입력칸 글자는 앞뒤 같은 글자를 잘라 바뀐 범위만 replace_text 사람 편집(블록 위치 대상)으로 만든다(chars.ts changedRange).
-// blockAtHit(점 → 본문 블록)은 끌어 옮기기·오른쪽 클릭(#60)도 쓴다.
+// 끌어 옮기기·오른쪽 클릭(#60)은 bodyBlockAt(점 → 본문 블록, 블록 사각형 안일 때만)을 쓴다.
 import type { HwpDocument } from '@rhwp/core';
 import { z } from 'zod';
 import { anchorsOf, blockIndexByAnchor, tableControlIndex, type BlockAnchor } from './block-ids.ts';
@@ -185,6 +185,28 @@ export function spotBox(doc: HwpDocument, blocks: Block[], spot: EditSpot): Sele
     return emptyLineBox(doc, parseJson(cursorRectSchema, doc.getCursorRect(block.section, block.paragraph, 0)));
   }
   return boxesOf(doc, blocks, spot.anchor)[0];
+}
+
+/** 점이 놓인 본문 블록(문단·표 블록째)과 그 블록의 이 쪽 사각형 — 끌어 옮기기·오른쪽 클릭 메뉴(#60) */
+export interface BodyBlockSpot {
+  anchor: BlockAnchor;
+  box: SelectionRect;
+}
+
+/**
+ * 쪽 위 점 → 본문 블록(문단·표). 누름틀 값·표 칸 위여도 그 문단·표 블록이다.
+ * 블록 사각형 밖(빈 곳·글상자·머리말 등)이면 undefined — hitTest 는 빈 곳에도 가까운 문단을 준다
+ */
+export function bodyBlockAt(doc: HwpDocument, blocks: Block[], pageIndex: number, point: Point): BodyBlockSpot | undefined {
+  const hit = hitTestAt(doc, pageIndex, point);
+  const base = hit === undefined ? undefined : blockAtHit(hit, blocks);
+  if (hit === undefined || base === undefined) return undefined;
+  const { anchor, block } = base;
+  const boxes = block.kind === 'paragraph' && block.text.length === 0 ? [emptyLineBox(doc, hit.cursorRect)] : boxesOf(doc, blocks, anchor);
+  // 빈 누름틀 안내문은 문단 글자 사각형 밖이라 그 문단 누름틀 값 사각형도 본다
+  const fieldBoxes = block.kind === 'paragraph' ? fieldsIn(blocks, placeOf(base)).flatMap((field) => boxesOf(doc, blocks, field.anchor)) : [];
+  const box = [...boxes, ...fieldBoxes].find((candidate) => contains(candidate, pageIndex, point));
+  return box === undefined ? undefined : { anchor, box };
 }
 
 /** 지금 블록 목록에서 자리의 글자(문단 글자·칸 글자·누름틀 값). 블록·칸이 없으면 undefined */

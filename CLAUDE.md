@@ -36,9 +36,9 @@ npm run build          # 서버(tsc → dist/server) + 뷰어(vite → dist/view
 npm start              # 빌드 결과 실행: MCP 서버(stdio) + 뷰어 서버(7790, 사용 중이면 7799 까지 다음 포트).
                        # = node dist/server/index.js. DOCBRIDGE_PORT 로 시작 포트 변경
 npm run typecheck
-npm test               # Vitest: 블록 추출·블록 id·글자 단위·하이라이트 계산·note 자리·요청/응답·open_document·읽기·하이라이트 도구(가짜/rhwp 테스트 뷰어)·편집 기술 검증·편집 공용 경로·replace_text·replace_all·insert_paragraph·delete_blocks·move_blocks·undo·insert_table·저장(경로 규칙·검증·새로고침)·스타일(styles.ts·list_styles·set_style·insert_paragraph style)·새 문서 만들기(create_document·새 문서 저장·새로고침)·새 문서 만들기 기술 검증(빈 문서·표·양식 비우기)·문서 사이 복사 기술 검증(importParagraphBlock·번호·스타일 보정·HTML 대안)·사람 편집 요청(user_edit·⌘Z 공용 되돌리기·알림·늦은 요청 거부)·더블클릭 고칠 자리(hitTest → 블록·칸·누름틀, 바뀐 범위만, 누름틀 걸침, 입력 중 Claude 편집 따라가기)·여러 문서(doc 표·마지막으로 쓴 문서·문서별 id/undo/편집 수·8개 상한·close_document·탭 닫기 알림·문서별 사람 편집·같은 파일 = 실제 경로·다른 문서 파일로 저장 거부)·copy_blocks(원본 범위 계획·대상 탭 편집·보정 후속·문서 사이/같은 문서 복사·거부)·
+npm test               # Vitest: 블록 추출·블록 id·글자 단위·하이라이트 계산·note 자리·요청/응답·open_document·읽기·하이라이트 도구(가짜/rhwp 테스트 뷰어)·편집 기술 검증·편집 공용 경로·replace_text·replace_all·insert_paragraph·delete_blocks·move_blocks·undo·insert_table·저장(경로 규칙·검증·새로고침)·스타일(styles.ts·list_styles·set_style·insert_paragraph style)·새 문서 만들기(create_document·새 문서 저장·새로고침)·새 문서 만들기 기술 검증(빈 문서·표·양식 비우기)·문서 사이 복사 기술 검증(importParagraphBlock·번호·스타일 보정·HTML 대안)·사람 편집 요청(user_edit·⌘Z 공용 되돌리기·알림·늦은 요청 거부)·더블클릭 고칠 자리(hitTest → 블록·칸·누름틀, 바뀐 범위만, 누름틀 걸침, 입력 중 Claude 편집 따라가기)·끌어 옮기기·메뉴(점 → 본문 블록, 놓일 자리, 지우기·위로·아래로)·여러 문서(doc 표·마지막으로 쓴 문서·문서별 id/undo/편집 수·8개 상한·close_document·탭 닫기 알림·문서별 사람 편집·같은 파일 = 실제 경로·다른 문서 파일로 저장 거부)·copy_blocks(원본 범위 계획·대상 탭 편집·보정 후속·문서 사이/같은 문서 복사·거부)·
                        # fixture 별 get_outline 기대 JSON(tests/outline/, rhwp 회귀 — 바꿀 때 -u)·서버 통합 (CI)
-npm run e2e            # 빌드 후 Playwright: 렌더링·하이라이트·측정·문서 열기·토큰 거부·읽기 도구·하이라이트 도구·편집 표시(표 넣기 포함)·스타일 바꾸기 표시·저장과 새로고침 확인 창·새 문서 만들기(빈 문서·양식·확인 창)·사람 편집 요청과 ⌘Z·더블클릭 글자 고치기·여러 문서 탭(탭 제목·doc 이름·●·탭 닫기 알림·close_document·copy_blocks 대상 탭 표시와 undo) (로컬 전용, CI 에 없음)
+npm run e2e            # 빌드 후 Playwright: 렌더링·하이라이트·측정·문서 열기·토큰 거부·읽기 도구·하이라이트 도구·편집 표시(표 넣기 포함)·스타일 바꾸기 표시·저장과 새로고침 확인 창·새 문서 만들기(빈 문서·양식·확인 창)·사람 편집 요청과 ⌘Z·더블클릭 글자 고치기·여러 문서 탭(탭 제목·doc 이름·●·탭 닫기 알림·close_document·copy_blocks 대상 탭 표시와 undo)·끌어 옮기기와 오른쪽 클릭 메뉴 (로컬 전용, CI 에 없음)
 node scripts/make-fixtures.ts   # fixtures/ 의 생성 문서 다시 만들기
 node scripts/measure-edits.ts [문서…]   # 편집·되돌리기·HWPX 저장 검증 비용 측정 (ADR 002)
 node scripts/make-hwp-check.ts [폴더]   # 한글 프로그램 확인용 편집 HWPX (기본 ~/Downloads/docbridge-hwp-check, 레포에 넣지 않음)
@@ -68,7 +68,7 @@ src/
                파일 크기 상한(limits.ts: 열기·저장 50MB), base64(base64.ts: 뷰어·테스트 뷰어 공용)
   core/        rhwp 어댑터 — 블록 모양 zod 스키마(block-schema.ts), 블록 추출(blocks.ts), 블록 id 대응표(block-ids.ts),
                글자 위치 단위(chars.ts: 유니코드 글자 = rhwp 글자 위치, changedRange = 입력 전후의 바뀐 범위만, 입력칸 커서로 같은 글자 이어짐 가르기),
-               뷰어에서 고칠 자리(edit-spot.ts: 점 → rhwp hitTest → 본문 블록 blockAtHit(#60 도 씀)·고칠 자리와 테두리 editSpotAt·입력칸 글자 → 사람 편집 replaceEditAt(누름틀 걸침)·입력 중 블록 위치 따라가기 followEdit·입력칸 다시 둘 자리 spotBox — SPEC-006), 글자 찾기(find-text.ts: findReplaceable = replace_all 일치, 누름틀 값에 걸친 것 뺌), 누름틀 값 자리(field-spans.ts: 문단·칸 글자 안 누름틀 값 [start, end) 와 걸침 판정 — 서버 replace_all·뷰어 replace_text 공용),
+               뷰어에서 고칠 자리(edit-spot.ts: 점 → rhwp hitTest → 본문 블록 blockAtHit·고칠 자리와 테두리 editSpotAt·입력칸 글자 → 사람 편집 replaceEditAt(누름틀 걸침)·입력 중 블록 위치 따라가기 followEdit·입력칸 다시 둘 자리 spotBox·점 → 본문 블록 bodyBlockAt(끌기·메뉴) — SPEC-006), 끌어 옮기기·메뉴 편집(block-moves.ts: 본문 블록 쪽별 사각형 blockBands·놓일 자리와 가로선 dropAt·지우기·위로·아래로 menuEdits — #60), 글자 찾기(find-text.ts: findReplaceable = replace_all 일치, 누름틀 값에 걸친 것 뺌), 누름틀 값 자리(field-spans.ts: 문단·칸 글자 안 누름틀 값 [start, end) 와 걸침 판정 — 서버 replace_all·뷰어 replace_text 공용),
                하이라이트 사각형(highlight-rects.ts: 줄 끝 보정), 하이라이트 대상 → 사각형(highlight-targets.ts: 요청당 한 번 도는 highlightTargets, 뷰어·테스트 뷰어 공용), note 자리(note-placement.ts: 위 → 쪽 바깥 여백 → 아래, 쪽 글자 사각형과 겹침 판정),
                편집 어댑터(edits.ts: 옮기기·첫 글자 모양 바꾸기·칸·누름틀·문단 넣기), 되돌리기(edit-history.ts: 스냅샷 20칸 + id 표 사본, 칸은 bounded-stack.ts — 서버 edit-log.ts 와 공용),
                편집 종류와 적용(edit-operations.ts: kind 판별 유니언 — 새 편집은 스키마 + applyEdit case 하나, copy_blocks 는 원본 HWPX base64 를 실어 copyParagraphs), 지우기(delete-blocks.ts: 문단째·표만·거부 판정),
@@ -82,9 +82,9 @@ src/
                문서 사이 복사(copy-paragraphs.ts: 원본 HWPX 바이트 → importParagraphBlock + 번호(넣는 자리 앞 목록 우선)·스타일(다음 스타일 포함, 넣은 문단만 봄) 보정 — copy_blocks 편집이 씀) — ADR 004,
                Node 용 초기화(rhwp-node.ts)
   viewer/      브라우저 뷰어(Vite root). Canvas 렌더링 + 하이라이트·note·바뀐 블록 표시 오버레이. 탭 하나 = 문서 하나(주소 &doc=, 도구 막대 doc 이름, 탭 제목 = 파일 이름·보지 않는 사이 바뀌면 ●, close_document 면 빈 탭).) 사람 편집은 서버에 user_edit 로 보내고(window.docbridge.userEdit), ⌘Z/Ctrl+Z 는 서버 user_undo.
-               더블클릭 글자 고치기(inline-edit.ts: 마우스 올림 테두리·입력칸), 실패 알림(toast.ts: 뷰어 아래 3초 — #60 도 씀). 디자인 토큰은 tokens.css (의도는 docs/design.md)
+               더블클릭 글자 고치기(inline-edit.ts: 마우스 올림 테두리·입력칸), 끌어 옮기기·오른쪽 클릭 메뉴(block-actions.ts: 놓일 자리 가로선·role=menu 위로·아래로·지우기·메뉴 키), 실패 알림(toast.ts: 뷰어 아래 3초). 디자인 토큰은 tokens.css (의도는 docs/design.md)
 tests/         Vitest (Node 에서 rhwp WASM 을 직접 띄움). outline/ = fixture 별 get_outline 기대 JSON
-e2e/           Playwright (렌더링·하이라이트·측정·서버가 내주는 뷰어·문서 열기·읽기 도구·하이라이트 도구·편집 표시·스타일 바꾸기 표시·사람 편집과 ⌘Z·더블클릭 글자 고치기·여러 문서 탭)
+e2e/           Playwright (렌더링·하이라이트·측정·서버가 내주는 뷰어·문서 열기·읽기 도구·하이라이트 도구·편집 표시·스타일 바꾸기 표시·사람 편집과 ⌘Z·더블클릭 글자 고치기·여러 문서 탭·끌어 옮기기와 메뉴)
 fixtures/      테스트용 문서와 출처(README.md)
 scripts/       fixtures 생성, 편집 비용 측정(measure-edits.ts), 한글 확인 파일 생성(make-hwp-check.ts 편집, make-create-check.ts 새 문서, make-copy-check.ts 문서 사이 복사), 데모 영상 녹화(demo/: 채팅+뷰어 화면 demo.html, record-demo.ts)
 docs/          PRD, 스펙, ADR(decisions/), 조사 자료(research/), QA 체크리스트

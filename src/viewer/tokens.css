@@ -22,6 +22,12 @@
   --toast-bg: var(--note-bg);
   --toast-fg: var(--note-fg);
   --danger: #e5484d;
+  /* 끌어 옮기기 놓일 자리 가로선: 개인 DS brand(= ring). "여기에 들어간다"는 지금 고르는 자리라 포커스 링과 같은 강조색 */
+  --drop-line: var(--focus-ring);
+  /* 오른쪽 클릭 메뉴: 개인 DS bg(면)·bg-subtle(마우스 올림·포커스 항목)·fg-disabled(앞·뒤 블록이 없는 항목) */
+  --menu-bg: var(--surface);
+  --menu-item-active-bg: #f5f5f5;
+  --menu-disabled-fg: #cccccc;
 
   /* 글자 */
   --font-sans: system-ui, sans-serif;
@@ -54,6 +60,12 @@
   /* 토스트: 안내 카드와 같은 폭, 오류 선 두께 */
   --toast-max-width: 480px;
   --toast-accent-width: 4px;
+  /* 놓일 자리 가로선 두께: 개인 DS border-w-thick(선택 상태) */
+  --drop-line-width: 2px;
+  /* 끌기 시작 거리: 이만큼 움직여야 끌기(클릭·더블클릭과 가른다). 뷰어 스크립트가 읽는다 */
+  --drag-threshold: 4px;
+  /* 메뉴 최소 폭: 세 글자 항목이 좁아 보이지 않게 */
+  --menu-min-width: 120px;
   /* 토스트가 보이는 시간(스펙 3초). 뷰어 스크립트가 읽는다 */
   --toast-duration: 3000ms;
   --doc-name-border-width: 1px;

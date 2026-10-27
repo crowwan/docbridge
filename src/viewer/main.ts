@@ -9,12 +9,14 @@
 // 사람 편집(SPEC-006)은 바로 고치지 않고 서버에 user_edit 로 보낸다. 서버가 Claude 편집과 같은 줄로 처리해 edit 요청으로 돌려준다.
 // ⌘Z(윈도우 Ctrl+Z)는 서버 공용 되돌리기(user_undo).
 // 더블클릭 글자 고치기(inline-edit.ts)는 고칠 자리·바뀐 범위만(core/edit-spot.ts)을 user_edit 로 보내고, 안 되면 뷰어 아래 알림(toast.ts).
+// 끌어 옮기기·오른쪽 클릭 메뉴(block-actions.ts)는 core/block-moves.ts 의 move_blocks·delete_blocks 를 같은 길로 보낸다.
 import init, { HwpDocument } from '@rhwp/core';
 import wasmUrl from '@rhwp/core/rhwp_bg.wasm?url';
 import type { BlockAnchor } from '../core/block-ids.ts';
 import { blockPositionSchema, type Block } from '../core/block-schema.ts';
 import { DocumentEditor } from '../core/document-editor.ts';
-import { BLOCK_CHANGED_WHILE_EDITING, editSpotAt, replaceEditAt, spotBox, type EditSpot } from '../core/edit-spot.ts';
+import { blockBands, menuEdits } from '../core/block-moves.ts';
+import { BLOCK_CHANGED_WHILE_EDITING, bodyBlockAt, editSpotAt, replaceEditAt, spotBox, type EditSpot } from '../core/edit-spot.ts';
 import type { EditOperation } from '../core/edit-operations.ts';
 import { findInBlocks } from '../core/find-text.ts';
 import { selectionRects, type SelectionRect } from '../core/highlight-rects.ts';
@@ -43,6 +45,7 @@ import {
   type ViewerResult,
 } from '../shared/protocol.ts';
 import type { RenderMetrics, ViewerApi } from './api.ts';
+import { setupBlockActions } from './block-actions.ts';
 import { setupInlineEdit } from './inline-edit.ts';
 import { showToast } from './toast.ts';
 
@@ -273,6 +276,7 @@ function redraw(doc: HwpDocument, scroll: 'keep' | 'top'): { pageRenderMs: numbe
   const { pageRenderMs, pageEls } = renderPages(doc);
   currentPageEls = pageEls;
   inlineEdit?.reattach();
+  blockActions?.cancel();
   window.scrollTo(0, scrollY);
   showStatus(doc);
   return { pageRenderMs };
@@ -281,6 +285,7 @@ function redraw(doc: HwpDocument, scroll: 'keep' | 'top'): { pageRenderMs: numbe
 /** 이전 문서의 되돌리기 스냅샷을 버린다(서버가 버린 편집 수를 알린다, AC-12) */
 function closeEditor(): void {
   inlineEdit?.cancel();
+  blockActions?.cancel();
   currentEditor?.dispose();
   currentEditor = undefined;
 }
@@ -590,6 +595,21 @@ const inlineEdit =
         pageEls: () => currentPageEls,
         zoom: ZOOM,
         commit: commitInlineEdit,
+      });
+
+/** 끌어 옮기기·오른쪽 클릭 메뉴(#60): 서버가 연 문서에서만. 거부되면 뷰어 아래 알림 */
+const blockActions =
+  pagesEl === null
+    ? undefined
+    : setupBlockActions(pagesEl, {
+        blockAt: (pageIndex, point) => (currentEditor === undefined ? undefined : bodyBlockAt(currentEditor.doc, currentEditor.blocks, pageIndex, point)),
+        bands: () => (currentEditor === undefined ? [] : blockBands(currentEditor.doc, currentEditor.blocks)),
+        menuEdits: (anchor) => menuEdits(openedBlocks(), anchor),
+        pageEls: () => currentPageEls,
+        zoom: ZOOM,
+        send: (edit) => {
+          requestUserEdit(edit).catch(reportEditFailure);
+        },
       });
 
 /** 상태 줄에 사람 편집·되돌리기가 안 된 이유를 남긴다(다음 다시 그리기 때 원래 상태 줄로 돌아간다) */
