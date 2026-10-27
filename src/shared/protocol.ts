@@ -33,6 +33,12 @@ export const highlightParamsSchema = z.object({
 /** 뷰어가 이 시간 안에 응답하지 않으면 요청을 실패로 끝낸다 */
 export const REQUEST_TIMEOUT_MS = 30_000;
 
+/**
+ * 사람 편집·⌘Z(SPEC-006): 서버가 받은 뒤 줄 차례가 이 시간 넘게 늦으면(앞선 편집이 오래 걸림) 적용하지 않고 거부한다.
+ * 뷰어가 응답을 기다리는 REQUEST_TIMEOUT_MS 보다 짧아, 뷰어가 타임아웃으로 실패를 보여 준 편집이 나중에 적용되지 않는다
+ */
+export const USER_REQUEST_DEADLINE_MS = 20_000;
+
 export const loadDocumentParamsSchema = z.object({
   fileName: z.string(),
   /** 파일 바이트(base64) */
@@ -294,6 +300,13 @@ export function answerRequest(raw: string, handle: (request: RequestMessage) => 
 export const timeoutMessage = (method: string, timeoutMs: number) =>
   `뷰어가 ${timeoutMs / 1000}초 안에 응답하지 않았습니다(${method}). 뷰어 탭을 확인하고 다시 시도하세요.`;
 
+/**
+ * 뷰어가 보낸 사람 편집·⌘Z 의 응답이 늦을 때 뷰어에 보이는 문구(SPEC-006). 서버는 USER_REQUEST_DEADLINE_MS 넘게 늦은 요청을
+ * 적용하지 않지만, 마감 전에 적용을 시작했다면 그 편집 요청으로 화면이 바뀐다 — 그래서 화면을 기준으로 다시 하게 한다
+ */
+export const userRequestTimeoutMessage = (_method: string, timeoutMs: number) =>
+  `docbridge 가 ${timeoutMs / 1000}초 안에 답하지 않았습니다. 화면이 바뀌지 않았으면 다시 해 주세요.`;
+
 /** 요청 하나의 끝(응답 메시지 종류와 상관없이 id·성공 여부·결과) */
 export type Settlement = { type?: string; id: number } & ({ ok: true; result: unknown } | { ok: false; error: string });
 
@@ -306,10 +319,13 @@ interface Pending {
 export class RequestTracker {
   private readonly pending = new Map<number, Pending>();
   private readonly timeoutMs: number;
+  private readonly timeoutText: (method: string, timeoutMs: number) => string;
   private nextId = 1;
 
-  constructor(timeoutMs = REQUEST_TIMEOUT_MS) {
+  /** timeoutText: 타임아웃 문구(기본은 서버가 뷰어를 기다릴 때 문구) */
+  constructor(timeoutMs = REQUEST_TIMEOUT_MS, timeoutText = timeoutMessage) {
     this.timeoutMs = timeoutMs;
+    this.timeoutText = timeoutText;
   }
 
   /** 새 요청 id 와, 응답 결과를 parse 로 읽어 풀리는 Promise */
@@ -323,7 +339,7 @@ export class RequestTracker {
       };
       const timer = setTimeout(() => {
         finish();
-        reject(new Error(timeoutMessage(method, this.timeoutMs)));
+        reject(new Error(this.timeoutText(method, this.timeoutMs)));
       }, this.timeoutMs);
       this.pending.set(id, {
         settle: (response) => {

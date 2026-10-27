@@ -58,6 +58,13 @@ export interface Caret {
   height: number;
 }
 
+/** 표 칸마다 칸 사각형(쪽에 걸친 칸은 쪽마다 하나씩). 빈 칸 하이라이트·마우스 올림 테두리(SPEC-006)가 쓴다 */
+export function tableCellBoxes(doc: HwpDocument, block: TableBlock): Array<SelectionRect & { cellIndex: number }> {
+  return parseJson(cellBoxesSchema, doc.getTableCellBboxes(block.section, block.paragraph, block.controlIndex)).map(
+    ({ cellIdx, pageIndex, x, y, w, h }) => ({ cellIndex: cellIdx, pageIndex, x, y, width: w, height: h }),
+  );
+}
+
 /** 하이라이트는 칠할 글자가 있어야 한다(빈 범위 안 됨) */
 const HIGHLIGHT_SPAN = { allowEmpty: false };
 const isWhole = (target: HighlightTarget) => target.start === undefined && target.end === undefined;
@@ -192,9 +199,7 @@ class HighlightContext {
   }
 
   private cellBoxes(block: TableBlock): Array<SelectionRect & { cellIndex: number }> {
-    return parseJson(cellBoxesSchema, this.doc.getTableCellBboxes(block.section, block.paragraph, block.controlIndex)).map(
-      ({ cellIdx, pageIndex, x, y, w, h }) => ({ cellIndex: cellIdx, pageIndex, x, y, width: w, height: h }),
-    );
+    return tableCellBoxes(this.doc, block);
   }
 
   private tableRects(block: TableBlock, target: HighlightTarget): SelectionRect[] {

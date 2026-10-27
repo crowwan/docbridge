@@ -66,6 +66,57 @@ body {
   pointer-events: none;
 }
 
+.edit-hover {
+  position: absolute;
+  outline: var(--edit-hover-width) solid var(--edit-hover);
+  outline-offset: var(--edit-mark-offset);
+  pointer-events: none;
+}
+
+.inline-edit {
+  position: absolute;
+  z-index: 1;
+  box-sizing: border-box;
+  min-width: var(--inline-edit-min-width);
+  margin: 0;
+  padding: 0 var(--space-1);
+  border: var(--edit-hover-width) solid var(--edit-hover);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--page-shadow);
+  font-family: var(--font-sans);
+  font-size: var(--text-size);
+  line-height: var(--text-line-height);
+  overflow: hidden;
+  resize: none;
+}
+
+.inline-edit:focus {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: 0;
+}
+
+.toast {
+  position: fixed;
+  bottom: var(--space-4);
+  left: 50%;
+  z-index: 3;
+  max-width: min(var(--toast-max-width), calc(100% - 2 * var(--space-4)));
+  padding: var(--space-2) var(--space-4);
+  border-left: var(--toast-accent-width) solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: var(--toast-bg);
+  color: var(--toast-fg);
+  box-shadow: var(--page-shadow);
+  transform: translateX(-50%);
+  overflow-wrap: anywhere;
+}
+
+.toast[hidden] {
+  display: none;
+}
+
 .highlight-note {
   position: absolute;
   z-index: 1;
