@@ -9,7 +9,7 @@ import { insertParagraphNear, replaceParagraphText } from '../src/core/edits.ts'
 import { exportVerifiedHwpx } from '../src/core/hwpx-export.ts';
 import { parseJson } from '../src/core/json.ts';
 import { createBlankDocument } from '../src/core/rhwp-node.ts';
-import { applyParagraphStyle, assertStylable, ensureTitleStyle, paragraphStyles, styleIdByName, TITLE_STYLE } from '../src/core/styles.ts';
+import { applyParagraphStyle, assertStylable, ensureTitleStyle, findStyle, paragraphStyles, styleById, TITLE_STYLE } from '../src/core/styles.ts';
 import { openFixture } from './fixtures.ts';
 
 const S = 0;
@@ -32,7 +32,7 @@ function writeParagraphs(doc: HwpDocument, lines: [string, string][]): void {
   let last = doc.getParagraphCount(S) - 1;
   for (const [text, style] of lines) {
     last = insertParagraphNear(doc, S, last, 'after', text);
-    applyParagraphStyle(doc, S, last, styleIdByName(doc, style));
+    applyParagraphStyle(doc, S, last, findStyle(doc, style));
   }
 }
 
@@ -76,7 +76,7 @@ describe('SPEC-003 문단 스타일 목록 (paragraphStyles)', () => {
   it('"개요 1" 이라도 스타일 문단 모양에 개요가 없으면 개요 스타일로 보지 않고 번호도 붙지 않는다', () => {
     const doc = createBlankDocument();
     // 한컴 공문 양식에서 본 모양: 개요 스타일을 번호 없는 문단 모양으로 바꿔 쓴다(로컬 한컴 기안문)
-    doc.updateStyleShapes(styleIdByName(doc, '개요 1'), '{}', JSON.stringify({ headType: 'None' }));
+    doc.updateStyleShapes(findStyle(doc, '개요 1').id, '{}', JSON.stringify({ headType: 'None' }));
 
     expect(paragraphStyles(doc).find(({ name }) => name === '개요 1')).toEqual({ id: 2, name: '개요 1', englishName: 'Outline 1' });
     writeParagraphs(doc, [['배경', '개요 1']]);
@@ -96,7 +96,38 @@ describe('SPEC-003 문단 스타일 목록 (paragraphStyles)', () => {
     doc.createStyle(JSON.stringify({ name: '옛 글자', englishName: 'OldChar', type: 109, nextStyleId: 0 }));
 
     expect(paragraphStyles(doc).some(({ name }) => name === '옛 글자')).toBe(false);
-    expect(() => styleIdByName(doc, '옛 글자')).toThrow('없는 스타일입니다: 옛 글자');
+    expect(() => findStyle(doc, '옛 글자')).toThrow('없는 스타일입니다: 옛 글자');
+  });
+});
+
+describe('SPEC-003 스타일 이름으로 찾기 (findStyle)', () => {
+  it('AC-4 빈 이름(공백뿐 포함)은 영문 이름이 빈 스타일이 있어도 없는 스타일로 거부한다', () => {
+    const doc = createBlankDocument();
+    // 한컴 사용자 스타일은 영문 이름이 빈 경우가 많다
+    doc.createStyle(JSON.stringify({ name: '사용자 스타일', englishName: '', type: 0, nextStyleId: 0 }));
+
+    expect(() => findStyle(doc, '')).toThrow('없는 스타일입니다: (빈 이름). list_styles 로 목록을 보세요.');
+    expect(() => findStyle(doc, '  ')).toThrow('없는 스타일입니다: (빈 이름). list_styles 로 목록을 보세요.');
+  });
+
+  it('AC-4 한글 이름이 맞는 스타일을 먼저 고르고, 없을 때만 영문 이름으로 찾는다', () => {
+    const doc = createBlankDocument();
+    // 영문 이름이 다른 스타일의 한글 이름("본문")과 같은 스타일. 이 스타일이 먼저 나와도 "본문" 은 본문 스타일이다
+    const summary = doc.createStyle(JSON.stringify({ name: '요약', englishName: '본문', type: 0, nextStyleId: 0 }));
+
+    expect(findStyle(doc, '본문')).toMatchObject({ id: 1, name: '본문' });
+    expect(findStyle(doc, '요약').id).toBe(summary);
+    // 거꾸로: 뒤에 만든 스타일의 한글 이름이 앞 스타일(본문)의 영문 이름 "Body" 와 같으면 한글 이름이 맞는 쪽
+    const body = doc.createStyle(JSON.stringify({ name: 'Body', englishName: 'Plain', type: 0, nextStyleId: 0 }));
+    expect(findStyle(doc, 'Body').id).toBe(body);
+  });
+
+  it('AC-4 한글 이름은 맞는 것이 없고 영문 이름이 여럿에 맞으면 모호하다고 거부한다', () => {
+    const doc = createBlankDocument();
+    doc.createStyle(JSON.stringify({ name: '요약 1', englishName: 'Summary', type: 0, nextStyleId: 0 }));
+    doc.createStyle(JSON.stringify({ name: '요약 2', englishName: 'Summary', type: 0, nextStyleId: 0 }));
+
+    expect(() => findStyle(doc, 'Summary')).toThrow('영문 이름이 Summary 인 스타일이 여럿입니다(요약 1, 요약 2). 한글 이름으로 고르세요.');
   });
 });
 
@@ -108,16 +139,16 @@ describe('SPEC-003 제목 스타일', () => {
     const id = ensureTitleStyle(doc);
     expect(ensureTitleStyle(doc)).toBe(id);
     expect(paragraphStyles(doc)).toHaveLength(before + 1);
-    expect(styleIdByName(doc, '제목')).toBe(id);
-    expect(styleIdByName(doc, 'Title')).toBe(id);
+    expect(findStyle(doc, '제목').id).toBe(id);
+    expect(findStyle(doc, 'Title').id).toBe(id);
 
     replaceParagraphText(doc, S, 0, '제안서');
-    applyParagraphStyle(doc, S, 0, id);
+    applyParagraphStyle(doc, S, 0, styleById(doc, id));
     expect(charProps(doc, 0, 0)).toMatchObject({ fontSize: TITLE_STYLE.fontSize, bold: true });
     expect(paraProps(doc, 0)).toMatchObject({ alignment: 'center', headType: 'None' });
     // 다른 스타일의 모양은 바뀌지 않는다
     insertParagraphNear(doc, S, 0, 'after', '본문');
-    applyParagraphStyle(doc, S, 1, styleIdByName(doc, '본문'));
+    applyParagraphStyle(doc, S, 1, findStyle(doc, '본문'));
     expect(charProps(doc, 1, 0)).toMatchObject({ fontSize: 1000, bold: false });
 
     const reopened = expectSaveVerified(doc);
@@ -137,7 +168,7 @@ describe('SPEC-003 제목 스타일', () => {
     doc.updateStyleShapes = update;
     const id = ensureTitleStyle(doc);
     replaceParagraphText(doc, S, 0, '제안서');
-    applyParagraphStyle(doc, S, 0, id);
+    applyParagraphStyle(doc, S, 0, styleById(doc, id));
     expect(charProps(doc, 0, 0)).toMatchObject({ fontSize: TITLE_STYLE.fontSize, bold: true });
   });
 
@@ -165,7 +196,7 @@ describe('SPEC-003 스타일 적용 (applyParagraphStyle)', () => {
     const doc = threeParagraphs();
     doc.applyParaFormat(S, 1, JSON.stringify({ alignment: 'center' }));
 
-    doc.applyStyle(S, 1, styleIdByName(doc, '개요 1'));
+    doc.applyStyle(S, 1, findStyle(doc, '개요 1').id);
 
     expect(styleAt(doc, 1)).toBe('개요 1');
     expect(paraProps(doc, 1)).toMatchObject({ headType: 'None', alignment: 'center' });
@@ -175,7 +206,7 @@ describe('SPEC-003 스타일 적용 (applyParagraphStyle)', () => {
     const doc = threeParagraphs();
     doc.applyParaFormat(S, 1, JSON.stringify({ alignment: 'center' }));
 
-    applyParagraphStyle(doc, S, 1, styleIdByName(doc, '개요 1'));
+    applyParagraphStyle(doc, S, 1, findStyle(doc, '개요 1'));
 
     expect(paraProps(doc, 1)).toMatchObject({ headType: 'Outline', alignment: 'justify' });
     expect(paragraphLines(extractBlocks(doc))).toEqual(['맨 앞', '1. 가나다라마바', '뒤 문단']);
@@ -185,7 +216,7 @@ describe('SPEC-003 스타일 적용 (applyParagraphStyle)', () => {
     const doc = threeParagraphs();
     doc.applyCharFormat(S, 1, 2, 4, JSON.stringify({ bold: true }));
 
-    applyParagraphStyle(doc, S, 1, styleIdByName(doc, '차례 제목'));
+    applyParagraphStyle(doc, S, 1, findStyle(doc, '차례 제목'));
 
     // 차례 제목 = 16pt. 굵게 건 "다라" 는 직접 서식이라 굵기·크기(10pt)가 그대로 남는다(rhwp 동작)
     expect([0, 2, 3, 4].map((offset) => charProps(doc, 1, offset))).toMatchObject([
@@ -198,18 +229,18 @@ describe('SPEC-003 스타일 적용 (applyParagraphStyle)', () => {
 
   it('개요 문단을 본문으로 바꾸면 번호가 사라지고, 개요 2 를 개요 1 로 바꾸면 수준이 바뀐다', () => {
     const doc = threeParagraphs();
-    applyParagraphStyle(doc, S, 1, styleIdByName(doc, '개요 2'));
+    applyParagraphStyle(doc, S, 1, findStyle(doc, '개요 2'));
     expect(paragraphLines(extractBlocks(doc))[1]).toBe('가. 가나다라마바');
 
-    applyParagraphStyle(doc, S, 1, styleIdByName(doc, '개요 1'));
+    applyParagraphStyle(doc, S, 1, findStyle(doc, '개요 1'));
     expect(paragraphLines(extractBlocks(doc))[1]).toBe('1. 가나다라마바');
 
-    applyParagraphStyle(doc, S, 1, styleIdByName(doc, '본문'));
+    applyParagraphStyle(doc, S, 1, findStyle(doc, '본문'));
     expect(paragraphLines(extractBlocks(doc))[1]).toBe('가나다라마바');
   });
 
   it('AC-4 없는 스타일 이름은 거부한다', () => {
-    expect(() => styleIdByName(createBlankDocument(), '큰제목')).toThrow('없는 스타일입니다: 큰제목. list_styles 로 목록을 보세요.');
+    expect(() => findStyle(createBlankDocument(), '큰제목')).toThrow('없는 스타일입니다: 큰제목. list_styles 로 목록을 보세요.');
   });
 
   it('개요 스타일 문단은 개요 번호를 받고 본문 스타일 문단은 받지 않는다', () => {

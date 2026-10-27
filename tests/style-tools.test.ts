@@ -10,7 +10,7 @@ import { z } from 'zod';
 import { exportVerifiedHwpx } from '../src/core/hwpx-export.ts';
 import { parseJson } from '../src/core/json.ts';
 import { createBlankDocument } from '../src/core/rhwp-node.ts';
-import { styleIdByName } from '../src/core/styles.ts';
+import { findStyle } from '../src/core/styles.ts';
 import { startBridge, type Bridge } from '../src/server/bridge.ts';
 import { createMcpServer } from '../src/server/mcp.ts';
 import { DocumentSession } from '../src/server/session.ts';
@@ -103,7 +103,7 @@ describe('SPEC-003 스타일 도구 (list_styles · insert_paragraph style · se
 
   it('AC-3 개요 번호 여부는 이름이 아니라 스타일 문단 모양으로 본다 — 번호 없는 모양으로 바꾼 "개요 1" 은 outline 이 아니다', async () => {
     const blank = createBlankDocument();
-    blank.updateStyleShapes(styleIdByName(blank, '개요 1'), '{}', JSON.stringify({ headType: 'None' }));
+    blank.updateStyleShapes(findStyle(blank, '개요 1').id, '{}', JSON.stringify({ headType: 'None' }));
     const path = join(await mkdtemp(join(tmpdir(), 'docbridge-styles-')), '양식.hwpx');
     await writeFile(path, exportVerifiedHwpx(blank).bytes);
     await json('open_document', { path });
@@ -120,7 +120,15 @@ describe('SPEC-003 스타일 도구 (list_styles · insert_paragraph style · se
 
     const result = await json('insert_paragraph', { after: 'b1', text: '요약', style: '개요 1' });
 
-    expect(result).toMatchObject({ inserted: 'b40', changed: expect.arrayContaining([{ id: 'b40', text: '요약' }]) });
+    // 결과의 changed 는 새 문단과 번호가 다시 매겨진 문단(넣은 뒤 번호)
+    expect(result).toMatchObject({
+      inserted: 'b40',
+      changed: expect.arrayContaining([
+        { id: 'b40', number: '1.', text: '요약' },
+        { id: 'b2', number: '2.', text: '개요' },
+        { id: 'b7', number: '3.', text: '이용 현황' },
+      ]),
+    });
     expect(styleName('b40')).toBe('개요 1');
     expect(paraProps('b40')).toMatchObject({ alignment: 'justify', headType: 'Outline' });
     expect(charProps('b40')).toMatchObject({ fontSize: 1000, bold: false });
@@ -131,6 +139,19 @@ describe('SPEC-003 스타일 도구 (list_styles · insert_paragraph style · se
       '2. 개요',
       '3. 이용 현황',
     ]);
+  });
+
+  it('AC-4 style 로 넣은 새 문단은 기준 문단 글자 모양을 맞추지 않는다(쓰지 않는 글자 모양 id 를 만들지 않는다)', async () => {
+    // b2 "개요"(10pt 굵게) 앞: rhwp 는 앞 문단 b1(18pt 굵게) 끝 글자 모양을 물려줘, 기준 모양을 맞추려면 글자 서식을 새로 건다
+    const applyCharFormat = vi.spyOn(doc(), 'applyCharFormat');
+
+    await json('insert_paragraph', { before: 'b2', text: '요약', style: '본문' });
+
+    expect(applyCharFormat).not.toHaveBeenCalled();
+    expect(charProps('b40')).toMatchObject({ fontSize: 1000, bold: false });
+    // 스타일이 없으면 지금처럼 기준 문단(b2 첫 글자) 모양을 맞춘다
+    await json('insert_paragraph', { before: 'b2', text: '기준 모양' });
+    expect(applyCharFormat).toHaveBeenCalled();
   });
 
   it('AC-4 style 은 영문 이름도 받고, 넣기와 스타일 적용은 한 편집이라 undo 한 번에 넣기 전으로 돌아간다', async () => {

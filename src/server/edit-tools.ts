@@ -55,9 +55,22 @@ function editResult(changed: EditedBlock[], unmarked: string[], cell?: TextTarge
   };
 }
 
-export interface InsertParagraphResult extends EditResult {
+/** 바뀐 블록 결과 항목에 자동 번호를 붙인 것(insert_paragraph·move_blocks·set_style). 번호는 바뀐 뒤 번호 */
+export type NumberedItem = ChangedItem & { number?: string };
+
+/** 바뀐 블록 → 번호를 붙인 결과 항목(get_outline 항목과 같은 number·text). id 가 없으면 빈 배열 */
+export function numberedItem({ id, block }: EditedBlock): NumberedItem[] {
+  if (id === undefined) return [];
+  const { number, text } = outlineItem({ id, block });
+  return [{ id, ...(number === undefined ? {} : { number }), text }];
+}
+
+export interface InsertParagraphResult {
   /** 새 문단 블록 id */
   inserted: string;
+  /** 새 문단과 번호가 다시 매겨진 문단(number 는 넣은 뒤 자동 번호) */
+  changed: NumberedItem[];
+  warnings?: string[];
 }
 
 export const WHERE_REQUIRED = 'before 와 after 중 하나만 주세요.';
@@ -84,7 +97,11 @@ export async function insertParagraph(
   });
   const [id] = inserted;
   if (id === undefined) throw new Error(`${referenceId}: 뷰어가 넣은 문단을 알려 주지 않아 새 id 를 붙이지 못했습니다.`);
-  return { inserted: id, ...editResult(changed, unmarked) };
+  return {
+    inserted: id,
+    changed: changed.flatMap(numberedItem),
+    ...(unmarked.length === 0 ? {} : { warnings: unmarked.map(unmarkedMessage) }),
+  };
 }
 
 export interface DeleteBlocksResult {
@@ -106,21 +123,12 @@ export async function deleteBlocks(session: DocumentSession, ids: string[]): Pro
   return { deleted };
 }
 
-/** 옮긴(스타일을 바꾼) 뒤 블록: 자동 번호 문단이면 그 뒤 번호 */
-export type MovedItem = ChangedItem & { number?: string };
-
-/** 바뀐 블록 → 자동 번호를 붙인 결과 항목(move_blocks·set_style). id 가 없으면 빈 배열 */
-export function numberedItem({ id, block }: EditedBlock): MovedItem[] {
-  if (id === undefined) return [];
-  const number = block.kind === 'paragraph' ? block.number : undefined;
-  return [{ id, ...(number === undefined ? {} : { number }), text: outlineItem({ id, block }).text }];
-}
 
 export interface MoveBlocksResult {
   /** 옮긴 블록 id(문서 순서). 고른 블록과 같은 문단에 걸린 블록도 담는다 */
   moved: string[];
   /** 옮긴 블록과 자동 번호가 바뀐 문단의 블록(문서 순서) */
-  changed: MovedItem[];
+  changed: NumberedItem[];
   /** 직접 입력한 번호가 있는 문단, 뷰어에 표시하지 못한 블록 */
   warnings?: string[];
 }

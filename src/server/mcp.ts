@@ -119,7 +119,7 @@ export function createMcpServer(session: DocumentSession): McpServer {
     'insert_paragraph',
     {
       description:
-        '기준 블록 앞(before) 또는 뒤(after)에 새 문단을 넣는다(바로 적용, undo 로 되돌림). before·after 중 하나만 준다. 기준이 표·누름틀이면 그것이 든 문단 앞뒤다. 문단 모양은 기준 문단, 글자 모양은 앞에 넣으면 기준 문단 첫 글자·뒤에 넣으면 마지막 글자를 따르고, 기준이 번호 문단이면 새 문단도 번호를 받아 번호가 다시 매겨진다. 구역 첫 문단 앞에는 넣지 못한다. text 는 줄바꿈 없이(문단 여럿은 문단마다 부른다), 비면 빈 문단. style(문단 스타일 이름, list_styles 의 name 이나 englishName)을 주면 새 문단은 그 스타일 모양 그대로다(문단·글자 모양 모두 스타일 것, 기준 문단 서식을 따르지 않는다. 개요 스타일이면 개요 번호를 받는다). 없는 스타일이면 넣지 않고 오류. 기존 블록 id 는 그대로다. 결과 { inserted(새 블록 id), changed: [{ id, text }], warnings? }',
+        '기준 블록 앞(before) 또는 뒤(after)에 새 문단을 넣는다(바로 적용, undo 로 되돌림). before·after 중 하나만 준다. 기준이 표·누름틀이면 그것이 든 문단 앞뒤다. 문단 모양은 기준 문단, 글자 모양은 앞에 넣으면 기준 문단 첫 글자·뒤에 넣으면 마지막 글자를 따르고, 기준이 번호 문단이면 새 문단도 번호를 받아 번호가 다시 매겨진다. 구역 첫 문단 앞에는 넣지 못한다. text 는 줄바꿈 없이(문단 여럿은 문단마다 부른다), 비면 빈 문단. style(문단 스타일 이름, list_styles 의 name 이나 englishName)을 주면 새 문단은 그 스타일 모양 그대로다(문단·글자 모양 모두 스타일 것, 기준 문단 서식을 따르지 않는다. 개요 스타일이면 개요 번호를 받는다). 없는 스타일이면 넣지 않고 오류. 기존 블록 id 는 그대로다. 결과 { inserted(새 블록 id), changed: [{ id, number?, text }], warnings? } — changed 는 새 문단과 번호가 다시 매겨진 문단, number 는 넣은 뒤 자동 번호',
       inputSchema: {
         before: z.string().optional().describe('이 블록 앞에 넣는다'),
         after: z.string().optional().describe('이 블록 뒤에 넣는다'),

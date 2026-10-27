@@ -2,7 +2,7 @@
 // 스타일 이름 → id 와 적용은 문서를 가진 뷰어가 한다(core/styles.ts). insert_paragraph 의 style 은 edit-tools.ts.
 import type { ParagraphStyle } from '../core/styles.ts';
 import { assertStylable } from '../core/styles.ts';
-import { numberedItem, unmarkedMessage, type MovedItem } from './edit-tools.ts';
+import { numberedItem, unmarkedMessage, type NumberedItem } from './edit-tools.ts';
 import { anchored } from './highlight-tools.ts';
 import type { DocumentSession } from './session.ts';
 
@@ -27,7 +27,7 @@ export async function listStyles(session: DocumentSession): Promise<{ styles: St
 
 export interface SetStyleResult {
   /** 고른 문단과 개요 번호가 바뀐 문단(문서 순서). number 는 바꾼 뒤 자동 번호 */
-  changed: MovedItem[];
+  changed: NumberedItem[];
   /** 뷰어에 표시하지 못한 블록 */
   warnings?: string[];
 }
@@ -36,7 +36,7 @@ export interface SetStyleResult {
 export async function setStyle(session: DocumentSession, ids: string[], style: string): Promise<SetStyleResult> {
   const unique = [...new Set(ids)];
   const { changed, unmarked } = await session.edit((document) => {
-    const targets = anchored(document.ids, unique.map((id) => ({ id }))).map(({ id, anchor }) => ({ id, anchor }));
+    const targets = anchored(document.ids, unique.map((id) => ({ id })));
     assertStylable(targets);
     return { label: `set_style ${unique.join(', ')} → ${style}`, operation: { kind: 'set_style', targets, style } };
   });

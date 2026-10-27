@@ -5,7 +5,7 @@
 // - createBlankDocument 의 스타일에는 "제목"이 없다 → "제목" 스타일이 없는 문서에 docbridge 제목 스타일을 하나 더한다
 import type { HwpDocument } from '@rhwp/core';
 import { z } from 'zod';
-import type { BlockAnchor } from './block-ids.ts';
+import type { AnchoredBlock } from './edit-operations.ts';
 import { paraShapeIdOf } from './edits.ts';
 import { parseJson } from './json.ts';
 
@@ -22,7 +22,8 @@ const styleListSchema = z.array(
     charShapeId: z.number(),
   }),
 );
-type StyleEntry = z.infer<typeof styleListSchema>[number];
+/** 스타일 정의 하나(getStyleList). 적용할 때 문단·글자 모양 id 를 같이 넘겨 목록을 다시 읽지 않는다 */
+export type StyleEntry = z.infer<typeof styleListSchema>[number];
 const styleDetailSchema = z.object({
   paraProps: z.looseObject({ paraShapeId: z.number(), headType: z.string(), paraLevel: z.number() }),
 });
@@ -47,8 +48,12 @@ const isParagraphStyle = ({ type }: StyleEntry) => (type & CHARACTER_STYLE_BIT) 
 /** 문단 스타일 목록(글자 스타일 빼고). getStyleList 한 번만 읽는다 */
 const paragraphStyleEntries = (doc: HwpDocument): StyleEntry[] => parseJson(styleListSchema, doc.getStyleList()).filter(isParagraphStyle);
 
-const styleEntry = (doc: HwpDocument, styleId: number): StyleEntry | undefined =>
-  parseJson(styleListSchema, doc.getStyleList()).find(({ id }) => id === styleId);
+/** 스타일 id → 정의. 없으면 던진다(바탕글 NORMAL_STYLE·ensureTitleStyle 의 id 처럼 id 를 아는 쪽) */
+export function styleById(doc: HwpDocument, styleId: number): StyleEntry {
+  const found = parseJson(styleListSchema, doc.getStyleList()).find(({ id }) => id === styleId);
+  if (found === undefined) throw new Error(`스타일 ${styleId} 이 문서에 없습니다.`);
+  return found;
+}
 
 /**
  * 문서의 문단 스타일(글자 스타일 빼고, 문서의 스타일 순서). 개요 번호 여부는 스타일 이름이 아니라 스타일 문단 모양의 headType 으로 본다
@@ -64,24 +69,36 @@ export function paragraphStyles(doc: HwpDocument): ParagraphStyle[] {
   });
 }
 
-export const unknownStyleMessage = (name: string) => `없는 스타일입니다: ${name}. list_styles 로 목록을 보세요.`;
+export const unknownStyleMessage = (name: string) =>
+  `없는 스타일입니다: ${name.trim() === '' ? '(빈 이름)' : name}. list_styles 로 목록을 보세요.`;
+export const ambiguousStyleMessage = (name: string, names: string[]) =>
+  `영문 이름이 ${name} 인 스타일이 여럿입니다(${names.join(', ')}). 한글 이름으로 고르세요.`;
 
-/** 스타일 이름(한글 이름 또는 영문 이름) → id. 없으면 던진다 */
-export function styleIdByName(doc: HwpDocument, name: string): number {
-  const found = paragraphStyleEntries(doc).find((style) => style.name === name || style.englishName === name);
-  if (found === undefined) throw new Error(unknownStyleMessage(name));
-  return found.id;
+/**
+ * 스타일 이름 → 문단 스타일 정의. 한글 이름이 같은 스타일을 먼저 보고, 없을 때만 영문 이름으로 찾는다
+ * (한 스타일의 영문 이름이 다른 스타일의 한글 이름과 같을 수 있다). 빈 이름·없는 이름은 던지고,
+ * 영문 이름이 여럿에 맞으면 모호하다고 던진다(한컴 사용자 스타일은 영문 이름이 비었거나 겹치기도 한다)
+ */
+export function findStyle(doc: HwpDocument, name: string): StyleEntry {
+  if (name.trim() === '') throw new Error(unknownStyleMessage(name));
+  const styles = paragraphStyleEntries(doc);
+  const byName = styles.find((style) => style.name === name);
+  if (byName !== undefined) return byName;
+  const byEnglish = styles.filter((style) => style.englishName === name);
+  const [only, ...others] = byEnglish;
+  if (only === undefined) throw new Error(unknownStyleMessage(name));
+  if (others.length > 0) throw new Error(ambiguousStyleMessage(name, byEnglish.map((style) => style.name)));
+  return only;
 }
 
 /**
  * 본문 문단에 문단 스타일을 건다(set_style). 문단 모양은 스타일 것으로 맞추고(직접 문단 모양은 버린다),
  * 글자 모양은 rhwp 대로 스타일 글자 모양이던 글자만 새 스타일 글자 모양이 되고 직접 서식(굵게 등)은 남는다
  */
-export function applyParagraphStyle(doc: HwpDocument, section: number, paragraph: number, styleId: number): void {
-  doc.applyStyle(section, paragraph, styleId);
-  const shape = styleEntry(doc, styleId)?.paraShapeId;
+export function applyParagraphStyle(doc: HwpDocument, section: number, paragraph: number, style: StyleEntry): void {
+  doc.applyStyle(section, paragraph, style.id);
   // rhwp applyStyle 은 문단 모양이 옛 스타일 것과 다르면(직접 문단 모양) 그대로 둔다 → 개요 스타일이어도 번호가 안 붙는다
-  if (shape !== undefined && paraShapeIdOf(doc, section, paragraph) !== shape) doc.setParaShapeId(section, paragraph, shape);
+  if (paraShapeIdOf(doc, section, paragraph) !== style.paraShapeId) doc.setParaShapeId(section, paragraph, style.paraShapeId);
 }
 
 /**
@@ -89,19 +106,13 @@ export function applyParagraphStyle(doc: HwpDocument, section: number, paragraph
  * style 로 넣은 새 문단, 비운 양식 첫 문단·표를 담을 새 문단처럼 버릴 글자 서식만 있는 문단에 쓴다
  * (applyStyle 은 스타일 밖 글자 모양을 직접 서식으로 보고 남긴다. 빈 문단도 setCharShapeId(0, 0) 이 그 뒤에 넣는 글자 모양이 된다)
  */
-export function resetToStyle(doc: HwpDocument, section: number, paragraph: number, styleId: number): void {
-  applyParagraphStyle(doc, section, paragraph, styleId);
-  const charShape = styleEntry(doc, styleId)?.charShapeId;
-  if (charShape !== undefined) doc.setCharShapeId(section, paragraph, 0, doc.getParagraphLength(section, paragraph), charShape);
+export function resetToStyle(doc: HwpDocument, section: number, paragraph: number, style: StyleEntry): void {
+  applyParagraphStyle(doc, section, paragraph, style);
+  doc.setCharShapeId(section, paragraph, 0, doc.getParagraphLength(section, paragraph), style.charShapeId);
 }
 
-export interface StyleTarget {
-  id: string;
-  anchor: BlockAnchor;
-}
-
-/** set_style 대상은 문단 블록만(SPEC-003). 표·누름틀 블록이면 던진다. 서버가 뷰어에 보내기 전에, 뷰어가 적용하기 전에 부른다 */
-export function assertStylable(targets: StyleTarget[]): void {
+/** set_style 대상은 문단 블록만(SPEC-003). 표·누름틀 블록이면 던진다. 서버가 뷰어에 보내기 전에 부른다(뷰어는 블록 종류를 본다) */
+export function assertStylable(targets: AnchoredBlock[]): void {
   const others = targets.filter(({ anchor }) => anchor.part !== 'text').map(({ id }) => id);
   if (others.length > 0) {
     throw new Error(

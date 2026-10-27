@@ -9,7 +9,7 @@ import { insertParagraphNear, replaceParagraphText } from '../src/core/edits.ts'
 import { exportVerifiedHwpx } from '../src/core/hwpx-export.ts';
 import { parseJson } from '../src/core/json.ts';
 import { createBlankDocument } from '../src/core/rhwp-node.ts';
-import { applyParagraphStyle, ensureTitleStyle, paragraphStyles, styleIdByName, TITLE_STYLE } from '../src/core/styles.ts';
+import { applyParagraphStyle, ensureTitleStyle, findStyle, paragraphStyles, styleById, TITLE_STYLE } from '../src/core/styles.ts';
 import { openFixture } from './fixtures.ts';
 
 const S = 0;
@@ -43,7 +43,7 @@ function writeParagraphs(doc: HwpDocument, lines: [string, string][]): number {
   let last = doc.getParagraphCount(S) - 1;
   for (const [text, style] of lines) {
     last = insertParagraphNear(doc, S, last, 'after', text);
-    applyParagraphStyle(doc, S, last, styleIdByName(doc, style));
+    applyParagraphStyle(doc, S, last, findStyle(doc, style));
   }
   return last;
 }
@@ -88,7 +88,7 @@ describe('SPEC-003 빈 문서 템플릿 (기술 검증)', () => {
     const doc = createBlankDocument();
     const title = ensureTitleStyle(doc);
     replaceParagraphText(doc, S, 0, '제안서');
-    applyParagraphStyle(doc, S, 0, title);
+    applyParagraphStyle(doc, S, 0, styleById(doc, title));
     const last = writeParagraphs(doc, [['배경', '개요 1'], ['본문 글', '본문']]);
     insertTableParagraph(doc, S, last, 'after', { rows: 2, cols: 2, cells: [['항목', '내용'], ['기간', '3개월']], header: true });
 
@@ -283,7 +283,7 @@ describe('SPEC-003 양식 본문 비우기 (기술 검증)', () => {
     replaceParagraphText(doc, S, 0, '새 제목');
     expect(charProps(doc, 0, 0)).toMatchObject(NORMAL_LOOK);
 
-    applyParagraphStyle(doc, S, 0, ensureTitleStyle(doc));
+    applyParagraphStyle(doc, S, 0, styleById(doc, ensureTitleStyle(doc)));
     expect(charProps(doc, 0, 0)).toMatchObject({ fontSize: TITLE_STYLE.fontSize, bold: true, textColor: '#000000' });
   });
 
@@ -306,7 +306,7 @@ describe('SPEC-003 양식 본문 비우기 (기술 검증)', () => {
     clearTemplateBody(doc);
     const title = ensureTitleStyle(doc);
     replaceParagraphText(doc, S, 0, '하반기 사업 계획');
-    applyParagraphStyle(doc, S, 0, title);
+    applyParagraphStyle(doc, S, 0, styleById(doc, title));
     const last = writeParagraphs(doc, [['추진 배경', '개요 1'], ['세부 내용', '개요 2'], ['본문입니다.', '본문']]);
     insertTableParagraph(doc, S, last, 'after', { rows: 3, cols: 2, cells: [['구분', '내용'], ['기간', '7~12월'], ['예산', '1억']], header: true });
 

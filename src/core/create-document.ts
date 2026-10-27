@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { bodyControlsAt, type BodyControl } from './body-paragraphs.ts';
 import { charLength } from './chars.ts';
 import { parseJson } from './json.ts';
-import { NORMAL_STYLE, resetToStyle } from './styles.ts';
+import { NORMAL_STYLE, resetToStyle, styleById } from './styles.ts';
 
 const S_FIRST = 0;
 
@@ -71,7 +71,7 @@ function insertTable(doc: HwpDocument, section: number, at: number, spec: TableS
   doc.insertParagraph(section, at);
   // 새 문단은 앞 문단의 문단 모양(개요 등)·끝 글자 모양(굵게 등)을 물려받고, 표 문단·칸·표 아래 빈 문단이
   // 그것을 다시 물려받는다 → 바탕글 모양 그대로로
-  resetToStyle(doc, section, at, NORMAL_STYLE);
+  resetToStyle(doc, section, at, styleById(doc, NORMAL_STYLE));
   const countBefore = doc.getParagraphCount(section);
   // 빈 문단에 넣으면 rhwp 는 그 문단을 표 문단으로 바꾸고 표 아래에 빈 문단 하나를 더한다(0.8.7)
   const created = parseJson(createdTableSchema, doc.createTable(section, at, 0, spec.rows, spec.cols));
@@ -177,7 +177,7 @@ export function clearTemplateBody(doc: HwpDocument): ClearedBody {
       const length = doc.getParagraphLength(section, paragraph);
       if (length > 0) doc.deleteText(section, paragraph, 0, length);
       // 양식 첫 문단의 글자 모양(표지 큰 글씨 등)이 남으면 그 뒤에 쓰는 제목·문단이 그 모양을 따른다
-      resetToStyle(doc, section, paragraph, NORMAL_STYLE);
+      resetToStyle(doc, section, paragraph, styleById(doc, NORMAL_STYLE));
       result.keptParagraphs.push({ section, paragraph });
     }
   }

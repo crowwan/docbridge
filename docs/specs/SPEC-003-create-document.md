@@ -39,7 +39,7 @@ SPEC-001·002 로 받은 문서를 열고 묻고 고치고 저장할 수 있다.
 | `set_style` | `ids`(문단 블록), `style` | 문단 스타일을 바꾼다(아래 "스타일 적용"). 여러 id 도 한 편집(undo 한 번). 결과: `{ changed: [{ id, number?, text }] }` — 고른 문단과 개요 번호가 바뀐 문단(뒤 개요 번호가 다시 매겨진 문단 포함), `number` 는 바꾼 뒤 자동 번호. 뷰어에 바뀐 블록 표시가 남는다 |
 | `insert_table` | `before` 또는 `after`(블록 id), `rows`, `cols`, `cells`(선택, 행×열 글자 배열), `header`(선택, 첫 행을 머리글로) | 기준 블록 앞/뒤에 새 문단(바탕글 문단·글자 모양 — 앞 문단의 직접 서식을 물려받지 않는다) 하나를 만들고 표를 넣는다. 열 너비는 쪽 본문 너비를 열 수로 똑같이 나눈다. 결과: 새 표 블록 id, 칸 수 |
 
-스타일 이름은 한글 이름과 영문 이름(예: "개요 1" / "Outline 1") 둘 다 받는다.
+스타일 이름은 한글 이름과 영문 이름(예: "개요 1" / "Outline 1") 둘 다 받는다. 한글 이름이 같은 스타일을 먼저 보고, 없을 때만 영문 이름으로 찾는다(한 스타일의 영문 이름이 다른 스타일의 한글 이름과 같을 수 있다). `insert_paragraph` 결과의 `changed` 도 `{ id, number?, text }` 다(새 문단과 번호가 다시 매겨진 문단).
 
 `create_document` 는 저장하지 않은 편집이 있는 문서를 대신한다(SPEC-002 "새 문서를 열면" 규칙 — 버린 편집 수 알림).
 
@@ -69,7 +69,8 @@ SPEC-001·002 로 받은 문서를 열고 묻고 고치고 저장할 수 있다.
 
 ### 예외와 경계 상황
 
-- **없는 스타일**: "없는 스타일입니다: <이름>. list_styles 로 목록을 보세요."
+- **없는 스타일**: "없는 스타일입니다: <이름>. list_styles 로 목록을 보세요." 빈 이름(공백뿐 포함)도 없는 스타일이다("없는 스타일입니다: (빈 이름). …" — 한컴 사용자 스타일은 영문 이름이 빈 경우가 많아 빈 이름이 엉뚱한 스타일에 걸리지 않게).
+- **영문 이름이 여럿에 맞음**(한글 이름은 맞는 것이 없을 때): "영문 이름이 <이름> 인 스타일이 여럿입니다(<한글 이름들>). 한글 이름으로 고르세요."
 - **양식 파일을 못 읽음**: SPEC-001 열기 오류 문구 그대로(형식·없음·크기·rhwp 이유).
 - **양식 본문 비우기**: 구역 첫 문단(구역·단 정의)과 머리말·꼬리말·쪽 번호 위치가 든 문단은 남기고, 그 문단의 글자와 다른 개체를 지운 뒤 바탕글 문단 모양·글자 모양으로 맞춘다(양식 첫 문단의 큰 글씨 등은 남지 않는다). 그 밖의 문단은 통째로 지운다. 본문 안 표·그림·도형·글상자·수식·각주·누름틀은 지우고, 결과에 지운 개체와 남긴 개체(머리말·꼬리말 등)를 이름별 수로 알린다.
 - **구역이 여럿인 양식**: 구역마다 남긴 빈 문단이 남는다(구역이 새 쪽에서 시작하면 빈 쪽). 첫 블록은 첫 구역 첫 문단이다.
@@ -118,7 +119,7 @@ GO 기준: 빈 문서와 양식 문서 각각으로 제목·개요·본문·표�
 - rhwp 0.8.7 API: `createBlankDocument()`(번들 `blank2010.hwp`, 한글 호환), `HwpDocument.createEmpty()`(구역·단 정의 없음 — 한글 호환이 필요하면 쓰지 않는다고 rhwp 주석이 밝힘), `getStyleList`, `applyStyle(sec, para, styleId)`, `createTable`/`createTableEx({sectionIdx, paraIdx, charOffset, rowCount, colCount, treatAsChar?, colWidths?})`, `insertTableRow`/`insertTableColumn`(범위 밖이지만 있음).
 - 새 도구는 SPEC-002 편집 공용 경로(스냅샷·depth 대조·바뀐 블록 표시·`ParagraphChanges`)에 편집 종류로 더한다. `insert_table` 은 "문단 넣기 + 표 넣기" 한 편집.
 - 새 문서의 "원본"은 없다. 세션의 `sourcePath` 가 비어 있을 때 저장 규칙(원본 덮어쓰기 판정)을 건너뛰고 `path` 를 기본 경로로 쓴다.
-- 스타일(#37): `src/core/styles.ts` — `paragraphStyles`·`styleIdByName`(한글·영문 이름)·`applyParagraphStyle`(applyStyle + 스타일 문단 모양)·`resetToStyle`(글자 모양까지 스타일 것)·`ensureTitleStyle`. 도구는 `src/server/style-tools.ts`(`list_styles`·`set_style`), 편집 종류 `set_style`·`insert_paragraph.style`(`src/core/edit-operations.ts`).
+- 스타일(#37): `src/core/styles.ts` — `paragraphStyles`·`findStyle`(한글 이름 먼저, 없으면 영문 이름. 빈 이름·모호 거부 → 스타일 정의)·`styleById`·`applyParagraphStyle`(applyStyle + 스타일 문단 모양)·`resetToStyle`(글자 모양까지 스타일 것)·`ensureTitleStyle`. 도구는 `src/server/style-tools.ts`(`list_styles`·`set_style`), 편집 종류 `set_style`·`insert_paragraph.style`(`src/core/edit-operations.ts`).
 - 기술 검증 프로토타입: `src/core/create-document.ts` — `insertTableParagraph`(새 문단 → 바탕글 → createTable → 표 아래 빈 문단 지우기 → 칸 채우기 → 머리글)·`clearTemplateBody`(남길 문단 사이 deleteRange, 남긴 문단의 다른 컨트롤 deleteControlAt). 근거와 측정은 ADR 003.
 - rhwp `getStyleDetail` 은 스타일 문단 모양에 번호가 없으면 그 스타일을 쓰는 번호 문단의 모양을 준다. `list_styles` 의 개요 여부는 돌려준 모양이 스타일 것(`getStyleList` 의 문단 모양 id)일 때만 믿는다(#37, ADR 003).
 - 스타일 종류는 가장 낮은 비트만 본다(1 = 글자 스타일). 한컴 HWP 5 바이너리 일부는 문단 스타일 종류 값이 4·108 로 온다.
@@ -143,3 +144,4 @@ GO 기준: 빈 문서와 양식 문서 각각으로 제목·개요·본문·표�
 | 2026-10-27 | PR #40 리뷰 반영: 비운 양식 첫 문단·표 문단은 바탕글 글자 모양까지 맞춤, 제목 스타일은 영문 이름 Title 로도 찾음, 글자 스타일은 비트로 판단 |
 | 2026-10-27 | 기술 검증(#35) rhwp 기준 GO·한글 확인 대기 반영(ADR 003): "제목" 스타일은 docbridge 가 더함, 새 문서 첫 블록(구역 첫 빈 문단), 스타일 적용 = 문단 모양 덮기·직접 글자 서식 유지, 개요 여부는 스타일 모양으로, 영문 스타일 이름도 받음, `insert_table` 새 문단 하나·바탕글·열 너비 고정·머리글 표현, 양식 비우기 범위(머리말·꼬리말·쪽 번호 위치 남김)·여러 구역·남는 그림 데이터, `path` 필수·상대 경로 거부, AC-1·2·4·6 문구, 열린 질문 4개 닫음 |
 | 2026-10-27 | #37 스타일: `insert_paragraph` 의 `style` 로 넣은 새 문단은 글자 모양도 스타일 것(기준 문단 직접 글자 서식 안 물려받음), `list_styles`·`set_style` 결과 모양, 표·누름틀 거부 문구, AC-3·4·5 완료 |
+| 2026-10-27 | PR #45 리뷰: 스타일 이름은 한글 이름 먼저·없을 때 영문 이름, 빈 이름 거부, 영문 이름 모호 거부 문구, `insert_paragraph` 결과에 `number` |

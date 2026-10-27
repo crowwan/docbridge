@@ -140,7 +140,7 @@ SPEC-003(새 문서 만들기)의 기능 이슈(#36~#39)에 들어가기 전에,
 
 ## 결과
 
-- 쉬워지는 것: #36 은 `createBlankDocument`·`clearTemplateBody`·`ensureTitleStyle` 을 뷰어 요청(`create_document`)으로 감싸고 첫 문단을 빈 문단 블록으로 남긴다. #37 은 `paragraphStyles`·`styleIdByName`·`applyParagraphStyle` 을 편집 종류(`set_style`, `insert_paragraph` 의 `style`)로, #38 은 `insertTableParagraph` 를 편집 종류(`insert_table`, `ParagraphChanges.inserted` 하나)로 더한다.
+- 쉬워지는 것: #36 은 `createBlankDocument`·`clearTemplateBody`·`ensureTitleStyle` 을 뷰어 요청(`create_document`)으로 감싸고 첫 문단을 빈 문단 블록으로 남긴다. #37 은 `paragraphStyles`·`styleIdByName`(#37 에서 `findStyle` 로)·`applyParagraphStyle` 을 편집 종류(`set_style`, `insert_paragraph` 의 `style`)로, #38 은 `insertTableParagraph` 를 편집 종류(`insert_table`, `ParagraphChanges.inserted` 하나)로 더한다.
 - 어려워지는 것: rhwp 의 `applyStyle`·`createTable` 의미가 바뀌면 보정이 틀어진다. `(근거)` 테스트가 지금 동작을 고정한다.
 - 다시 볼 조건: 사용자 한글 확인 결과(위 NO-GO 절), rhwp 가 쓰이지 않는 BinData 정리·구역 지우기 API 를 내면 양식 비우기를 다시 본다. `colWidths` 가 필요해지면 `setCellProperties({width})` 를 확인한다.
 - 확인 못 한 것: 한글 프로그램에서 열기(사용자), 정식 한글(편집기)에서 제목 셀·제목 줄 반복이 쪽을 넘길 때 반복되는지(확인 파일의 표는 한 쪽), 브라우저 뷰어에서의 렌더링(Node 로만 확인 — 같은 WASM), 영문 판 한글에서의 스타일 이름("Outline 1" 등 — 영문 이름도 받게 해 두었다).
