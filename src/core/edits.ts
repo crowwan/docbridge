@@ -315,6 +315,11 @@ export function moveRejectReason(message: string): string {
   return REJECT_REASONS[reason.trim()] ?? reason.trim();
 }
 
+const KNOWN_REJECT_REASONS = new Set(Object.values(REJECT_REASONS));
+
+/** 우리 말로 옮겨 둔 거부 이유인지. 아니면(rhwp 원문·사본 실패 문구) 사람용 문구에 넣지 않는다(#77) */
+export const isKnownMoveReason = (reason: string): boolean => KNOWN_REJECT_REASONS.has(reason);
+
 const importRequest = (section: number, start: number, end: number, before: number, dryRun: boolean) =>
   JSON.stringify({
     request: { sourceSection: section, sourceStart: start, sourceEnd: end, targetSection: section, insertBefore: before, count: 1 },

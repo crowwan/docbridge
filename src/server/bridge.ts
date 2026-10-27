@@ -183,14 +183,15 @@ export async function startBridge(options: BridgeOptions): Promise<Bridge> {
   /**
    * 뷰어 요청을 처리해 보낸 뷰어에 응답한다. 응답 전에 그 뷰어가 끊겼으면 보내지 않는다.
    * 실패하면 거부 코드로 고른 사람용 문구를 보낸다 — 오류 message 는 Claude 용(블록 id·도구 이름)이라 보내지 않는다(#77).
-   * 거부 코드가 없는 실패는 일반 문구로 보내고 원래 문구는 로그에 남긴다
+   * 거부 코드가 없는 실패는 일반 문구로 보낸다. 원래 문구는 거부든 아니든 로그(stderr)에 남긴다
    */
   const answerUser = async (ws: WebSocket, id: number, run: () => Promise<unknown>) => {
     let response: UserResponseMessage;
     try {
       response = { type: 'user_response', id, ok: true, result: await run() };
     } catch (error) {
-      if (!(error instanceof EditRejection)) log(`사람 편집 요청이 실패했습니다: ${errorMessage(error)}`);
+      // 사람에게는 사람용 문구만 보내므로 원래 문구(블록 id·rhwp 원문 포함)는 로그에 남긴다
+      log(error instanceof EditRejection ? `사람 편집 거부(${error.code}): ${error.message}` : `사람 편집 요청이 실패했습니다: ${errorMessage(error)}`);
       const code = error instanceof EditRejection ? { code: error.code } : {};
       response = { type: 'user_response', id, ok: false, error: userMessageOf(error), ...code };
     }
@@ -214,7 +215,6 @@ export async function startBridge(options: BridgeOptions): Promise<Bridge> {
     const looseUser = looseUserRequestSchema.safeParse(message);
     if (looseUser.success) {
       const detail = `서버가 읽을 수 없는 뷰어 요청입니다: ${userRequest.error.message}`;
-      log(detail);
       void answerUser(ws, looseUser.data.id, () => Promise.reject(new EditRejection('unreadable_request', detail)));
       return;
     }

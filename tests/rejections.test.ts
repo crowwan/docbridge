@@ -1,6 +1,9 @@
 // SPEC-006 사람 편집 거부 문구(#77): 거부 코드 → 사람용 문구 표, 뷰어 → 서버 응답의 거부 코드 실어 나르기.
 import { describe, expect, it } from 'vitest';
 import { BlockIdTable, type BlockPosition } from '../src/core/block-ids.ts';
+import type { BodyControl } from '../src/core/body-paragraphs.ts';
+import { assertNoHiddenObjects } from '../src/core/delete-blocks.ts';
+import { isKnownMoveReason, moveRejectReason } from '../src/core/edits.ts';
 import { planMove } from '../src/server/move-plan.ts';
 import { answerRequest, RequestTracker } from '../src/shared/protocol.ts';
 import {
@@ -34,19 +37,38 @@ describe('SPEC-006 사람 편집 거부 문구 표 (#77)', () => {
     expect(userMessageOf(new Error('b3: 뷰어 문서에 이 블록이 없습니다. get_outline 을 다시 부르세요.'))).toBe(USER_EDIT_FAILED);
   });
 
+  /** fn 이 던진 것(던지지 않으면 undefined) */
+  const thrownBy = (fn: () => void): unknown => {
+    try {
+      fn();
+    } catch (error) {
+      return error;
+    }
+    return undefined;
+  };
+
+  it('지울 수 없는 개체에 종류 이름이 없으면 rhwp 컨트롤 코드 대신 "개체" 로 부른다(Claude 문구에는 코드 그대로)', () => {
+    const control = (ctrlId: string, userDesc: string): BodyControl => ({ section: 0, paragraph: 3, ctrlId, userDesc, list: 0, para: 3, controlIndex: 0 });
+    const rejected = thrownBy(() => assertNoHiddenObjects([control('pghd', '감추기'), control('zzzz', '')], 'b4'));
+
+    expect(rejected).toBeInstanceOf(EditRejection);
+    expect(userMessageOf(rejected)).toBe('이 문단을 지우면 든 개체(감추기, 개체)도 같이 사라지므로 지울 수 없습니다.');
+    expect(rejected instanceof Error ? rejected.message : '').toContain('(감추기, zzzz)');
+  });
+
+  it('우리 말로 옮겨 둔 옮기기 거부 이유만 사람 문구에 넣고, rhwp 원문 이유는 일반 문구로', () => {
+    expect(isKnownMoveReason(moveRejectReason('paragraph block: Footnote'))).toBe(true);
+    expect(isKnownMoveReason(moveRejectReason('paragraph block: SomethingNew'))).toBe(false);
+    expect(isKnownMoveReason('문서 사본을 만들지 못했습니다: rhwp 오류')).toBe(false);
+    expect(userRejectionMessage('unmovable_paragraph')).toBe('이 문단은 옮길 수 없습니다(옮길 수 없는 개체가 있음). 글자만 옮기려면 Claude 에게 부탁하세요.');
+  });
+
   it('다른 구역으로 옮기기 거부는 different_section 이다', () => {
     const positions: BlockPosition[] = [
       { kind: 'paragraph', section: 0, paragraph: 1 },
       { kind: 'paragraph', section: 1, paragraph: 1 },
     ];
-    const rejected = (() => {
-      try {
-        planMove(BlockIdTable.assign(positions), ['b1'], 'b2', 'after');
-      } catch (error) {
-        return error;
-      }
-      return undefined;
-    })();
+    const rejected = thrownBy(() => planMove(BlockIdTable.assign(positions), ['b1'], 'b2', 'after'));
     expect(rejected).toBeInstanceOf(EditRejection);
     expect(userMessageOf(rejected)).toBe(userRejectionMessage('different_section'));
   });

@@ -44,6 +44,8 @@ export function assertDeletable(targets: DeleteTarget[]): void {
 const INLINE_CONTROLS = new Set(['bokm', 'nwno', 'atno', 'idxm']);
 const isInlineControl = (ctrlId: string) => ctrlId === '' || ctrlId.startsWith('%') || INLINE_CONTROLS.has(ctrlId);
 const TABLE_CONTROL = 'tbl';
+/** 종류 이름(userDesc)이 없는 개체를 사람에게 부르는 이름 */
+const OBJECT_NAME = '개체';
 
 const controlPositionsSchema = z.array(z.number());
 const SECTION_DEFINITION = 'secd';
@@ -144,13 +146,19 @@ export function deleteBlocks(doc: HwpDocument, blocks: Block[], targets: DeleteT
   return changes;
 }
 
-function assertNoHiddenObjects(controls: BodyControl[] | undefined, id: string): void {
+/** 문단째 지울 문단에 블록이 아닌 개체가 있으면 거부한다(controls 를 못 읽었으면 그것도 거부) */
+export function assertNoHiddenObjects(controls: BodyControl[] | undefined, id: string): void {
   if (controls === undefined) throw new EditRejection('controls_unknown', `${id}: 문단에 든 개체를 확인하지 못해 지울 수 없습니다.`);
   const hidden = controls.filter(({ ctrlId }) => ctrlId !== TABLE_CONTROL && !isInlineControl(ctrlId));
   if (hidden.length > 0) {
     const names = [...new Set(hidden.map(({ userDesc, ctrlId }) => userDesc || ctrlId))];
-    const objects = names.join(', ');
-    throw new EditRejection('hidden_objects', `${id}: 문단에 블록이 아닌 개체(${objects})가 있어 같이 사라지므로 지울 수 없습니다.`, objects);
+    // 사람용 문구에는 rhwp 컨트롤 코드(4글자 id) 대신 일반 이름 "개체"(#77)
+    const humanNames = [...new Set(hidden.map(({ userDesc }) => userDesc || OBJECT_NAME))];
+    throw new EditRejection(
+      'hidden_objects',
+      `${id}: 문단에 블록이 아닌 개체(${names.join(', ')})가 있어 같이 사라지므로 지울 수 없습니다.`,
+      humanNames.join(', '),
+    );
   }
 }
 

@@ -541,15 +541,19 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
       expectRejected(await viewer.userRequest('user_undo', {}), 'nothing_to_undo');
     });
 
-    it('거부 코드가 없는 실패(예상하지 못한 오류)는 Claude 용 문구 대신 일반 문구를 보인다', async () => {
+    it('거부 코드가 없는 실패(예상하지 못한 오류)는 Claude 용 문구 대신 일반 문구를 보이고, 원래 문구는 서버 로그(stderr)에 남긴다', async () => {
+      const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
       viewer.serve((request) => {
         if (request.method === 'edit') throw new Error('b11: 뷰어 문서에 이 블록이 없습니다. get_outline 을 다시 부르세요.');
         return rhwpViewer().handle(request);
       });
 
       const response = await userEdit(replaceB11());
+      const logged = stderr.mock.calls.map(([chunk]) => String(chunk));
+      stderr.mockRestore();
 
       expect(response).toEqual({ type: 'user_response', id: response.id, ok: false, error: USER_EDIT_FAILED });
+      expect(logged).toContainEqual('[docbridge] 사람 편집 요청이 실패했습니다: b11: 뷰어 문서에 이 블록이 없습니다. get_outline 을 다시 부르세요.\n');
     });
   });
 });
