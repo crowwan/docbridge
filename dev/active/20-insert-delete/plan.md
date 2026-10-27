@@ -15,7 +15,7 @@ insert_paragraph(before|after, text)               delete_blocks(ids)
    → paragraphs:[새 문단], 위치 옮김(넣은 자리부터 +1)     → deleteTableControl / deleteParagraph, 위치 옮김(지운 문단 없앰, 뒤는 당김)
 ```
 
-- `EditApplied.relocate`: 편집 전 문단 위치 → 편집 뒤 위치(지운 문단 undefined). DocumentEditor 가 "블록으로 남길 빈 문단" 표를 옮길 때 쓴다(#21 옮기기도 같은 자리).
+- `EditApplied.changes`(ParagraphChanges) → `relocate(changes)`: 편집 전 문단 위치 → 편집 뒤 위치(지운 문단 undefined). DocumentEditor 가 "블록으로 남길 빈 문단" 표를 옮길 때, 서버가 id 표를 옮길 때 같은 정보를 쓴다(#21 옮기기도 같은 자리).
 
 ## 결정
 
@@ -23,5 +23,6 @@ insert_paragraph(before|after, text)               delete_blocks(ids)
 - D-2 표 블록 지우기: rhwp `deleteParagraph` 는 표 문단을 표째 지우고, `deleteTableControl` 은 표만 지우고 빈 문단을 남긴다(확인). 그 문단에 다른 블록이 없으면 문단째, 있으면 표만.
 - D-3 문단 블록 지우기는 문단째(든 표·누름틀도). 결과 deleted 에 같이 지운 id.
 - D-4 구역 첫 문단 지우기 거부: rhwp 가 secd·cold 컨트롤까지 지운다(확인, HWPX 저장 때 다시 생김). 그래서 구역이 비는 삭제는 생기지 않는다.
-- D-5 지우기 계획(planDeletion)은 서버·뷰어가 같은 함수로 각자의 블록 위치에서 계산(위치는 편집 순번 확인으로 같다고 본다). 뷰어는 표 문단에 블록이 아닌 개체(그림 등)가 있으면 거부.
+- D-5 ~~지우기 계획(planDeletion)을 서버·뷰어가 같은 함수로 계산~~ → PR #29 리뷰: 뷰어만 정하고 실제로 지운 문단·표·넣은 자리(ParagraphChanges)를 결과로 돌려주며 서버 id 표는 그것으로 옮김. 서버는 assertDeletable(누름틀 블록·구역 첫 문단)만. 문단째 지울 문단의 블록이 아닌 개체는 getControls 종류로 거부(보이지 않는 인라인 컨트롤 허용).
+- D-7 rhwp deleteTableControl 은 같은 문단 누름틀을 잃음 → 누름틀이 든 문단의 표만 지우기 거부.
 - D-6 block-ids.ts: 기존 paragraphInserted·paragraphDeleted 를 쓰고, 새로 anchorsAt(같은 문단 id·위치)·tableDeleted(표만 지움, 뒤 표 컨트롤 번호 당김)만 더한다.

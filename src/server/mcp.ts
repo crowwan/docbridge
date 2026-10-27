@@ -132,7 +132,7 @@ export function createMcpServer(session: DocumentSession): McpServer {
     'delete_blocks',
     {
       description:
-        '블록(문단·표)을 지운다(바로 적용, 여러 id 도 undo 한 번에 되돌림). 문단 블록은 문단째 지워 그 문단에 든 표·누름틀도 같이 지워진다. 표 블록은 그 문단에 다른 블록이 없으면 문단째, 있으면 표만 지운다. 누름틀 블록은 지울 수 없고(값 비우기는 replace_text), 구역 첫 문단도 지울 수 없다(글자 지우기는 replace_text). 나머지 블록 id 는 그대로다. 결과 { deleted(지운 id, 같이 지워진 표·누름틀 포함) }',
+        '블록(문단·표)을 지운다(바로 적용, 여러 id 도 undo 한 번에 되돌림). 문단 블록은 문단째 지워 그 문단에 든 표·누름틀도 같이 지워진다. 표 블록은 그 문단에 다른 블록이 없으면 문단째, 있으면 표만 지운다. 누름틀 블록은 지울 수 없고(값 비우기는 replace_text), 구역 첫 문단도 지울 수 없다(글자 지우기는 replace_text). 블록이 아닌 개체(머리말·각주·그림·수식 등)가 든 문단과, 누름틀이 든 문단에서 표만 지우기도 거부하고 이유를 돌려준다. 나머지 블록 id 는 그대로다. 결과 { deleted(지운 id, 같이 지워진 표·누름틀 포함) }',
       inputSchema: { ids: z.array(z.string()).min(1).describe('지울 블록 id 목록') },
     },
     ({ ids }) => toolResult(() => deleteBlocks(session, ids)),

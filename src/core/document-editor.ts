@@ -8,17 +8,22 @@ import { anchorsOf, type BlockAnchor } from './block-ids.ts';
 import type { Block } from './block-schema.ts';
 import { extractBlocks } from './blocks.ts';
 import { EditHistory } from './edit-history.ts';
-import { applyEdit, type EditApplied, type EditOperation, type ParagraphPosition } from './edit-operations.ts';
+import { applyEdit, type EditApplied, type EditOperation } from './edit-operations.ts';
+import { positionKey, relocate, type ParagraphChanges, type ParagraphPosition } from './paragraph-changes.ts';
 
 export interface ChangedBlock {
   anchor: BlockAnchor;
   block: Block;
 }
 
+/** 편집 하나의 결과: 바뀐 블록과, 문단 수를 바꾼 편집이면 실제로 넣고 지운 문단·표(서버가 id 표를 이것으로 옮긴다) */
+export interface EditOutcome {
+  changed: ChangedBlock[];
+  changes?: ParagraphChanges;
+}
+
 export const editHistoryMismatchMessage = (server: number, viewer: number) =>
   `편집 기록이 어긋났습니다(서버 ${server}, 뷰어 ${viewer}). open_document 로 문서를 다시 열어 주세요.`;
-
-const positionKey = ({ section, paragraph }: ParagraphPosition) => `${section}:${paragraph}`;
 
 export class DocumentEditor {
   readonly doc: HwpDocument;
@@ -44,28 +49,28 @@ export class DocumentEditor {
   }
 
   /**
-   * 편집 하나를 적용하고 바뀐 블록(편집 뒤 위치와 내용)을 돌려준다. show 는 보여 주기(다시 그리기·표시)로, 던지면 편집도 되돌린다.
+   * 편집 하나를 적용하고 바뀐 블록(편집 뒤 위치와 내용)과 넣고 지운 문단·표를 돌려준다. show 는 보여 주기(다시 그리기·표시)로, 던지면 편집도 되돌린다.
    * expectedDepth 가 지금 순번과 다르거나 편집이 실패하면 문서는 그대로이고 던진다
    */
   edit(
     operation: EditOperation,
     expectedDepth: number,
     show: (changed: ChangedBlock[], blocks: Block[]) => void = () => undefined,
-  ): ChangedBlock[] {
+  ): EditOutcome {
     this.assertDepth(expectedDepth);
-    const { changed, blocks } = this.history.apply(operation.kind, this.current, () => {
+    const { changed, blocks, changes } = this.history.apply(operation.kind, this.current, () => {
       const applied = applyEdit(this.doc, this.current, operation);
       const touched = new Set(applied.paragraphs.map(positionKey));
       // 이미 문단 블록이던(id 가 있는) 문단과 새로 넣은 문단은 편집으로 비어도 블록으로 남긴다(처음 열 때 빈 문단만 뺀다).
-      // 문단을 넣거나 지우는 편집은 그 위치를 편집 뒤 위치로 옮긴다(relocate)
+      // 문단을 넣거나 지우는 편집은 그 위치를 편집 뒤 위치로 옮긴다(paragraph-changes.ts relocate)
       const next = extractBlocks(this.doc, this.keepParagraphs(applied));
-      const result = { changed: changedBlocks(next, touched), blocks: next };
+      const result = { changed: changedBlocks(next, touched), blocks: next, changes: applied.changes };
       show(result.changed, next);
       return result;
     });
     this.current = blocks;
     this.appliedDepth += 1;
-    return changed;
+    return changes === undefined ? { changed } : { changed, changes };
   }
 
   /** steps 만큼(있는 만큼만) 되돌리고 되돌린 수를 돌려준다. 되돌릴 것이 없으면 0. expectedDepth 가 다르면 던진다 */
@@ -87,15 +92,15 @@ export class DocumentEditor {
 
   /** 편집 뒤 블록으로 남길 문단: 지금 문단 블록인 위치(편집 뒤 위치로 옮김)와 새로 넣은 문단. 비어도 블록으로 남긴다 */
   private keepParagraphs(applied: EditApplied): (section: number, paragraph: number) => boolean {
-    const relocate = applied.relocate ?? ((position: ParagraphPosition) => position);
+    const moved = applied.changes === undefined ? (position: ParagraphPosition) => position : relocate(applied.changes);
     const known = new Set(
       this.current.flatMap((block) => {
         if (block.kind !== 'paragraph') return [];
-        const moved = relocate(block);
-        return moved === undefined ? [] : [positionKey(moved)];
+        const after = moved(block);
+        return after === undefined ? [] : [positionKey(after)];
       }),
     );
-    for (const position of applied.inserted ?? []) known.add(positionKey(position));
+    for (const position of applied.changes?.inserted ?? []) known.add(positionKey(position));
     return (section, paragraph) => known.has(positionKey({ section, paragraph }));
   }
 

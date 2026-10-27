@@ -1,5 +1,7 @@
 // SPEC-002 문단 넣기·지우기 도구(#20): MCP 도구 → 편집 공용 경로 → rhwp 테스트 뷰어. id 표가 편집에 맞춰 옮겨지는지 본다.
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,7 +11,7 @@ import { createMcpServer } from '../src/server/mcp.ts';
 import { DocumentSession } from '../src/server/session.ts';
 import type { RequestMessage } from '../src/shared/protocol.ts';
 import { FakeViewer } from './fake-viewer.ts';
-import { fixturePath } from './fixtures.ts';
+import { fixturePath, openFixture } from './fixtures.ts';
 import { rhwpViewer, type RhwpViewer } from './rhwp-viewer.ts';
 
 const toolResultSchema = z.object({
@@ -146,6 +148,24 @@ describe('SPEC-002 문단 넣기·지우기 도구 (insert_paragraph · delete_b
     expect([...after.keys()]).toEqual(['b1', 'b4', 'b5', 'b6', 'b7', 'b8', 'b9', 'b10', 'b11', 'b13', 'b14']);
   });
 
+  it('AC-3 글자가 있는 문단의 표만 지우면 표 id 만 사라지고 문단 id 는 그 글자를 가리킨다', async () => {
+    const doc = openFixture('notice.hwpx');
+    doc.insertText(0, 11, doc.getParagraphLength(0, 11), '표 아래 설명');
+    const path = join(await mkdtemp(join(tmpdir(), 'docbridge-delete-')), '표와 글자.hwpx');
+    await writeFile(path, doc.exportHwpx());
+    await json('open_document', { path });
+    const before = await outline();
+    expect([before.get('b12'), before.get('b13')]).toEqual(['paragraph:표 아래 설명', expect.stringMatching(/^table:/)]);
+
+    expect(await json('delete_blocks', { ids: ['b13'] })).toEqual({ deleted: ['b13'] });
+
+    const after = await outline();
+    expectIdsKept(before, after, ['b13']);
+    expect(after.has('b13')).toBe(false);
+    // 지운 표 id 는 id 표에서도 사라져 다시 쓰이지 않는다
+    expect(session.document?.ids.anchor('b13')).toBeUndefined();
+  });
+
   it('AC-3 누름틀 블록과 구역 첫 문단(구역을 비우는 삭제)은 뷰어에 보내지 않고 거부한다', async () => {
     expect(await errorText('delete_blocks', { ids: ['b3'] })).toBe(
       '누름틀 블록은 지울 수 없습니다: b3. 값을 비우려면 replace_text 를, 문단째 지우려면 그 문단 블록 id 를 주세요.',
@@ -159,6 +179,35 @@ describe('SPEC-002 문단 넣기·지우기 도구 (insert_paragraph · delete_b
     );
     expect(requests('edit')).toHaveLength(0);
     expect(session.editCount).toBe(0);
+  });
+
+  it('서버는 뷰어가 실제로 지운 문단·넣은 자리로 id 표를 옮긴다 — 서버 생각과 달라도 id 가 엉뚱한 블록을 가리키지 않는다 (PR #29 리뷰)', async () => {
+    const before = await outline();
+    const b8 = session.document?.ids.anchor('b8');
+    const b10 = session.document?.ids.anchor('b10');
+    const b6 = session.document?.ids.anchor('b6');
+    if (b8 === undefined || b10 === undefined || b6 === undefined) throw new Error('블록이 없다');
+    // 어긋남 흉내: 뷰어가 받은 대상과 다른 블록(b8 대신 b10, b11 뒤 대신 b6 앞)에 편집을 적용한다
+    viewer.serve((request) => {
+      if (request.method !== 'edit') return rhwp.handle(request);
+      const { operation } = request.params;
+      if (operation.kind === 'delete_blocks') {
+        return rhwp.handle({ ...request, params: { ...request.params, operation: { ...operation, targets: [{ id: 'b10', anchor: b10 }] } } });
+      }
+      if (operation.kind === 'insert_paragraph') {
+        const moved = { ...operation, reference: { id: 'b6', anchor: b6 }, where: 'before' as const };
+        return rhwp.handle({ ...request, params: { ...request.params, operation: moved } });
+      }
+      return rhwp.handle(request);
+    });
+
+    expect(await json('delete_blocks', { ids: ['b8'] })).toEqual({ deleted: ['b10'] });
+    expect(await json('insert_paragraph', { after: 'b11', text: '넣은 문단' })).toMatchObject({ inserted: 'b15' });
+
+    const after = await outline();
+    expectIdsKept(before, after, ['b10']);
+    expect(after.get('b15')).toBe('paragraph:넣은 문단');
+    expect([...after.keys()].slice(4, 7)).toEqual(['b5', 'b15', 'b6']);
   });
 
   it('넣고 지운 뒤 글자를 바꿔도 id 표 위치로 맞는 블록을 고친다', async () => {

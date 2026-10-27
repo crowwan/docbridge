@@ -65,7 +65,8 @@ src/
                글자 위치 단위(chars.ts: 유니코드 글자 = rhwp 글자 위치), 글자 찾기(find-text.ts),
                하이라이트 사각형(highlight-rects.ts: 줄 끝 보정), 하이라이트 대상 → 사각형(highlight-targets.ts: 요청당 한 번 도는 highlightTargets, 뷰어·테스트 뷰어 공용),
                편집 어댑터(edits.ts: 옮기기·첫 글자 모양 바꾸기·칸·누름틀·문단 넣기), 되돌리기(edit-history.ts: 스냅샷 20칸 + id 표 사본, 칸은 bounded-stack.ts — 서버 edit-log.ts 와 공용),
-               편집 종류와 적용(edit-operations.ts: kind 판별 유니언 — 새 편집은 스키마 + applyEdit case 하나, 문단 수가 바뀌면 relocate·지우기 계획 planDeletion 은 서버·뷰어 공용),
+               편집 종류와 적용(edit-operations.ts: kind 판별 유니언 — 새 편집은 스키마 + applyEdit case 하나), 지우기(delete-blocks.ts: 문단째·표만·거부 판정),
+               문단 수를 바꾼 편집이 실제로 한 일(paragraph-changes.ts: 뷰어 → 서버 id 표 옮기기, relocate = 편집 전 → 뒤 문단 위치),
                편집 공용 경로(document-editor.ts: 스냅샷 → 편집 → 블록 다시 뽑기 → 바뀐 블록, 실패하면 되돌림 — 뷰어·테스트 뷰어 공용),
                HWPX 저장 검증(hwpx-export.ts: 내보내 다시 열어 블록 비교·손실 보고, exportForSave = 뷰어 export_hwpx 결과) — ADR 002,
                Node 용 초기화(rhwp-node.ts)
