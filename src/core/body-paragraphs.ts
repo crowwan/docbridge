@@ -9,7 +9,7 @@ import type { ParagraphPosition } from './paragraph-changes.ts';
 export const BODY_LIST = 0;
 
 /** 지금 문서의 구역 시작으로 전체 문단 번호를 (구역, 문단)으로 바꾸는 함수. 문서 문단 수가 바뀌면 다시 만든다 */
-export function bodyParagraphLocator(doc: HwpDocument): (globalParagraph: number) => ParagraphPosition {
+export function bodyParagraphLocator(doc: Pick<HwpDocument, 'getParagraphCount' | 'getSectionCount'>):(globalParagraph: number) => ParagraphPosition {
   const starts: number[] = [];
   let total = 0;
   for (let section = 0; section < doc.getSectionCount(); section += 1) {

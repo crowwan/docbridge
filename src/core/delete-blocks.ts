@@ -5,6 +5,7 @@ import type { HwpDocument } from '@rhwp/core';
 import { z } from 'zod';
 import { anchorsOf, blockIndexByAnchor, fieldOrdinal, tableControlIndex, type BlockAnchor } from './block-ids.ts';
 import type { Block } from './block-schema.ts';
+import { BODY_LIST, bodyParagraphLocator } from './body-paragraphs.ts';
 import { listFields, type FieldInfo } from './edits.ts';
 import { parseJson } from './json.ts';
 import { noParagraphChanges, positionKey, type ParagraphChanges, type ParagraphPosition } from './paragraph-changes.ts';
@@ -44,19 +45,23 @@ const controlPositionsSchema = z.array(z.number());
 
 type ControlInfo = z.infer<typeof controlListSchema>[number];
 
+type ControlSource = Pick<HwpDocument, 'getControls' | 'getControlTextPositions' | 'getParagraphCount' | 'getSectionCount'>;
+
 /**
- * 본문 문단의 컨트롤 목록. getControls 는 (목록, 문단) 으로 주므로 구역마다 본문 목록 번호를 구역 정의(첫 문단 secd) 순서로 알아낸다.
- * 맞춰 보지 못하면(구역 정의 수가 구역 수와 다르거나, 문단 컨트롤 수가 getControlTextPositions 와 다르면) undefined
+ * 본문 문단의 컨트롤 목록. getControls 의 본문(목록 0) para 는 문서 전체 문단 번호라 bodyParagraphLocator 로 (구역, 문단)으로 바꾼다(#41).
+ * 맞춰 보지 못하면(문단 컨트롤 수가 getControlTextPositions 와 다르면) undefined
  */
-function bodyControls(doc: HwpDocument): (position: ParagraphPosition) => ControlInfo[] | undefined {
-  const controls = parseJson(controlListSchema, doc.getControls());
-  const sectionLists = controls.filter(({ ctrlId, para }) => ctrlId === 'secd' && para === 0).map(({ list }) => list);
-  const mapped = sectionLists.length === doc.getSectionCount();
-  return ({ section, paragraph }) => {
-    const list = sectionLists[section];
-    if (!mapped || list === undefined) return undefined;
-    const here = controls.filter((control) => control.list === list && control.para === paragraph);
-    const positions = parseJson(controlPositionsSchema, doc.getControlTextPositions(section, paragraph));
+export function bodyControls(doc: ControlSource): (position: ParagraphPosition) => ControlInfo[] | undefined {
+  const locate = bodyParagraphLocator(doc);
+  const byParagraph = new Map<string, ControlInfo[]>();
+  for (const control of parseJson(controlListSchema, doc.getControls())) {
+    if (control.list !== BODY_LIST) continue;
+    const key = positionKey(locate(control.para));
+    byParagraph.set(key, [...(byParagraph.get(key) ?? []), control]);
+  }
+  return (position) => {
+    const here = byParagraph.get(positionKey(position)) ?? [];
+    const positions = parseJson(controlPositionsSchema, doc.getControlTextPositions(position.section, position.paragraph));
     return here.length === positions.length ? here : undefined;
   };
 }
