@@ -21,6 +21,7 @@ import {
   type ViewerResult,
 } from '../shared/protocol.ts';
 import { errorMessage } from '../shared/errors.ts';
+import { EditRejection, USER_REJECTION_MESSAGES, userMessageOf } from '../shared/rejections.ts';
 import { log } from './log.ts';
 
 const HOST = '127.0.0.1';
@@ -89,8 +90,8 @@ export class ViewerNotConnectedError extends Error {
   }
 }
 
-export const INACTIVE_VIEWER = '다른 뷰어 탭이 이 문서로 docbridge 에 붙어 있어 이 탭에서는 고칠 수 없습니다. 마지막에 연 탭에서 고치세요.';
-const NO_USER_HANDLER = 'docbridge 가 뷰어 편집을 받을 준비가 되지 않았습니다.';
+export const INACTIVE_VIEWER = USER_REJECTION_MESSAGES.inactive_tab(undefined);
+const NO_USER_HANDLER = USER_REJECTION_MESSAGES.not_ready(undefined);
 
 /** 뷰어 요청 모양(type user_request 와 id)은 맞지만 메서드·입력을 읽지 못한 것 — id 로 오류 응답한다 */
 const looseUserRequestSchema = z.object({ type: z.literal('user_request'), id: z.number() });
@@ -179,13 +180,20 @@ export async function startBridge(options: BridgeOptions): Promise<Bridge> {
 
   let userHandler: ((doc: string, request: UserRequestMessage) => Promise<unknown>) | undefined;
 
-  /** 뷰어 요청을 처리해 보낸 뷰어에 응답한다. 응답 전에 그 뷰어가 끊겼으면 보내지 않는다 */
+  /**
+   * 뷰어 요청을 처리해 보낸 뷰어에 응답한다. 응답 전에 그 뷰어가 끊겼으면 보내지 않는다.
+   * 실패하면 거부 코드로 고른 사람용 문구를 보낸다 — 오류 message 는 Claude 용(블록 id·도구 이름)이라 보내지 않는다(#77).
+   * 거부 코드가 없는 실패는 일반 문구로 보낸다. 원래 문구는 거부든 아니든 로그(stderr)에 남긴다
+   */
   const answerUser = async (ws: WebSocket, id: number, run: () => Promise<unknown>) => {
     let response: UserResponseMessage;
     try {
       response = { type: 'user_response', id, ok: true, result: await run() };
     } catch (error) {
-      response = { type: 'user_response', id, ok: false, error: errorMessage(error) };
+      // 사람에게는 사람용 문구만 보내므로 원래 문구(블록 id·rhwp 원문 포함)는 로그에 남긴다
+      log(error instanceof EditRejection ? `사람 편집 거부(${error.code}): ${error.message}` : `사람 편집 요청이 실패했습니다: ${errorMessage(error)}`);
+      const code = error instanceof EditRejection ? { code: error.code } : {};
+      response = { type: 'user_response', id, ok: false, error: userMessageOf(error), ...code };
     }
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(response));
   };
@@ -198,15 +206,16 @@ export async function startBridge(options: BridgeOptions): Promise<Bridge> {
       const request = userRequest.data;
       void answerUser(ws, request.id, async () => {
         const { doc } = connection;
-        if (doc === undefined || connection !== activeFor(doc)) throw new Error(INACTIVE_VIEWER);
-        if (userHandler === undefined) throw new Error(NO_USER_HANDLER);
+        if (doc === undefined || connection !== activeFor(doc)) throw new EditRejection('inactive_tab', INACTIVE_VIEWER);
+        if (userHandler === undefined) throw new EditRejection('not_ready', NO_USER_HANDLER);
         return userHandler(doc, request);
       });
       return;
     }
     const looseUser = looseUserRequestSchema.safeParse(message);
     if (looseUser.success) {
-      void answerUser(ws, looseUser.data.id, () => Promise.reject(new Error(`서버가 읽을 수 없는 뷰어 요청입니다: ${userRequest.error.message}`)));
+      const detail = `서버가 읽을 수 없는 뷰어 요청입니다: ${userRequest.error.message}`;
+      void answerUser(ws, looseUser.data.id, () => Promise.reject(new EditRejection('unreadable_request', detail)));
       return;
     }
     const parsed = responseMessageSchema.safeParse(message);

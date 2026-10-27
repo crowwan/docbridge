@@ -9,6 +9,7 @@ import { HwpDocument } from '@rhwp/core';
 import { z } from 'zod';
 import { parseJson } from './json.ts';
 import { errorMessage } from '../shared/errors.ts';
+import { EditRejection } from '../shared/rejections.ts';
 import { charLength, sliceChars } from './chars.ts';
 import { isCellStep, listFields } from './fields.ts';
 
@@ -314,6 +315,11 @@ export function moveRejectReason(message: string): string {
   return REJECT_REASONS[reason.trim()] ?? reason.trim();
 }
 
+const KNOWN_REJECT_REASONS = new Set(Object.values(REJECT_REASONS));
+
+/** 우리 말로 옮겨 둔 거부 이유인지. 아니면(rhwp 원문·사본 실패 문구) 사람용 문구에 넣지 않는다(#77) */
+export const isKnownMoveReason = (reason: string): boolean => KNOWN_REJECT_REASONS.has(reason);
+
 const importRequest = (section: number, start: number, end: number, before: number, dryRun: boolean) =>
   JSON.stringify({
     request: { sourceSection: section, sourceStart: start, sourceEnd: end, targetSection: section, insertBefore: before, count: 1 },
@@ -362,7 +368,7 @@ export function moveParagraphs(
   }
   if (start <= before && before <= end) throw new Error('기준 문단이 옮길 문단 안이나 바로 옆에 있습니다.');
   // 구역 첫 문단 앞에 넣으면 구역·단 정의가 둘째 문단에 남는다(rhwp 는 열지만 한글 파일 구조와 다르다, ADR 002)
-  if (before === 0) throw new Error('구역 첫 문단 앞으로는 옮길 수 없습니다. 첫 문단 뒤로 옮기세요.');
+  if (before === 0) throw new EditRejection('before_section_first', '구역 첫 문단 앞으로는 옮길 수 없습니다. 첫 문단 뒤로 옮기세요.');
   const size = end - start;
   let rejected: MoveRejection[] = [];
   const reject = (found: MoveRejection[]) => {

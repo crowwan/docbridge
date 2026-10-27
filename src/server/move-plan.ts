@@ -3,6 +3,7 @@
 // 서버 id 표는 뷰어 블록 위치와 같은 순서로 맞춰 두므로(SPEC-001 대응표) 블록 목록 대신 id 표로 한다 —
 // 오류에 사이 블록 id 처럼 서버만 아는 id 를 담을 수 있다. rhwp 가 거부하는 문단(각주 등)은 뷰어가 옮길 때 가린다.
 import { fieldOrdinal, type BlockAnchor, type BlockIdTable } from '../core/block-ids.ts';
+import { EditRejection } from '../shared/rejections.ts';
 import { unknownIdsMessage } from './reading.ts';
 
 export type MoveWhere = 'before' | 'after';
@@ -59,7 +60,8 @@ function planRange(ids: BlockIdTable, chosen: Array<{ id: string; anchor: BlockA
   const last = Math.max(...chosenByParagraph.keys());
   const skipped = inSection.filter(({ anchor }) => start < anchor.paragraph && anchor.paragraph < last && !chosenByParagraph.has(anchor.paragraph));
   if (skipped.length > 0) {
-    throw new Error(
+    throw new EditRejection(
+      'not_contiguous',
       `${words.will} 블록이 문서에서 이어져 있지 않습니다. 사이 블록 ${skipped.map(({ id }) => id).join(', ')} 도 ids 에 넣거나 따로 ${words.doIt}.`,
     );
   }
@@ -70,7 +72,8 @@ function planRange(ids: BlockIdTable, chosen: Array<{ id: string; anchor: BlockA
   for (const [paragraph, chosenHere] of chosenByParagraph) {
     const owner = blocks.find(({ anchor }) => anchor.paragraph === paragraph && !isField(anchor));
     if (owner !== undefined && chosenHere.every(({ anchor }) => isField(anchor))) {
-      throw new Error(
+      throw new EditRejection(
+        'field_only',
         `${chosenHere.map(({ id }) => id).join(', ')}: 누름틀 블록만 ${words.will} 수는 없습니다. 누름틀이 든 블록 ${owner.id} 를 ${words.doIt}.`,
       );
     }
@@ -108,20 +111,21 @@ export function planMove(ids: BlockIdTable, given: string[], referenceId: string
   }
   const reference = referenceEntry.anchor;
   const section = reference.section;
-  if (chosen.some(({ anchor }) => anchor.section !== section)) throw new Error(DIFFERENT_SECTION);
+  if (chosen.some(({ anchor }) => anchor.section !== section)) throw new EditRejection('different_section', DIFFERENT_SECTION);
   const { start, end, blocks } = planRange(ids, chosen, section, MOVE);
   const inSection = ids.entries(section);
   const last = end - 1;
 
   if (start <= reference.paragraph && reference.paragraph < end) {
-    throw new Error(`기준 블록 ${referenceId} 가 옮길 블록 안에 있습니다.`);
+    throw new EditRejection('reference_inside', `기준 블록 ${referenceId} 가 옮길 블록 안에 있습니다.`);
   }
   // 옮기는 단위는 문단이라, 기준 블록 앞(뒤)에 같은 문단의 다른 블록이 있으면 그 사이로는 옮길 수 없다
   const referenceParagraph = inSection.filter(({ anchor }) => anchor.paragraph === reference.paragraph);
   const edge = where === 'before' ? referenceParagraph[0] : referenceParagraph.at(-1);
   if (edge !== undefined && edge.id !== referenceId) {
     const sameIds = referenceParagraph.map(({ id }) => id);
-    throw new Error(
+    throw new EditRejection(
+      'middle_of_paragraph',
       `기준 블록 ${referenceId} 는 다른 블록과 같은 문단(${sameIds.join(', ')})에 있어 그 사이로는 옮길 수 없습니다. ${sameIds[0]} 앞이나 ${sameIds.at(-1)} 뒤로 옮기세요.`,
     );
   }
@@ -132,7 +136,7 @@ export function planMove(ids: BlockIdTable, given: string[], referenceId: string
     (where === 'before' && reference.paragraph >= end && !hasBlockBetween(last, reference.paragraph)) ||
     (where === 'after' && reference.paragraph < start && !hasBlockBetween(reference.paragraph, start));
   if (alreadyThere) {
-    throw new Error(`${chosenIds.join(', ')} 은 이미 ${referenceId} ${whereName(where)}에 있습니다. 옮길 것이 없습니다.`);
+    throw new EditRejection('already_there', `${chosenIds.join(', ')} 은 이미 ${referenceId} ${whereName(where)}에 있습니다. 옮길 것이 없습니다.`);
   }
   const [shiftFrom, shiftTo] = before < start ? [before, start] : [end, before];
   const shifted = inSection.filter(({ anchor }) => shiftFrom <= anchor.paragraph && anchor.paragraph < shiftTo).map(({ id }) => id);

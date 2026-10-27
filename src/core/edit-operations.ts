@@ -18,11 +18,12 @@ import { insertTableParagraph } from './create-document.ts';
 import { deleteBlocks } from './delete-blocks.ts';
 import { crossesField, fieldSpansIn, type CharRange, type FieldRange, type TextPlace } from './field-spans.ts';
 import { isCellStep } from './fields.ts';
-import { insertParagraphNear, listFields, moveParagraphs, replaceCellText, replaceFieldText, replaceParagraphText } from './edits.ts';
+import { insertParagraphNear, isKnownMoveReason, listFields, moveParagraphs, replaceCellText, replaceFieldText, replaceParagraphText } from './edits.ts';
 import { noParagraphChanges, positionKey, TEXT_PART, type ParagraphChanges, type ParagraphPosition } from './paragraph-changes.ts';
 import { applyParagraphStyle, findStyle, resetToStyle } from './styles.ts';
 import { copyParagraphs } from './copy-paragraphs.ts';
 import { base64ToBytes } from '../shared/base64.ts';
+import { EditRejection } from '../shared/rejections.ts';
 import { spanIn, targetLabel } from './text-targets.ts';
 
 export type { ParagraphPosition } from './paragraph-changes.ts';
@@ -198,7 +199,7 @@ export const crossesFieldMessage = (target: AnchoredTarget, { start, end }: Char
  */
 function assertOutsideFields(blocks: Block[], place: TextPlace, target: AnchoredTarget, { start, end }: CharRange): void {
   const crossed = fieldSpansIn(blocks, place).find((field) => crossesField({ start, end }, field));
-  if (crossed !== undefined) throw new Error(crossesFieldMessage(target, { start, end }, crossed));
+  if (crossed !== undefined) throw new EditRejection('crosses_field', crossesFieldMessage(target, { start, end }, crossed));
 }
 
 function paragraphSpot(blocks: Block[], block: ParagraphBlock, target: AnchoredTarget): SpotRange {
@@ -358,7 +359,10 @@ function moveBlocks(doc: HwpDocument, blocks: Block[], { section, start, end, be
   }
   const result = moveParagraphs(doc, section, start, end, before);
   if (!result.ok) {
-    throw new Error(result.rejected.map(({ paragraph, reason }) => moveRejectedMessage(reason, rangeLabel(moving, paragraph))).join('\n'));
+    const message = result.rejected.map(({ paragraph, reason }) => moveRejectedMessage(reason, rangeLabel(moving, paragraph))).join('\n');
+    // 사람용 문구에는 우리 말로 옮겨 둔 이유만 넣는다. 모르는 이유(rhwp 원문 등)가 섞이면 일반 문구로 — 원문은 message 에 남아 서버 로그로 간다
+    const reasons = [...new Set(result.rejected.map(({ reason }) => reason))];
+    throw new EditRejection('unmovable_paragraph', message, reasons.every(isKnownMoveReason) ? reasons.join(', ') : undefined);
   }
   return {
     paragraphs: Array.from({ length: end - start }, (_, i) => ({ section, paragraph: result.moved.start + i })),
