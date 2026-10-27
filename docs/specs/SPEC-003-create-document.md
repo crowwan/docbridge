@@ -120,6 +120,7 @@ GO 기준: 빈 문서와 양식 문서 각각으로 제목·개요·본문·표�
 - 새 문서의 "원본"은 없다. 세션의 `sourcePath` 가 비어 있을 때 저장 규칙(원본 덮어쓰기 판정)을 건너뛰고 `path` 를 기본 경로로 쓴다.
 - 스타일(#37): `src/core/styles.ts` — `paragraphStyles`·`styleIdByName`(한글·영문 이름)·`applyParagraphStyle`(applyStyle + 스타일 문단 모양)·`resetToStyle`(글자 모양까지 스타일 것)·`ensureTitleStyle`. 도구는 `src/server/style-tools.ts`(`list_styles`·`set_style`), 편집 종류 `set_style`·`insert_paragraph.style`(`src/core/edit-operations.ts`).
 - 기술 검증 프로토타입: `src/core/create-document.ts` — `insertTableParagraph`(새 문단 → 바탕글 → createTable → 표 아래 빈 문단 지우기 → 칸 채우기 → 머리글)·`clearTemplateBody`(남길 문단 사이 deleteRange, 남긴 문단의 다른 컨트롤 deleteControlAt). 근거와 측정은 ADR 003.
+- rhwp `getStyleDetail` 은 스타일 문단 모양에 번호가 없으면 그 스타일을 쓰는 번호 문단의 모양을 준다. `list_styles` 의 개요 여부는 돌려준 모양이 스타일 것(`getStyleList` 의 문단 모양 id)일 때만 믿는다(#37, ADR 003).
 - 스타일 종류는 가장 낮은 비트만 본다(1 = 글자 스타일). 한컴 HWP 5 바이너리 일부는 문단 스타일 종류 값이 4·108 로 온다.
 - `getControls` 는 본문을 목록 0 하나로 보고 문단 번호를 구역을 이어 센다(여러 구역 문서).
 - `createTableEx` 의 `colWidths` 는 `treatAsChar: true` 에서만 쓰인다. 열 너비를 정하는 입력은 두지 않는다.
