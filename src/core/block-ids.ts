@@ -42,6 +42,12 @@ export function fieldOrdinal(anchor: BlockAnchor): number | undefined {
   return match?.[1] === undefined ? undefined : Number(match[1]);
 }
 
+/** 표 위치의 컨트롤 번호. 표 위치가 아니면 undefined */
+export function tableControlIndex(anchor: BlockAnchor): number | undefined {
+  const match = /^table:(\d+)$/.exec(anchor.part);
+  return match?.[1] === undefined ? undefined : Number(match[1]);
+}
+
 /** 블록 목록의 각 블록 위치. 누름틀은 같은 문단 안에서 몇 번째인지로 가른다 */
 export function anchorsOf(blocks: BlockPosition[]): BlockAnchor[] {
   const fieldCount = new Map<string, number>();
@@ -114,6 +120,24 @@ export class BlockIdTable {
       if (anchor.section === section && anchor.paragraph === index) this.anchors.delete(id);
     }
     this.shift(section, index + 1, -1);
+    this.idByKey = undefined;
+  }
+
+  /** 한 문단에 걸린 블록(문단 글자·표·누름틀)의 id 와 위치 */
+  anchorsAt(section: number, paragraph: number): Array<{ id: string; anchor: BlockAnchor }> {
+    return [...this.anchors].flatMap(([id, anchor]) =>
+      anchor.section === section && anchor.paragraph === paragraph ? [{ id, anchor }] : [],
+    );
+  }
+
+  /** 문단은 두고 표 컨트롤 하나만 지운 뒤: 그 표 id 를 없애고 같은 문단 뒤 표들의 컨트롤 번호를 하나씩 당긴다 */
+  tableDeleted(section: number, paragraph: number, controlIndex: number): void {
+    for (const [id, anchor] of this.anchors) {
+      if (anchor.section !== section || anchor.paragraph !== paragraph) continue;
+      const control = tableControlIndex(anchor);
+      if (control === controlIndex) this.anchors.delete(id);
+      else if (control !== undefined && control > controlIndex) anchor.part = `table:${control - 1}`;
+    }
     this.idByKey = undefined;
   }
 

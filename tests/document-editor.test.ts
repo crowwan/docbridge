@@ -306,3 +306,213 @@ describe('SPEC-002 바뀐 블록 표시 자리', () => {
     });
   });
 });
+
+/** 블록 id(문서를 연 때 순서)로 기준·대상 블록을 만든다 */
+const blockRef = (editor: DocumentEditor, id: string) => {
+  const { anchor } = targetOf(editor, id);
+  return { id, anchor };
+};
+const insert = (editor: DocumentEditor, id: string, where: 'before' | 'after', text: string): EditOperation => ({
+  kind: 'insert_paragraph',
+  reference: blockRef(editor, id),
+  where,
+  text,
+});
+const remove = (editor: DocumentEditor, ...ids: string[]): EditOperation => ({
+  kind: 'delete_blocks',
+  targets: ids.map((id) => blockRef(editor, id)),
+});
+/** 블록을 "종류:글자" 로 */
+const describeBlocks = (editor: DocumentEditor) => editor.blocks.map((block) => `${block.kind}:${textOf(block)}`);
+const paraShapeIdAt = (doc: HwpDocument, paragraph: number): unknown => JSON.parse(doc.getParaPropertiesAt(S, paragraph)).paraShapeId;
+const tableId = (editor: DocumentEditor) => {
+  const id = BlockIdTable.assign(editor.blocks)
+    .label(editor.blocks)
+    .find(({ block }) => block.kind === 'table')?.id;
+  if (id === undefined) throw new Error('표가 없다');
+  return id;
+};
+
+describe('SPEC-002 insert_paragraph (편집 공용 경로)', () => {
+  it('AC-2 기준 문단 뒤에 넣으면 기준 문단 모양·마지막 글자 모양을 따르고, 넣은 문단을 바뀐 블록으로 돌려준다', () => {
+    const editor = new DocumentEditor(openFixture('notice.hwpx'));
+    const reference = 10; // b11 "회신 기한: …"
+    const last = editor.doc.getParagraphLength(S, reference) - 1;
+
+    const changed = editor.edit(insert(editor, 'b11', 'after', '문의: 안전총괄과'), editor.depth);
+
+    expect(changed).toEqual([
+      {
+        anchor: { section: S, paragraph: 11, part: 'text' },
+        block: expect.objectContaining({ kind: 'paragraph', text: '문의: 안전총괄과' }),
+      },
+    ]);
+    expect(paraShapeIdAt(editor.doc, 11)).toBe(paraShapeIdAt(editor.doc, reference));
+    expect(charShapeIdAt(editor.doc, 11, 0)).toBe(charShapeIdAt(editor.doc, reference, last));
+    // 뒤 블록(표)은 한 문단 밀린다
+    expect(editor.blocks.find((block) => block.kind === 'table')?.paragraph).toBe(12);
+  });
+
+  it('AC-2 번호 문단 앞에 넣으면 새 문단도 번호를 받고 뒤 번호가 다시 매겨진다', () => {
+    const editor = new DocumentEditor(openFixture('notice.hwpx'));
+    const numberOf = (text: string) => {
+      const block = editor.blocks.find((b) => b.kind === 'paragraph' && b.text.startsWith(text));
+      return block?.kind === 'paragraph' ? block.number : undefined;
+    };
+    expect(numberOf('관련')).toBe('1.');
+
+    editor.edit(insert(editor, 'b6', 'before', '새로 넣은 항목'), editor.depth);
+
+    expect([numberOf('새로 넣은 항목'), numberOf('관련')]).toEqual(['1.', '2.']);
+  });
+
+  it('AC-2 기준이 표·누름틀이면 그것이 든 문단 앞뒤에 넣는다', () => {
+    const editor = new DocumentEditor(openFixture('notice.hwpx'));
+    editor.edit(insert(editor, 'b12', 'before', '표 앞 문단'), editor.depth);
+    editor.edit(insert(editor, 'b3', 'after', '수신 뒤 문단'), editor.depth);
+
+    const texts = describeBlocks(editor);
+    expect(texts.slice(0, 4)).toEqual(['paragraph:가나다구청', 'paragraph:수신  ', 'field:', 'paragraph:수신 뒤 문단']);
+    expect(texts.indexOf('paragraph:표 앞 문단') + 1).toBe(texts.findIndex((text) => text.startsWith('table:')));
+  });
+
+  it('AC-2 빈 글자면 빈 문단을 넣고 빈 문단 블록으로 남겨 다시 채울 수 있다', () => {
+    const editor = new DocumentEditor(openFixture('notice.hwpx'));
+    const count = editor.blocks.length;
+
+    const changed = editor.edit(insert(editor, 'b1', 'after', ''), editor.depth);
+
+    expect(changed.map(({ block }) => textOf(block))).toEqual(['']);
+    expect(editor.blocks).toHaveLength(count + 1);
+    editor.edit(replace(editor, 'b2', '채운 글자'), editor.depth);
+    expect(blockText(editor, 1)).toBe('채운 글자');
+  });
+
+  it('줄바꿈이 든 글자와 구역 첫 문단 앞에는 넣지 않고 문서는 그대로다', () => {
+    const editor = new DocumentEditor(openFixture('notice.hwpx'));
+    const before = JSON.stringify(editor.blocks);
+
+    expect(() => editor.edit(insert(editor, 'b5', 'after', '첫 줄\n둘째 줄'), editor.depth)).toThrow(
+      '넣을 글자에 줄바꿈이 있습니다. 문단을 여럿 넣으려면 insert_paragraph 를 문단마다 부르세요.',
+    );
+    expect(() => editor.edit(insert(editor, 'b1', 'before', '맨 앞'), editor.depth)).toThrow(
+      '구역 첫 문단 앞에는 문단을 넣을 수 없습니다. 첫 문단 뒤에 넣으세요.',
+    );
+    expect(JSON.stringify(editor.blocks)).toBe(before);
+    expect(editor.depth).toBe(0);
+  });
+
+  it('AC-2 넣기를 되돌리면 넣은 문단이 사라지고 블록이 넣기 전과 같다', () => {
+    const editor = new DocumentEditor(openFixture('notice.hwpx'));
+    const before = JSON.stringify(editor.blocks);
+    editor.edit(insert(editor, 'b7', 'after', '넣은 문단'), editor.depth);
+
+    expect(editor.undo(1, editor.depth)).toBe(1);
+    expect(JSON.stringify(editor.blocks)).toBe(before);
+  });
+});
+
+describe('SPEC-002 delete_blocks (편집 공용 경로)', () => {
+  it('AC-3 여러 문단을 한 편집으로 지우고, 한 번 되돌리면 모두 돌아온다', () => {
+    const editor = new DocumentEditor(openFixture('notice.hwpx'));
+    const before = JSON.stringify(editor.blocks);
+    const all = describeBlocks(editor);
+
+    const changed = editor.edit(remove(editor, 'b8', 'b10'), editor.depth);
+
+    expect(changed).toEqual([]);
+    expect(describeBlocks(editor)).toEqual(all.filter((_, i) => i !== 7 && i !== 9));
+    expect(editor.doc.getParagraphCount(S)).toBe(13);
+    expect(editor.undo(1, editor.depth)).toBe(1);
+    expect(JSON.stringify(editor.blocks)).toBe(before);
+  });
+
+  it('AC-3 표만 든 문단의 표를 지우면 문단째 지워 빈 줄이 남지 않는다', () => {
+    const editor = new DocumentEditor(openFixture('notice.hwpx'));
+
+    editor.edit(remove(editor, 'b12'), editor.depth);
+
+    expect(editor.blocks.some((block) => block.kind === 'table')).toBe(false);
+    expect(editor.doc.getParagraphCount(S)).toBe(14);
+  });
+
+  it('AC-3 표가 든 문단에 글자도 있으면 표만 지우고 글자는 남긴다', () => {
+    const doc = openFixture('notice.hwpx');
+    doc.insertText(S, 11, doc.getParagraphLength(S, 11), '표 아래 설명');
+    const editor = new DocumentEditor(doc);
+
+    editor.edit(remove(editor, tableId(editor)), editor.depth);
+
+    expect(editor.blocks.some((block) => block.kind === 'table')).toBe(false);
+    expect(describeBlocks(editor)).toContain('paragraph:표 아래 설명');
+    expect(editor.doc.getParagraphCount(S)).toBe(15);
+  });
+
+  it('AC-3 누름틀이 든 문단 블록을 지우면 누름틀도 같이 지워진다', () => {
+    const editor = new DocumentEditor(openFixture('notice.hwpx'));
+
+    editor.edit(remove(editor, 'b2'), editor.depth);
+
+    expect(editor.blocks.some((block) => block.kind === 'field')).toBe(false);
+    expect(listFields(editor.doc)).toEqual([]);
+  });
+
+  it('AC-3 누름틀 블록과 구역 첫 문단은 지우지 않고 문서는 그대로다(구역을 비우는 삭제도 첫 문단에서 막힌다)', () => {
+    const editor = new DocumentEditor(openFixture('notice.hwpx'));
+    const before = JSON.stringify(editor.blocks);
+    const everything = BlockIdTable.assign(editor.blocks)
+      .label(editor.blocks)
+      .flatMap(({ id, block }) => (id === undefined || block.kind === 'field' ? [] : [id]));
+
+    expect(() => editor.edit(remove(editor, 'b3'), editor.depth)).toThrow(
+      '누름틀 블록은 지울 수 없습니다: b3. 값을 비우려면 replace_text 를, 문단째 지우려면 그 문단 블록 id 를 주세요.',
+    );
+    expect(() => editor.edit(remove(editor, ...everything), editor.depth)).toThrow(
+      '구역 첫 문단은 지울 수 없습니다(구역·단 정의가 든 문단): b1. 글자를 지우려면 replace_text 를 쓰세요.',
+    );
+    expect(JSON.stringify(editor.blocks)).toBe(before);
+    expect(editor.depth).toBe(0);
+  });
+
+  it('표만 든 문단에 블록이 아닌 개체(수식 등)가 같이 있으면 지우지 않는다', () => {
+    const doc = openFixture('notice.hwpx');
+    doc.insertEquation(S, 11, 0, 'x+y', 1000, 0);
+    const editor = new DocumentEditor(doc);
+    const before = JSON.stringify(editor.blocks);
+    const table = tableId(editor);
+
+    expect(() => editor.edit(remove(editor, table), editor.depth)).toThrow(
+      `${table}: 표가 든 문단에 다른 개체(그림 등)가 있어 지울 수 없습니다.`,
+    );
+    expect(JSON.stringify(editor.blocks)).toBe(before);
+  });
+
+  it('누름틀이 든 표는 표만 지우지 않고, 표만 든 문단이면 문단째 지운다', () => {
+    const withText = openFixture('notice.hwpx');
+    withText.insertClickHereFieldInCell(S, 11, 0, 0, 0, 0, false, '입력', '', '칸 누름틀', true);
+    withText.insertText(S, 11, withText.getParagraphLength(S, 11), '표 아래 설명');
+    const editor = new DocumentEditor(withText);
+    const table = tableId(editor);
+    expect(() => editor.edit(remove(editor, table), editor.depth)).toThrow(
+      `${table}: 누름틀이 든 표는 표만 지울 수 없습니다. 표가 든 문단의 다른 블록과 함께 지우세요.`,
+    );
+
+    const alone = openFixture('notice.hwpx');
+    alone.insertClickHereFieldInCell(S, 11, 0, 0, 0, 0, false, '입력', '', '칸 누름틀', true);
+    const aloneEditor = new DocumentEditor(alone);
+    expect(aloneEditor.blocks.filter((block) => block.paragraph === 11).map((block) => block.kind)).toEqual(['table', 'field']);
+    aloneEditor.edit(remove(aloneEditor, tableId(aloneEditor)), aloneEditor.depth);
+    expect(aloneEditor.blocks.some((block) => block.kind === 'table' || (block.kind === 'field' && block.name === '칸 누름틀'))).toBe(false);
+  });
+
+  it('지운 뒤에도 편집으로 비운 문단은 새 위치에서 빈 블록으로 남는다', () => {
+    const editor = new DocumentEditor(openFixture('notice.hwpx'));
+    editor.edit(replace(editor, 'b9', ''), editor.depth);
+    const count = editor.blocks.length;
+
+    editor.edit(remove(editor, 'b7'), editor.depth);
+
+    expect(editor.blocks).toHaveLength(count - 1);
+    expect(editor.blocks.some((block) => block.kind === 'paragraph' && block.text === '' && block.paragraph === 7)).toBe(true);
+  });
+});

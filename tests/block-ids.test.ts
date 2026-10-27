@@ -97,6 +97,38 @@ describe('SPEC-001 블록 id (기술 검증)', () => {
     expect(ids.idOf({ kind: 'table', section: 0, paragraph: 2, controlIndex: 0 })).toBe('b3');
   });
 
+  it('같은 문단에 걸린 블록의 id 와 위치를 모두 돌려준다', () => {
+    const ids = BlockIdTable.assign([
+      { kind: 'paragraph', section: 0, paragraph: 0 },
+      { kind: 'paragraph', section: 0, paragraph: 1 },
+      { kind: 'field', section: 0, paragraph: 1 },
+      { kind: 'table', section: 0, paragraph: 1, controlIndex: 2 },
+    ]);
+
+    expect(ids.anchorsAt(0, 1)).toEqual([
+      { id: 'b2', anchor: { section: 0, paragraph: 1, part: 'text' } },
+      { id: 'b3', anchor: { section: 0, paragraph: 1, part: 'field:0' } },
+      { id: 'b4', anchor: { section: 0, paragraph: 1, part: 'table:2' } },
+    ]);
+    expect(ids.anchorsAt(0, 5)).toEqual([]);
+  });
+
+  it('표만 지우면 그 표 id 만 사라지고 같은 문단 뒤 표들의 컨트롤 번호가 당겨진다 (SPEC-002 AC-3)', () => {
+    const ids = BlockIdTable.assign([
+      { kind: 'paragraph', section: 0, paragraph: 1 },
+      { kind: 'table', section: 0, paragraph: 1, controlIndex: 0 },
+      { kind: 'table', section: 0, paragraph: 1, controlIndex: 1 },
+      { kind: 'table', section: 0, paragraph: 2, controlIndex: 1 },
+    ]);
+
+    ids.tableDeleted(0, 1, 0);
+
+    expect(ids.anchor('b2')).toBeUndefined();
+    expect(ids.idOf({ kind: 'paragraph', section: 0, paragraph: 1 })).toBe('b1');
+    expect(ids.idOf({ kind: 'table', section: 0, paragraph: 1, controlIndex: 0 })).toBe('b3');
+    expect(ids.idOf({ kind: 'table', section: 0, paragraph: 2, controlIndex: 1 })).toBe('b4');
+  });
+
   it('대응표를 고치지 않으면 문단을 넣은 뒤 id 가 다른 내용을 가리킨다', () => {
     const doc = openFixture('notice.hwpx');
     const before = extractBlocks(doc);

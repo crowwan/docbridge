@@ -5,7 +5,7 @@ import { charLength } from '../core/chars.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { NOTE_MAX_CHARS, textTargetSchema } from '../shared/protocol.ts';
 import { UNDO_LIMIT } from '../core/edit-history.ts';
-import { NOTHING_TO_UNDO, replaceText, undo } from './edit-tools.ts';
+import { deleteBlocks, insertParagraph, NOTHING_TO_UNDO, replaceText, undo } from './edit-tools.ts';
 import { clearHighlight, highlight } from './highlight-tools.ts';
 import { findText, getOutline, readBlockContents } from './read-tools.ts';
 import { saveDocument } from './save-tool.ts';
@@ -115,9 +115,33 @@ export function createMcpServer(session: DocumentSession): McpServer {
   );
 
   server.registerTool(
+    'insert_paragraph',
+    {
+      description:
+        '기준 블록 앞(before) 또는 뒤(after)에 새 문단을 넣는다(바로 적용, undo 로 되돌림). before·after 중 하나만 준다. 기준이 표·누름틀이면 그것이 든 문단 앞뒤다. 문단 모양은 기준 문단, 글자 모양은 앞에 넣으면 기준 문단 첫 글자·뒤에 넣으면 마지막 글자를 따르고, 기준이 번호 문단이면 새 문단도 번호를 받아 번호가 다시 매겨진다. 구역 첫 문단 앞에는 넣지 못한다. text 는 줄바꿈 없이(문단 여럿은 문단마다 부른다), 비면 빈 문단. 기존 블록 id 는 그대로다. 결과 { inserted(새 블록 id), changed: [{ id, text }], warnings? }',
+      inputSchema: {
+        before: z.string().optional().describe('이 블록 앞에 넣는다'),
+        after: z.string().optional().describe('이 블록 뒤에 넣는다'),
+        text: z.string().describe('새 문단 글자(줄바꿈 없이)'),
+      },
+    },
+    (args) => toolResult(() => insertParagraph(session, args)),
+  );
+
+  server.registerTool(
+    'delete_blocks',
+    {
+      description:
+        '블록(문단·표)을 지운다(바로 적용, 여러 id 도 undo 한 번에 되돌림). 문단 블록은 문단째 지워 그 문단에 든 표·누름틀도 같이 지워진다. 표 블록은 그 문단에 다른 블록이 없으면 문단째, 있으면 표만 지운다. 누름틀 블록은 지울 수 없고(값 비우기는 replace_text), 구역 첫 문단도 지울 수 없다(글자 지우기는 replace_text). 나머지 블록 id 는 그대로다. 결과 { deleted(지운 id, 같이 지워진 표·누름틀 포함) }',
+      inputSchema: { ids: z.array(z.string()).min(1).describe('지울 블록 id 목록') },
+    },
+    ({ ids }) => toolResult(() => deleteBlocks(session, ids)),
+  );
+
+  server.registerTool(
     'undo',
     {
-      description: `편집(replace_text 등)을 최근 것부터 되돌린다. 최대 ${UNDO_LIMIT}단계이고 그보다 옛 편집은 되돌릴 수 없다. 뷰어가 다시 그려진다. 결과 { undone, edits(되돌린 편집, 최근 것부터), warnings? }. 되돌릴 것이 없으면 "${NOTHING_TO_UNDO}"`,
+      description: `편집(replace_text·insert_paragraph·delete_blocks 등)을 최근 것부터 되돌린다. 최대 ${UNDO_LIMIT}단계이고 그보다 옛 편집은 되돌릴 수 없다. 뷰어가 다시 그려진다. 결과 { undone, edits(되돌린 편집, 최근 것부터), warnings? }. 되돌릴 것이 없으면 "${NOTHING_TO_UNDO}"`,
       inputSchema: {
         steps: z.number().int().min(1).max(UNDO_LIMIT).default(1).describe(`되돌릴 편집 수(기본 1, 최대 ${UNDO_LIMIT})`),
       },

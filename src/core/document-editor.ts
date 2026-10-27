@@ -8,7 +8,7 @@ import { anchorsOf, type BlockAnchor } from './block-ids.ts';
 import type { Block } from './block-schema.ts';
 import { extractBlocks } from './blocks.ts';
 import { EditHistory } from './edit-history.ts';
-import { applyEdit, type EditOperation, type ParagraphPosition } from './edit-operations.ts';
+import { applyEdit, type EditApplied, type EditOperation, type ParagraphPosition } from './edit-operations.ts';
 
 export interface ChangedBlock {
   anchor: BlockAnchor;
@@ -22,14 +22,14 @@ const positionKey = ({ section, paragraph }: ParagraphPosition) => `${section}:$
 
 export class DocumentEditor {
   readonly doc: HwpDocument;
-  // 되돌리기 이름·상태는 서버(server/edit-log.ts)가 들고, 뷰어는 같은 순서의 스냅샷만 쌓는다
-  private readonly history: EditHistory<null>;
+  // 되돌리기 이름·id 표는 서버(server/edit-log.ts)가 들고, 뷰어는 같은 순서의 스냅샷과 편집 전 블록 목록을 쌓는다
+  private readonly history: EditHistory<Block[]>;
   private current: Block[];
   private appliedDepth = 0;
 
   constructor(doc: HwpDocument) {
     this.doc = doc;
-    this.history = new EditHistory<null>(doc);
+    this.history = new EditHistory<Block[]>(doc);
     this.current = extractBlocks(doc);
   }
 
@@ -53,12 +53,12 @@ export class DocumentEditor {
     show: (changed: ChangedBlock[], blocks: Block[]) => void = () => undefined,
   ): ChangedBlock[] {
     this.assertDepth(expectedDepth);
-    const { changed, blocks } = this.history.apply(operation.kind, null, () => {
+    const { changed, blocks } = this.history.apply(operation.kind, this.current, () => {
       const applied = applyEdit(this.doc, this.current, operation);
       const touched = new Set(applied.paragraphs.map(positionKey));
-      // 이미 문단 블록이던(id 가 있는) 문단은 편집으로 비어도 블록으로 남긴다(처음 열 때 빈 문단만 뺀다).
-      // #20·#21 처럼 문단 위치가 밀리는 편집은 이 위치 표도 편집에 맞춰 옮겨야 한다
-      const next = extractBlocks(this.doc, this.keepParagraphs());
+      // 이미 문단 블록이던(id 가 있는) 문단과 새로 넣은 문단은 편집으로 비어도 블록으로 남긴다(처음 열 때 빈 문단만 뺀다).
+      // 문단을 넣거나 지우는 편집은 그 위치를 편집 뒤 위치로 옮긴다(relocate)
+      const next = extractBlocks(this.doc, this.keepParagraphs(applied));
       const result = { changed: changedBlocks(next, touched), blocks: next };
       show(result.changed, next);
       return result;
@@ -73,8 +73,9 @@ export class DocumentEditor {
     this.assertDepth(expectedDepth);
     const undone = this.history.undo(steps);
     if (undone === undefined) return 0;
-    // 그때 문단 블록이던 문단은 지금 블록 목록에도 있다(비운 문단은 블록으로 남겨 왔다)
-    this.current = extractBlocks(this.doc, this.keepParagraphs());
+    // 스냅샷은 문서를 그 편집 전 그대로 돌려놓으므로 그때 뽑아 둔 블록 목록이 맞다
+    // (다시 뽑으면 문단을 넣고 지운 편집 뒤의 위치로 "남길 빈 문단"을 고르게 된다)
+    this.current = undone.state;
     this.appliedDepth -= undone.labels.length;
     return undone.labels.length;
   }
@@ -84,9 +85,17 @@ export class DocumentEditor {
     return this.history.dispose();
   }
 
-  /** 지금 문단 블록인 위치: 비어도 블록으로 남긴다 */
-  private keepParagraphs(): (section: number, paragraph: number) => boolean {
-    const known = new Set(this.current.flatMap((block) => (block.kind === 'paragraph' ? [positionKey(block)] : [])));
+  /** 편집 뒤 블록으로 남길 문단: 지금 문단 블록인 위치(편집 뒤 위치로 옮김)와 새로 넣은 문단. 비어도 블록으로 남긴다 */
+  private keepParagraphs(applied: EditApplied): (section: number, paragraph: number) => boolean {
+    const relocate = applied.relocate ?? ((position: ParagraphPosition) => position);
+    const known = new Set(
+      this.current.flatMap((block) => {
+        if (block.kind !== 'paragraph') return [];
+        const moved = relocate(block);
+        return moved === undefined ? [] : [positionKey(moved)];
+      }),
+    );
+    for (const position of applied.inserted ?? []) known.add(positionKey(position));
     return (section, paragraph) => known.has(positionKey({ section, paragraph }));
   }
 
