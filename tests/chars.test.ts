@@ -54,6 +54,16 @@ describe('SPEC-006 입력 전후를 비교해 바뀐 범위만 구한다', () =>
     expect(changedRange('aa', 'aaa', 3)).toEqual({ start: 2, end: 2, text: 'a' });
   });
 
+  // Delete(앞으로 지우기)는 커서가 지운 자리 앞에 남지만, 넣은 글자가 없어 "고친 글자가 커서 바로 앞에서 끝난다"와 같아진다
+  it.each([
+    { how: '선택 영역을 바꿈("aXa" 의 X 를 골라 "a")', before: 'aXa', after: 'aaa', caret: 2, range: { start: 1, end: 2, text: 'a' } },
+    { how: '붙여 넣음("ab" 의 a 뒤에 "bb")', before: 'ab', after: 'abbb', caret: 3, range: { start: 1, end: 1, text: 'bb' } },
+    { how: 'Delete 로 첫 "가" 지움(커서 0)', before: '가가나', after: '가나', caret: 0, range: { start: 0, end: 1, text: '' } },
+    { how: 'Delete 로 둘째 "가" 지움(커서 1)', before: '가가나', after: '가나', caret: 1, range: { start: 1, end: 2, text: '' } },
+  ])('$how 도 커서로 사람이 고친 자리를 잡는다', ({ before, after, caret, range }) => {
+    expect(changedRange(before, after, caret)).toEqual(range);
+  });
+
   it('커서가 바뀐 자리 밖이어도(고친 뒤 커서를 옮김) 바뀐 범위는 맞는 글자를 만든다', () => {
     expect(changedRange('가나다', '가라다', 0)).toEqual({ start: 1, end: 2, text: '라' });
     expect(changedRange('가나다', '가라다', 3)).toEqual({ start: 1, end: 2, text: '라' });

@@ -122,24 +122,26 @@ test.describe('SPEC-006 더블클릭으로 글자 고치기 (서버가 내주는
 
   test('같은 글자가 이어지는 곳에서는 커서 자리의 글자를 지운다(굵은 첫 "1" 을 지우면 보통 "1" 이 남는다)', async ({ page }) => {
     // "11. 14." 의 첫 "1"(13) 만 굵게
-    await session.open(await boldCopy([[13, 14]]));
+    await sessions.open(await boldCopy([[13, 14]]));
 
     await doubleClick(page, { id: 'b11' });
-    await page.keyboard.press('Home');
-    for (let step = 0; step < 14; step += 1) await page.keyboard.press('ArrowRight');
+    // 커서를 첫 "1" 바로 뒤(14)에 두고 확인한 뒤 지운다. Home 은 감긴 화면 줄 처음이고 macOS 는 ⌘Home 이 글 처음이 아니라
+    // 키로 옮기지 않는다
+    await editBox(page).evaluate((textarea: HTMLTextAreaElement) => textarea.setSelectionRange(14, 14));
+    expect(await editBox(page).evaluate((textarea: HTMLTextAreaElement) => [textarea.selectionStart, textarea.selectionEnd])).toEqual([14, 14]);
     await page.keyboard.press('Backspace');
     await page.keyboard.press('Enter');
 
     const after = B11_BEFORE.replace('11.', '1.');
     await expect.poll(() => blockText('b11')).toBe(after);
-    const saved = await saveDocument(session, {});
+    const saved = await saveDocument(sessions.get(), {});
     const doc = new HwpDocument(new Uint8Array(await readFile(saved.path)));
     expect(boldSchema.parse(JSON.parse(doc.getCharPropertiesAt(0, 10, 13))).bold).toBe(false);
     doc.free();
   });
 
   test('한글 조합 중 Enter 는 조합만 끝내고 적용하지 않는다', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
+    await sessions.open(fixturePath('notice.hwpx'));
 
     await doubleClick(page, { id: 'b11' });
     await editBox(page).fill(B11_AFTER);
@@ -149,7 +151,7 @@ test.describe('SPEC-006 더블클릭으로 글자 고치기 (서버가 내주는
 
     await page.keyboard.press('Enter');
     await expect.poll(() => blockText('b11')).toBe(B11_AFTER);
-    expect(session.editCount).toBe(1);
+    expect(sessions.editCount).toBe(1);
   });
 
   test('AC-2 Esc 면 취소하고, 같은 글자로 Enter 해도 편집이 생기지 않는다', async ({ page }) => {
@@ -295,14 +297,14 @@ test.describe('SPEC-006 더블클릭으로 글자 고치기 (서버가 내주는
   });
 
   test('입력칸이 열린 동안 Claude 가 위에 문단을 넣으면 입력칸이 그 블록 새 자리로 옮겨 간다', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
+    await sessions.open(fixturePath('notice.hwpx'));
 
     await doubleClick(page, { id: 'b11' });
     await editBox(page).fill(B11_AFTER);
     const before = await editBox(page).boundingBox();
-    await insertParagraph(session, { after: 'b1', text: '위에 넣은 문단' });
+    await insertParagraph(sessions.get(), { after: 'b1', text: '위에 넣은 문단' });
 
-    await highlight(session, [{ id: 'b11' }]);
+    await highlight(sessions.get(), [{ id: 'b11' }]);
     const block = await page.getByTestId('highlight-0').boundingBox();
     const moved = await editBox(page).boundingBox();
     expect(moved?.y).toBeGreaterThan(before?.y ?? Infinity);
@@ -315,25 +317,25 @@ test.describe('SPEC-006 더블클릭으로 글자 고치기 (서버가 내주는
   });
 
   test('입력칸이 열린 동안 Claude 가 그 블록을 지우면 입력칸을 닫고 알림이 보인다', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
+    await sessions.open(fixturePath('notice.hwpx'));
 
     await doubleClick(page, { id: 'b11' });
     await editBox(page).fill(B11_AFTER);
-    await deleteBlocks(session, ['b11']);
+    await deleteBlocks(sessions.get(), ['b11']);
 
     await expect(editBox(page)).toHaveCount(0);
     await expect(page.getByRole('alert')).toHaveText(BLOCK_CHANGED_WHILE_EDITING);
     await page.screenshot({ path: `${SCREENS}/dblclick-09-deleted.png` });
-    expect(session.editCount).toBe(1);
+    expect(sessions.editCount).toBe(1);
   });
 
   test('입력칸이 열린 동안 되돌리기가 오면 입력칸을 닫고 알림이 보인다', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
-    await replaceText(session, { id: 'b1' }, '라마바구청');
+    await sessions.open(fixturePath('notice.hwpx'));
+    await replaceText(sessions.get(), { id: 'b1' }, '라마바구청');
 
     await doubleClick(page, { id: 'b11' });
     await editBox(page).fill(B11_AFTER);
-    await undo(session, 1);
+    await undo(sessions.get(), 1);
 
     await expect(editBox(page)).toHaveCount(0);
     await expect(page.getByRole('alert')).toHaveText(BLOCK_CHANGED_WHILE_EDITING);

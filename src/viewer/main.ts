@@ -529,9 +529,13 @@ function undoEdits(steps: number, depth: number, unsaved: number): ViewerResult<
   const undone = editor.undo(steps, depth);
   if (undone === steps) unsavedEdits = unsaved;
   if (undone > 0) {
-    redraw(editor.doc, 'keep');
-    // 되돌리기는 블록 위치를 따라갈 수 없어 열린 입력칸을 닫는다(고친 것이 있으면 거부 문구)
-    inlineEdit?.loseSpot();
+    // 되돌리기는 블록 위치를 따라갈 수 없어 열린 입력칸을 닫는다(고친 것이 있으면 거부 문구).
+    // 다시 그리기가 실패해도 예전 자리를 들고 남지 않게 finally 에서
+    try {
+      redraw(editor.doc, 'keep');
+    } finally {
+      inlineEdit?.loseSpot();
+    }
   }
   return { undone, pageCount: editor.doc.pageCount() };
 }
