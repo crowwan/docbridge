@@ -10,6 +10,7 @@ import { blockBoxes, highlightTargets } from '../src/core/highlight-targets.ts';
 import { exportForSave, type Reopen } from '../src/core/hwpx-export.ts';
 import type { BlockAnchor } from '../src/core/block-ids.ts';
 import { initRhwpForNode } from '../src/core/rhwp-node.ts';
+import { paragraphStyles } from '../src/core/styles.ts';
 import type { RequestMessage, ViewerParams } from '../src/shared/protocol.ts';
 
 export interface RhwpViewerOptions {
@@ -78,6 +79,8 @@ export function rhwpViewer(options: RhwpViewerOptions = {}): RhwpViewer {
       }
       case 'clear_highlight':
         return {};
+      case 'list_styles':
+        return paragraphStyles(opened().doc);
       case 'edit': {
         // 그리지는 않고, 뷰어와 같은 함수로 표시 자리를 구해 표시하지 못한 블록을 돌려준다
         let unmarked: BlockAnchor[] = [];

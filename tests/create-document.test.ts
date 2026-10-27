@@ -10,7 +10,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { extractBlocks } from '../src/core/blocks.ts';
-import { paragraphStyles, TITLE_STYLE } from '../src/core/create-document.ts';
+import { paragraphStyles, TITLE_STYLE } from '../src/core/styles.ts';
 import { exportVerifiedHwpx } from '../src/core/hwpx-export.ts';
 import { parseJson } from '../src/core/json.ts';
 import { startBridge, type Bridge } from '../src/server/bridge.ts';

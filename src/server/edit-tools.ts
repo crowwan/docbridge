@@ -55,9 +55,22 @@ function editResult(changed: EditedBlock[], unmarked: string[], cell?: TextTarge
   };
 }
 
-export interface InsertParagraphResult extends EditResult {
+/** 바뀐 블록 결과 항목에 자동 번호를 붙인 것(insert_paragraph·move_blocks·set_style). 번호는 바뀐 뒤 번호 */
+export type NumberedItem = ChangedItem & { number?: string };
+
+/** 바뀐 블록 → 번호를 붙인 결과 항목(get_outline 항목과 같은 number·text). id 가 없으면 빈 배열 */
+export function numberedItem({ id, block }: EditedBlock): NumberedItem[] {
+  if (id === undefined) return [];
+  const { number, text } = outlineItem({ id, block });
+  return [{ id, ...(number === undefined ? {} : { number }), text }];
+}
+
+export interface InsertParagraphResult {
   /** 새 문단 블록 id */
   inserted: string;
+  /** 새 문단과 번호가 다시 매겨진 문단(number 는 넣은 뒤 자동 번호) */
+  changed: NumberedItem[];
+  warnings?: string[];
 }
 
 export const WHERE_REQUIRED = 'before 와 after 중 하나만 주세요.';
@@ -69,22 +82,26 @@ export function referenceOf({ before, after }: { before?: string; after?: string
   throw new Error(WHERE_REQUIRED);
 }
 
-/** 기준 블록(before 또는 after 하나) 앞·뒤에 새 문단을 넣는다. 서식은 기준 문단을 따른다 */
+/** 기준 블록(before 또는 after 하나) 앞·뒤에 새 문단을 넣는다. 서식은 기준 문단을 따르고, style 을 주면 그 스타일 모양 그대로다(SPEC-003) */
 export async function insertParagraph(
   session: DocumentSession,
-  { before, after, text }: { before?: string; after?: string; text: string },
+  { before, after, text, style }: { before?: string; after?: string; text: string; style?: string },
 ): Promise<InsertParagraphResult> {
   const { referenceId, where } = referenceOf({ before, after });
   const { changed, unmarked, inserted } = await session.edit((document) => {
     const { anchor } = anchoredTarget(document.ids, { id: referenceId });
     return {
-      label: `insert_paragraph ${where} ${referenceId}`,
-      operation: { kind: 'insert_paragraph', reference: { id: referenceId, anchor }, where, text },
+      label: `insert_paragraph ${where} ${referenceId}${style === undefined ? '' : ` (${style})`}`,
+      operation: { kind: 'insert_paragraph', reference: { id: referenceId, anchor }, where, text, ...(style === undefined ? {} : { style }) },
     };
   });
   const [id] = inserted;
   if (id === undefined) throw new Error(`${referenceId}: 뷰어가 넣은 문단을 알려 주지 않아 새 id 를 붙이지 못했습니다.`);
-  return { inserted: id, ...editResult(changed, unmarked) };
+  return {
+    inserted: id,
+    changed: changed.flatMap(numberedItem),
+    ...(unmarked.length === 0 ? {} : { warnings: unmarked.map(unmarkedMessage) }),
+  };
 }
 
 export interface DeleteBlocksResult {
@@ -106,14 +123,12 @@ export async function deleteBlocks(session: DocumentSession, ids: string[]): Pro
   return { deleted };
 }
 
-/** 옮긴 뒤 블록: 자동 번호 문단이면 옮긴 뒤 번호 */
-export type MovedItem = ChangedItem & { number?: string };
 
 export interface MoveBlocksResult {
   /** 옮긴 블록 id(문서 순서). 고른 블록과 같은 문단에 걸린 블록도 담는다 */
   moved: string[];
   /** 옮긴 블록과 자동 번호가 바뀐 문단의 블록(문서 순서) */
-  changed: MovedItem[];
+  changed: NumberedItem[];
   /** 직접 입력한 번호가 있는 문단, 뷰어에 표시하지 못한 블록 */
   warnings?: string[];
 }
@@ -153,11 +168,6 @@ export async function moveBlocks(
   // 옮긴 블록 = 옮긴 범위에 든 블록(문서 순서. id 는 그대로라 계획 때 id 와 같고, 뷰어가 범위를 양방향으로 맞춰 본다)
   const moved = plan?.blocks.map(({ id }) => id) ?? [];
   const movedIds = new Set(moved);
-  const items = changed.flatMap(({ id, block }) => {
-    if (id === undefined) return [];
-    const number = block.kind === 'paragraph' ? block.number : undefined;
-    return [{ id, block, item: { id, ...(number === undefined ? {} : { number }), text: outlineItem({ id, block }).text } }];
-  });
   // 직접 입력한 번호: 옮긴 문단과 사이에서 순서가 바뀐 문단을 본다. 사이 문단은 바뀐 블록이 아니라 글자를 뷰어에서 다시 받는다
   const reordered = new Set([...movedIds, ...(plan?.shifted ?? [])]);
   const typed = (await labeledBlocks(session)).filter(
@@ -166,7 +176,7 @@ export async function moveBlocks(
   const warnings = [...(typed.length === 0 ? [] : [typedNumberMessage(typed.map(({ id }) => id))]), ...unmarked.map(unmarkedMessage)];
   return {
     moved,
-    changed: items.map(({ item }) => item),
+    changed: changed.flatMap(numberedItem),
     ...(warnings.length === 0 ? {} : { warnings }),
   };
 }
