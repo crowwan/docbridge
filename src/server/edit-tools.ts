@@ -6,7 +6,7 @@ import { UNDO_LIMIT } from '../core/edit-history.ts';
 import { targetLabel } from '../core/text-targets.ts';
 import type { TextTarget } from '../shared/protocol.ts';
 import { anchored, anchoredTarget } from './highlight-tools.ts';
-import { planMove, type MovePlan, type MoveWhere } from './move-plan.ts';
+import { planMove, type MovePlan } from './move-plan.ts';
 import { labeledBlocks } from './read-tools.ts';
 import { outlineItem, preview } from './reading.ts';
 import type { DocumentSession, EditedBlock } from './session.ts';
@@ -61,14 +61,21 @@ export interface InsertParagraphResult extends EditResult {
   inserted: string;
 }
 
+export const WHERE_REQUIRED = 'before 와 after 중 하나만 주세요.';
+
+/** 기준 블록 입력(before 또는 after 하나) → 기준 id 와 방향. 둘 다 주거나 하나도 안 주면 던진다(insert_paragraph·move_blocks 공용) */
+export function referenceOf({ before, after }: { before?: string; after?: string }): { referenceId: string; where: 'before' | 'after' } {
+  if (before !== undefined && after === undefined) return { referenceId: before, where: 'before' };
+  if (after !== undefined && before === undefined) return { referenceId: after, where: 'after' };
+  throw new Error(WHERE_REQUIRED);
+}
+
 /** 기준 블록(before 또는 after 하나) 앞·뒤에 새 문단을 넣는다. 서식은 기준 문단을 따른다 */
 export async function insertParagraph(
   session: DocumentSession,
   { before, after, text }: { before?: string; after?: string; text: string },
 ): Promise<InsertParagraphResult> {
-  if ((before === undefined) === (after === undefined)) throw new Error('before 와 after 중 하나만 주세요.');
-  const where = before === undefined ? 'after' : 'before';
-  const referenceId = before ?? after ?? '';
+  const { referenceId, where } = referenceOf({ before, after });
   const { changed, unmarked, inserted } = await session.edit(`insert_paragraph ${where} ${referenceId}`, (document) => {
     const { anchor } = anchoredTarget(document.ids, { id: referenceId });
     return { kind: 'insert_paragraph', reference: { id: referenceId, anchor }, where, text };
@@ -131,7 +138,11 @@ const moveLabel = (ids: string[]) => `move_blocks ${ids.length <= 2 ? ids.join('
  * move_blocks: 이어진 블록을 기준 블록 앞/뒤로 서식째 옮긴다. 거부 판정과 범위는 planMove(id 표), 옮기기는 뷰어,
  * id 표는 뷰어가 돌려준 실제로 옮긴 범위(changes.moved)로 session 이 옮긴다
  */
-export async function moveBlocks(session: DocumentSession, ids: string[], reference: string, where: MoveWhere): Promise<MoveResult> {
+export async function moveBlocks(
+  session: DocumentSession,
+  { ids, before, after }: { ids: string[]; before?: string; after?: string },
+): Promise<MoveResult> {
+  const { referenceId: reference, where } = referenceOf({ before, after });
   let plan: MovePlan | undefined;
   const chosen = new Set(ids);
   const { changed, unmarked } = await session.edit(

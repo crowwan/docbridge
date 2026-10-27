@@ -152,7 +152,7 @@ test.describe('SPEC-002 문단 넣기·지우기 화면 (서버가 내주는 뷰
     await firstPage.screenshot({ path: `${SCREENS}/move-01-before.png` });
 
     // "3. 회신 기한" 을 "1. 관련" 앞으로
-    const result = await moveBlocks(session, ['b11'], 'b6', 'before');
+    const result = await moveBlocks(session, { ids: ['b11'], before: 'b6' });
 
     expect(result.changed.map(({ id, number }) => `${id} ${number}`)).toEqual(['b11 1.', 'b6 2.', 'b7 3.']);
     await expect(marks(page)).toHaveCount(3);

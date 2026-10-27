@@ -9,10 +9,10 @@ import { z } from 'zod';
 import { UNDO_LIMIT } from '../src/core/edit-history.ts';
 import { createBlankDocument } from '../src/core/rhwp-node.ts';
 import { startBridge, type Bridge } from '../src/server/bridge.ts';
-import { createMcpServer, MOVE_WHERE_REQUIRED } from '../src/server/mcp.ts';
+import { createMcpServer } from '../src/server/mcp.ts';
 import { DocumentSession } from '../src/server/session.ts';
 import { REQUEST_TIMEOUT_MS, type RequestMessage } from '../src/shared/protocol.ts';
-import { replaceText } from '../src/server/edit-tools.ts';
+import { replaceText, WHERE_REQUIRED } from '../src/server/edit-tools.ts';
 import { FakeViewer, NO_RESPONSE } from './fake-viewer.ts';
 import { fixturePath } from './fixtures.ts';
 import { rhwpViewer, type RhwpViewer } from './rhwp-viewer.ts';
@@ -345,8 +345,8 @@ describe('SPEC-002 편집 도구 (replace_text · move_blocks · undo)', () => {
   });
 
   it('before 와 after 를 둘 다 주거나 하나도 안 주면, 또는 계획 단계에서 거부되면 뷰어에 보내지 않는다', async () => {
-    expect(await errorText('move_blocks', { ids: ['b11'], before: 'b6', after: 'b7' })).toBe(MOVE_WHERE_REQUIRED);
-    expect(await errorText('move_blocks', { ids: ['b11'] })).toBe(MOVE_WHERE_REQUIRED);
+    expect(await errorText('move_blocks', { ids: ['b11'], before: 'b6', after: 'b7' })).toBe(WHERE_REQUIRED);
+    expect(await errorText('move_blocks', { ids: ['b11'] })).toBe(WHERE_REQUIRED);
     expect(await errorText('move_blocks', { ids: ['b6', 'b8'], after: 'b11' })).toBe(
       '옮길 블록이 문서에서 이어져 있지 않습니다. 사이 블록 b7 도 ids 에 넣거나 따로 옮기세요.',
     );

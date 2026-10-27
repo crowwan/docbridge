@@ -12,8 +12,6 @@ import { saveDocument } from './save-tool.ts';
 import { OUTLINE_LIMIT, READ_CHAR_LIMIT } from './reading.ts';
 import type { DocumentSession } from './session.ts';
 
-export const MOVE_WHERE_REQUIRED = 'before 와 after 중 하나만 주세요.';
-
 const text = (value: string) => ({ content: [{ type: 'text' as const, text: value }] });
 
 /** 도구 실행 오류를 Claude 가 읽을 수 있는 오류 결과로 바꾼다 */
@@ -151,12 +149,7 @@ export function createMcpServer(session: DocumentSession): McpServer {
         after: z.string().optional().describe('이 블록 뒤로 옮긴다(before 와 둘 중 하나)'),
       },
     },
-    ({ ids, before, after }) =>
-      toolResult(async () => {
-        if (before !== undefined && after === undefined) return moveBlocks(session, ids, before, 'before');
-        if (after !== undefined && before === undefined) return moveBlocks(session, ids, after, 'after');
-        throw new Error(MOVE_WHERE_REQUIRED);
-      }),
+    (args) => toolResult(() => moveBlocks(session, args)),
   );
 
   server.registerTool(
