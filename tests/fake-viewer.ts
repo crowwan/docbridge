@@ -1,6 +1,16 @@
 // 테스트용 가짜 뷰어: 토큰 주소로 WebSocket 에 붙어 서버 요청을 받고, 원하는 결과로 응답한다.
 import { WebSocket } from 'ws';
-import { answerRequest, requestMessageSchema, type LoadDocumentParams, type RequestMessage, type ViewerResult } from '../src/shared/protocol.ts';
+import {
+  answerRequest,
+  requestMessageSchema,
+  userResponseMessageSchema,
+  type LoadDocumentParams,
+  type RequestMessage,
+  type UserMethod,
+  type UserParams,
+  type UserResponseMessage,
+  type ViewerResult,
+} from '../src/shared/protocol.ts';
 
 /** serve 처리 함수가 이것을 돌려주면 응답하지 않는다(뷰어가 처리했지만 응답이 오지 않는 경우 — 타임아웃 재현) */
 export const NO_RESPONSE = Symbol('응답 안 함');
@@ -13,10 +23,19 @@ export class FakeViewer {
   readonly history: RequestMessage[] = [];
   private autoResult: ViewerResult<'load_document'> | undefined;
   private handler: ((request: RequestMessage) => unknown) | undefined;
+  /** 서버에 보낸 사람 편집 요청(user_request) 중 응답을 기다리는 것 */
+  private readonly userWaiters = new Map<number, (response: UserResponseMessage) => void>();
+  private nextUserId = 1;
 
   private constructor(ws: WebSocket) {
     this.ws = ws;
     ws.on('message', (data) => {
+      const userResponse = userResponseMessageSchema.safeParse(JSON.parse(String(data)));
+      if (userResponse.success) {
+        this.userWaiters.get(userResponse.data.id)?.(userResponse.data);
+        this.userWaiters.delete(userResponse.data.id);
+        return;
+      }
       const request = requestMessageSchema.parse(JSON.parse(String(data)));
       this.history.push(request);
       const handler = this.handler;
@@ -77,6 +96,15 @@ export class FakeViewer {
 
   fail(id: number, error: string): void {
     this.ws.send(JSON.stringify({ type: 'response', id, ok: false, error }));
+  }
+
+  /** 뷰어 → 서버 요청(사람 편집·⌘Z, SPEC-006)을 보내고 서버 응답을 기다린다 */
+  userRequest<M extends UserMethod>(method: M, params: UserParams<M>): Promise<UserResponseMessage> {
+    const id = this.nextUserId;
+    this.nextUserId += 1;
+    const response = new Promise<UserResponseMessage>((resolve) => this.userWaiters.set(id, resolve));
+    this.ws.send(JSON.stringify({ type: 'user_request', id, method, params }));
+    return response;
   }
 
   close(): void {

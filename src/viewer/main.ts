@@ -4,6 +4,8 @@
 // - ?fixture=<이름>: 개발 서버의 fixtures/ 에서 문서를 연다(개발·E2E 전용)
 // - 둘 다 없거나 토큰이 거부되면 "docbridge 가 연 탭이 아닙니다" 화면
 // 편집(SPEC-002)은 core/document-editor.ts 공용 경로로 하고, 여기서는 다시 그리고 바뀐 블록에 초록 테두리를 남긴다.
+// 사람 편집(SPEC-006)은 바로 고치지 않고 서버에 user_edit 로 보낸다. 서버가 Claude 편집과 같은 줄로 처리해 edit 요청으로 돌려준다.
+// ⌘Z(윈도우 Ctrl+Z)는 서버 공용 되돌리기(user_undo).
 import init, { HwpDocument } from '@rhwp/core';
 import wasmUrl from '@rhwp/core/rhwp_bg.wasm?url';
 import type { BlockAnchor } from '../core/block-ids.ts';
@@ -21,7 +23,14 @@ import { base64ToBytes } from '../shared/base64.ts';
 import { errorMessage } from '../shared/errors.ts';
 import {
   answerRequest,
+  parseUserResult,
+  RequestTracker,
+  userResponseMessageSchema,
   type CreateDocumentResult,
+  type UserEdit,
+  type UserMethod,
+  type UserParams,
+  type UserResult,
   type LoadDocumentResult,
   type RequestMessage,
   type ViewerParams,
@@ -215,6 +224,7 @@ const api: ViewerApi = {
   highlight: () => {
     throw new Error('문서가 아직 열리지 않았습니다');
   },
+  userEdit: (edit) => requestUserEdit(edit),
 };
 window.docbridge = api;
 
@@ -429,12 +439,49 @@ function undoEdits(steps: number, depth: number, unsaved: number): ViewerResult<
   return { undone, pageCount: editor.doc.pageCount() };
 }
 
+const DISCONNECTED = 'docbridge 와 연결이 끊겨 고칠 수 없습니다';
+
+/** 서버에 붙은 연결. 끊기면 undefined */
+let serverSocket: WebSocket | undefined;
+/** 뷰어 → 서버 요청(사람 편집·⌘Z)의 응답을 id 로 기다린다 */
+const userRequests = new RequestTracker();
+
+/** 서버에 뷰어 요청을 보내고 응답을 기다린다. 연결이 끊겨 있으면 보내지 않고 DISCONNECTED 로 실패한다 */
+function sendUserRequest<M extends UserMethod>(method: M, params: UserParams<M>): Promise<UserResult<M>> {
+  const socket = serverSocket;
+  if (socket === undefined || socket.readyState !== WebSocket.OPEN) return Promise.reject(new Error(DISCONNECTED));
+  const { id, promise } = userRequests.start(method, parseUserResult[method]);
+  socket.send(JSON.stringify({ type: 'user_request', id, method, params }));
+  return promise;
+}
+
+/** 사람 편집을 서버에 보낸다(지금 편집 순번과 함께). 다시 그리기·표시는 서버가 보내는 edit 요청에서 한다 */
+async function requestUserEdit(edit: UserEdit): Promise<void> {
+  await sendUserRequest('user_edit', { edit, depth: openedEditor().depth });
+}
+
+/** 상태 줄에 사람 편집·되돌리기가 안 된 이유를 남긴다(다음 다시 그리기 때 원래 상태 줄로 돌아간다) */
+function reportUserFailure(error: unknown): void {
+  setStatus(errorMessage(error));
+}
+
+// ⌘Z(윈도우 Ctrl+Z): 서버 공용 되돌리기 줄에서 마지막 편집 하나(사람·Claude 상관없이). 입력칸 안에서는 브라우저 기본 동작
+window.addEventListener('keydown', (event) => {
+  if (event.key.toLowerCase() !== 'z' || event.shiftKey || event.altKey || !(event.metaKey || event.ctrlKey)) return;
+  const target = event.target;
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
+  if (currentEditor === undefined) return;
+  event.preventDefault();
+  sendUserRequest('user_undo', {}).catch(reportUserFailure);
+});
+
 const NOT_DOCBRIDGE_TAB = 'docbridge 가 연 탭이 아닙니다';
 const NOT_DOCBRIDGE_DETAIL = 'Claude 채팅에서 open_document 로 문서를 열면 docbridge 가 이 뷰어를 새로 띄웁니다.';
 
 /** 서버에 붙어 요청을 처리한다. 한 번도 열리지 못하고 닫히면(토큰 거부) 안내 화면 */
 function connect(token: string): void {
   const socket = new WebSocket(`ws://${location.host}/?token=${encodeURIComponent(token)}`);
+  serverSocket = socket;
   let opened = false;
   setStatus('연결 중…');
   socket.addEventListener('open', () => {
@@ -442,6 +489,8 @@ function connect(token: string): void {
     setStatus('준비됨');
   });
   socket.addEventListener('close', () => {
+    serverSocket = undefined;
+    userRequests.failAll(new Error(DISCONNECTED));
     if (!opened) {
       showNotice(NOT_DOCBRIDGE_TAB, NOT_DOCBRIDGE_DETAIL);
       setStatus('연결 거부됨');
@@ -450,6 +499,18 @@ function connect(token: string): void {
     setStatus('연결이 끊겼습니다. Claude 채팅에서 open_document 로 다시 여세요.');
   });
   socket.addEventListener('message', (event) => {
+    // 사람 편집·⌘Z 에 대한 서버 응답
+    let data: unknown;
+    try {
+      data = JSON.parse(String(event.data));
+    } catch {
+      return;
+    }
+    const userResponse = userResponseMessageSchema.safeParse(data);
+    if (userResponse.success) {
+      userRequests.settle(userResponse.data);
+      return;
+    }
     const response = answerRequest(String(event.data), handleRequest);
     if (response !== undefined) socket.send(JSON.stringify(response));
   });

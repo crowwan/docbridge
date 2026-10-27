@@ -1,5 +1,5 @@
 // 서버 ↔ 뷰어 WebSocket 프로토콜.
-// 서버가 요청(request)을 보내고 뷰어가 같은 id 로 응답(response)한다. 메시지는 JSON 문자열이고,
+// 서버가 요청(request)을 보내고 뷰어가 같은 id 로 응답(response)한다. 거꾸로 뷰어가 사람 편집을 요청(user_request)하면 서버가 응답(user_response)한다(SPEC-006). 메시지는 JSON 문자열이고,
 // 받는 쪽은 아래 zod 스키마로 읽는다(타입 단언 없이).
 import { z } from 'zod';
 import {
@@ -183,6 +183,67 @@ type MissingRequestMethod = Exclude<ViewerMethod, RequestMessage['method']>;
 const everyMethodHasRequestSchema: [MissingRequestMethod] extends [never] ? true : MissingRequestMethod = true;
 void everyMethodHasRequestSchema;
 
+/**
+ * 사람 편집(SPEC-006): 뷰어가 서버에 "이 편집을 해 달라"고 보낸다. 대상은 뷰어가 가진 블록 위치(anchor)이고,
+ * 서버가 id 표로 블록 id 로 바꿔 Claude 편집과 같은 직렬 큐·편집 기록(session.edit)으로 처리한다(편집기를 새로 만들지 않는다)
+ */
+export const userEditSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('replace_text'),
+    /** 글자 범위·칸은 replace_text 대상과 같다(블록 id 대신 블록 위치) */
+    target: textTargetSchema.omit({ id: true }).extend({ anchor: blockAnchorSchema }),
+    text: z.string(),
+  }),
+  z.object({ kind: z.literal('delete_blocks'), targets: z.array(blockAnchorSchema).min(1) }),
+  z.object({
+    kind: z.literal('move_blocks'),
+    blocks: z.array(blockAnchorSchema).min(1),
+    where: z.enum(['before', 'after']),
+    reference: blockAnchorSchema,
+  }),
+]);
+export type UserEdit = z.infer<typeof userEditSchema>;
+
+/** 뷰어가 서버에 부르는 메서드와 입력·결과 스키마 */
+export const userMethodSchemas = {
+  /** 사람 편집. depth 는 뷰어가 이 편집을 만들 때의 편집 순번 — 서버 순번과 다르면(그사이 문서가 바뀜) 거부한다 */
+  user_edit: { params: z.object({ edit: userEditSchema, depth: depthSchema }), result: z.object({}) },
+  /** ⌘Z/Ctrl+Z: 공용 되돌리기 줄에서 마지막 편집 하나(사람·Claude 상관없이)를 되돌린다. 결과는 되돌린 편집 이름 */
+  user_undo: { params: z.object({}), result: z.object({ undone: z.array(z.string()) }) },
+} as const;
+
+type UserMethodSchemas = typeof userMethodSchemas;
+export type UserMethod = keyof UserMethodSchemas;
+export type UserParams<M extends UserMethod> = z.infer<UserMethodSchemas[M]['params']>;
+export type UserResult<M extends UserMethod> = z.infer<UserMethodSchemas[M]['result']>;
+
+const userRequestSchema = <M extends UserMethod, P extends z.ZodType>(method: M, params: P) =>
+  z.object({ type: z.literal('user_request'), id: z.number(), method: z.literal(method), params });
+
+/** 서버가 뷰어의 요청을 읽는 스키마 */
+export const userRequestMessageSchema = z.discriminatedUnion('method', [
+  userRequestSchema('user_edit', userMethodSchemas.user_edit.params),
+  userRequestSchema('user_undo', userMethodSchemas.user_undo.params),
+]);
+export type UserRequestMessage = z.infer<typeof userRequestMessageSchema>;
+
+type MissingUserMethod = Exclude<UserMethod, UserRequestMessage['method']>;
+const everyUserMethodHasRequestSchema: [MissingUserMethod] extends [never] ? true : MissingUserMethod = true;
+void everyUserMethodHasRequestSchema;
+
+/** 뷰어가 서버 응답의 결과를 메서드 M 의 결과 타입으로 읽는다 */
+export const parseUserResult: { [M in UserMethod]: (result: unknown) => UserResult<M> } = {
+  user_edit: (result) => userMethodSchemas.user_edit.result.parse(result),
+  user_undo: (result) => userMethodSchemas.user_undo.result.parse(result),
+};
+
+/** 서버 → 뷰어 응답(뷰어 요청에 대한). 서버 요청에 대한 뷰어 응답(response)과 type 으로 가른다 */
+export const userResponseMessageSchema = z.union([
+  z.object({ type: z.literal('user_response'), id: z.number(), ok: z.literal(true), result: z.unknown() }),
+  z.object({ type: z.literal('user_response'), id: z.number(), ok: z.literal(false), error: z.string() }),
+]);
+export type UserResponseMessage = z.infer<typeof userResponseMessageSchema>;
+
 export const responseMessageSchema = z.union([
   z.object({ type: z.literal('response'), id: z.number(), ok: z.literal(true), result: z.unknown() }),
   z.object({ type: z.literal('response'), id: z.number(), ok: z.literal(false), error: z.string() }),
@@ -221,8 +282,11 @@ export function answerRequest(raw: string, handle: (request: RequestMessage) => 
 export const timeoutMessage = (method: string, timeoutMs: number) =>
   `뷰어가 ${timeoutMs / 1000}초 안에 응답하지 않았습니다(${method}). 뷰어 탭을 확인하고 다시 시도하세요.`;
 
+/** 요청 하나의 끝(응답 메시지 종류와 상관없이 id·성공 여부·결과) */
+export type Settlement = { type?: string; id: number } & ({ ok: true; result: unknown } | { ok: false; error: string });
+
 interface Pending {
-  settle(response: ResponseMessage): void;
+  settle(response: Settlement): void;
   fail(error: Error): void;
 }
 
@@ -272,7 +336,7 @@ export class RequestTracker {
   }
 
   /** 응답을 해당 요청에 넘긴다. 이미 끝난(타임아웃 등) 요청의 응답은 무시한다 */
-  settle(response: ResponseMessage): void {
+  settle(response: Settlement): void {
     this.pending.get(response.id)?.settle(response);
   }
 
