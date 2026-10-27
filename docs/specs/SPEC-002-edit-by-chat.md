@@ -1,7 +1,7 @@
 ---
 id: SPEC-002
 title: 말로 고치기와 저장
-status: in-progress    # draft | approved | in-progress | done | dropped
+status: done           # draft | approved | in-progress | done | dropped
 milestone: v0.1
 issue: "#17"
 prototype:
@@ -182,3 +182,4 @@ GO 기준: 이동·바꾸기·칸 채우기를 한 fixture 3개가 한글에서 
 | 2026-10-27 | PR #28 재리뷰: `insert_paragraph`·`delete_blocks` 행과 기본 흐름을 번호가 바뀐 문단 표시에 맞춤, 직접 입력 번호 경고는 사이에서 순서가 바뀐 문단도, 괄호·로마 번호도 뒤에 공백이나 글 끝일 때만, 기준 블록이 같은 문단 블록 사이면 문단 가운데로 거부 |
 | 2026-10-27 | 기술 검증(#18) GO 확정: 맥 한컴 뷰어에서 편집·저장 파일이 경고 없이 열림 (ADR 002 accepted) |
 | 2026-10-27 | AC-13 수동 QA 확인 (사용자: Desktop·Cowork, 맥 한컴 뷰어) |
+| 2026-10-27 | v0.1.0 릴리스 (#49), status done |
