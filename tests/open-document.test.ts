@@ -125,6 +125,35 @@ describe('SPEC-001 문서 열기 (open_document)', () => {
     expect(session.document?.fileName).toBe('report.hwpx');
   });
 
+  it('SPEC-002 AC-12 새 문서를 열 때 저장하지 않은 편집이 있으면 버린 편집 수를 결과에 알리고, 새 문서는 편집 없이 시작한다', async () => {
+    const viewer = await connectViewer();
+    await Promise.all([callOpen(fixturePath('notice.hwpx')), answerNextLoad(viewer, 1, 14)]);
+    const first = session.document;
+    first?.edits.record('replace_text b1', first.ids.clone());
+    first?.edits.record('replace_text b2', first.ids.clone());
+    expect([session.editCount, session.unsavedEdits, session.dirty]).toEqual([2, 2, true]);
+
+    const [second] = await Promise.all([callOpen(fixturePath('report.hwpx')), answerNextLoad(viewer, 2, 30)]);
+
+    expect(JSON.parse(second.content[0]?.text ?? '')).toMatchObject({ warnings: ['저장하지 않은 편집 2개를 버렸습니다'] });
+    expect([session.editCount, session.unsavedEdits, session.dirty]).toEqual([0, 0, false]);
+    const [third] = await Promise.all([callOpen(fixturePath('notice.hwpx')), answerNextLoad(viewer, 1, 14)]);
+    expect(JSON.parse(third.content[0]?.text ?? '')).not.toHaveProperty('warnings');
+  });
+
+  it('SPEC-002 AC-12 새 문서를 열지 못해도 이전 문서의 저장하지 않은 편집은 버려지므로 오류에 함께 알린다', async () => {
+    const viewer = await connectViewer();
+    await Promise.all([callOpen(fixturePath('notice.hwpx')), answerNextLoad(viewer, 1, 14)]);
+    session.document?.edits.record('replace_text b1', session.document.ids.clone());
+
+    const [result] = await Promise.all([
+      callOpen(fixturePath('report.hwpx')),
+      viewer.nextRequest().then((request) => viewer.fail(request.id, '손상된 파일입니다')),
+    ]);
+
+    expect(result.content[0]?.text).toBe('문서를 열 수 없습니다: 손상된 파일입니다 (저장하지 않은 편집 1개를 버렸습니다)');
+  });
+
   it('확장자가 .hwp/.hwpx 가 아니면 파일을 읽지 않고 오류를 돌려준다', async () => {
     // 없는 파일이라 읽으려 했다면 "찾을 수 없습니다" 가 나온다
     const result = await callOpen('/없는/폴더/보고서.docx');
