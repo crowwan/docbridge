@@ -258,6 +258,35 @@ describe('SPEC-002 replace_text 누름틀 값 끝 글자를 포함한 범위 (#6
     expect([2, 3].map((offset) => isBoldAt(editor.doc, 0, at + offset))).toEqual([true, true]);
   });
 
+  it('표 칸 안 누름틀도 끝 글자 하나를 바꾸면 새 글자는 끝 글자 모양을 따른다(칸 경로 모양 걸기, PR #82 리뷰)', () => {
+    const { editor, id } = fieldEditor('가나다', 'cell');
+    const [field] = listFields(editor.doc);
+    if (field === undefined) throw new Error('누름틀이 없다');
+    const at = field.startCharIdx;
+    // 칸 = 문단 1 의 표(컨트롤 0) 칸 0, 칸 안 문단 0
+    const cellBoldAt = (offset: number): unknown => JSON.parse(editor.doc.getCellCharPropertiesAt(S, 1, 0, 0, 0, offset)).bold;
+    editor.doc.applyCharFormatInCell(S, 1, 0, 0, 0, at + 2, at + 3, JSON.stringify({ bold: true }));
+
+    editor.edit(replace(editor, id, '라마', { start: 2, end: 3 }), editor.depth);
+
+    expect(fieldValue(editor)).toEqual(['가나라마']);
+    expect([0, 1, 2, 3].map((offset) => cellBoldAt(at + offset))).toEqual([false, false, true, true]);
+  });
+
+  it.each(['body', 'cell'] as const)('끝 글자가 BMP 밖 글자(이모지)여도 글자 단위로 바꾼다 — %s (PR #82 리뷰)', (place) => {
+    const { editor, id } = fieldEditor('가나😀', place);
+    editor.edit(replace(editor, id, '라', { start: 2, end: 3 }), editor.depth);
+    expect(fieldValue(editor)).toEqual(['가나라']);
+
+    editor.edit(replace(editor, id, '𠀀', { start: 2, end: 3 }), editor.depth);
+    editor.edit(replace(editor, id, '마', { start: 1, end: 2 }), editor.depth);
+    expect(fieldValue(editor)).toEqual(['가마𠀀']);
+
+    const single = fieldEditor('😀', place);
+    single.editor.edit(replace(single.editor, single.id, '바사', { start: 0, end: 1 }), single.editor.depth);
+    expect(fieldValue(single.editor)).toEqual(['바사']);
+  });
+
   it.each(['body', 'end', 'cell'] as const)('값 전체(0~3)를 바꾸고 빈 글자로 끝 글자를 지운다 — %s', (place) => {
     const { editor, id } = fieldEditor('가나다', place);
     editor.edit(replace(editor, id, '하', { start: 0, end: 3 }), editor.depth);
