@@ -20,7 +20,7 @@
 
 ## 스택
 
-- Web (TS, Node 24). 로컬 MCP 서버(stdio, `@modelcontextprotocol/sdk`) + 같은 프로세스의 127.0.0.1 HTTP·WebSocket(`ws`, 기본 포트 7790) + 브라우저 뷰어(Vite, `@rhwp/core` 0.8.7 고정 직접 사용) — 결정과 측정값: `docs/decisions/001-stack-and-rhwp.md`, 편집·저장 방식: `docs/decisions/002-edit-and-save.md`, 새 문서 만들기: `docs/decisions/003-create-document.md`
+- Web (TS, Node 24). 로컬 MCP 서버(stdio, `@modelcontextprotocol/sdk`) + 같은 프로세스의 127.0.0.1 HTTP·WebSocket(`ws`, 기본 포트 7790) + 브라우저 뷰어(Vite, `@rhwp/core` 0.8.7 고정 직접 사용) — 결정과 측정값: `docs/decisions/001-stack-and-rhwp.md`, 편집·저장 방식: `docs/decisions/002-edit-and-save.md`, 새 문서 만들기: `docs/decisions/003-create-document.md`, 문서 사이 복사: `docs/decisions/004-cross-document-copy.md`
 - `any`·타입 단언(`as`) 금지(`as const` 는 허용). rhwp 가 돌려주는 JSON 문자열은 zod 스키마로 읽는다(`src/core/json.ts` parseJson). 오류 문구 꺼내기는 `src/shared/errors.ts` errorMessage
 - 상대 import 는 `.ts` 확장자까지 쓴다(Node 가 TS 를 바로 실행하고, 빌드 때 `.js` 로 바뀐다)
 - stdout 은 MCP 전용. 서버 로그는 `src/server/log.ts`(stderr)로만 쓴다
@@ -36,13 +36,14 @@ npm run build          # 서버(tsc → dist/server) + 뷰어(vite → dist/view
 npm start              # 빌드 결과 실행: MCP 서버(stdio) + 뷰어 서버(7790, 사용 중이면 7799 까지 다음 포트).
                        # = node dist/server/index.js. DOCBRIDGE_PORT 로 시작 포트 변경
 npm run typecheck
-npm test               # Vitest: 블록 추출·블록 id·글자 단위·하이라이트 계산·note 자리·요청/응답·open_document·읽기·하이라이트 도구(가짜/rhwp 테스트 뷰어)·편집 기술 검증·편집 공용 경로·replace_text·replace_all·insert_paragraph·delete_blocks·move_blocks·undo·insert_table·저장(경로 규칙·검증·새로고침)·스타일(styles.ts·list_styles·set_style·insert_paragraph style)·새 문서 만들기(create_document·새 문서 저장·새로고침)·새 문서 만들기 기술 검증(빈 문서·표·양식 비우기)·
+npm test               # Vitest: 블록 추출·블록 id·글자 단위·하이라이트 계산·note 자리·요청/응답·open_document·읽기·하이라이트 도구(가짜/rhwp 테스트 뷰어)·편집 기술 검증·편집 공용 경로·replace_text·replace_all·insert_paragraph·delete_blocks·move_blocks·undo·insert_table·저장(경로 규칙·검증·새로고침)·스타일(styles.ts·list_styles·set_style·insert_paragraph style)·새 문서 만들기(create_document·새 문서 저장·새로고침)·새 문서 만들기 기술 검증(빈 문서·표·양식 비우기)·문서 사이 복사 기술 검증(importParagraphBlock·번호·스타일 보정·HTML 대안)·
                        # fixture 별 get_outline 기대 JSON(tests/outline/, rhwp 회귀 — 바꿀 때 -u)·서버 통합 (CI)
 npm run e2e            # 빌드 후 Playwright: 렌더링·하이라이트·측정·문서 열기·토큰 거부·읽기 도구·하이라이트 도구·편집 표시(표 넣기 포함)·스타일 바꾸기 표시·저장과 새로고침 확인 창·새 문서 만들기(빈 문서·양식·확인 창) (로컬 전용, CI 에 없음)
 node scripts/make-fixtures.ts   # fixtures/ 의 생성 문서 다시 만들기
 node scripts/measure-edits.ts [문서…]   # 편집·되돌리기·HWPX 저장 검증 비용 측정 (ADR 002)
 node scripts/make-hwp-check.ts [폴더]   # 한글 프로그램 확인용 편집 HWPX (기본 ~/Downloads/docbridge-hwp-check, 레포에 넣지 않음)
 node scripts/make-create-check.ts [폴더] # 한글 프로그램 확인용 새로 만든 HWPX (기본 ~/Downloads/docbridge-create-check, ADR 003)
+node scripts/make-copy-check.ts [폴더]   # 한글 프로그램 확인용 다른 문서에서 복사해 넣은 HWPX (기본 ~/Downloads/docbridge-copy-check, ADR 004)
 npm run demo           # 빌드 후 데모 영상 녹화(scripts/demo/, 서버 포트 7900, 헤드리스 Chromium) → ~/Downloads/docbridge-demo (레포에 넣지 않음)
 ```
 
@@ -75,11 +76,12 @@ src/
                누름틀 목록(fields.ts: getFieldList 스키마·표 칸 경로 판정 fieldTableIndex — 블록 추출·편집·지우기 공용),
                문단 스타일(styles.ts: 스타일 목록·이름으로 찾기·스타일 적용 applyParagraphStyle·스타일 모양 그대로 resetToStyle·제목 스타일·set_style 대상 거부) — ADR 003,
                새 문서 만들기(create-document.ts: 표 넣기(insert_table 편집이 씀, #38)·양식 본문 비우기, #35 기술 검증, createNewDocument = 뷰어가 새 문서 만들기(#36)) — ADR 003,
+               문서 사이 복사(copy-paragraphs.ts: 원본 HWPX 바이트 → importParagraphBlock + 번호·스타일 보정, #62 기술 검증 프로토타입) — ADR 004,
                Node 용 초기화(rhwp-node.ts)
   viewer/      브라우저 뷰어(Vite root). Canvas 렌더링 + 하이라이트·note·바뀐 블록 표시 오버레이. 디자인 토큰은 tokens.css (의도는 docs/design.md)
 tests/         Vitest (Node 에서 rhwp WASM 을 직접 띄움). outline/ = fixture 별 get_outline 기대 JSON
 e2e/           Playwright (렌더링·하이라이트·측정·서버가 내주는 뷰어·문서 열기·읽기 도구·하이라이트 도구·편집 표시·스타일 바꾸기 표시)
 fixtures/      테스트용 문서와 출처(README.md)
-scripts/       fixtures 생성, 편집 비용 측정(measure-edits.ts), 한글 확인 파일 생성(make-hwp-check.ts 편집, make-create-check.ts 새 문서), 데모 영상 녹화(demo/: 채팅+뷰어 화면 demo.html, record-demo.ts)
+scripts/       fixtures 생성, 편집 비용 측정(measure-edits.ts), 한글 확인 파일 생성(make-hwp-check.ts 편집, make-create-check.ts 새 문서, make-copy-check.ts 문서 사이 복사), 데모 영상 녹화(demo/: 채팅+뷰어 화면 demo.html, record-demo.ts)
 docs/          PRD, 스펙, ADR(decisions/), 조사 자료(research/), QA 체크리스트
 ```
