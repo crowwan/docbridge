@@ -2,8 +2,9 @@
 // 새 편집 도구(#20 insert_paragraph·delete_blocks, #21 move_blocks)는 core/edit-operations.ts 에 편집 종류를 더하고
 // 여기서 session.edit(이름, 문서 → 편집, id 표 옮기기) 를 부른다.
 import { UNDO_LIMIT } from '../core/edit-history.ts';
+import { targetLabel } from '../core/text-targets.ts';
 import type { TextTarget } from '../shared/protocol.ts';
-import { anchored } from './highlight-tools.ts';
+import { anchoredTarget } from './highlight-tools.ts';
 import { outlineItem, preview } from './reading.ts';
 import type { DocumentSession, EditedBlock } from './session.ts';
 
@@ -18,12 +19,15 @@ export interface ChangedItem {
 }
 
 export interface EditResult {
+  /** 바뀐 블록. 대상 블록과 같은 문단에 걸린 블록(문단 글자·표·누름틀)을 모두 담는다 */
   changed: ChangedItem[];
+  /** 바뀌었지만 뷰어에 표시하지 못한 블록 안내 */
+  warnings?: string[];
 }
 
-const targetLabel = ({ id, cell }: TextTarget) => (cell === undefined ? id : `${id} 칸(${cell.row},${cell.col})`);
+export const unmarkedMessage = (id: string) => `${id}: 화면에 표시할 자리가 없어(빈 문단 등) 바뀐 블록 표시를 하지 못했습니다.`;
 
-/** 바뀐 블록 → 결과 항목. 칸을 고친 편집이면 그 칸 글자를 앞 40자로 보인다 */
+/** 바뀐 블록 → 결과 항목. 칸을 고친 편집이면 표는 그 칸 글자를 앞 40자로 보인다 */
 function changedItem({ id, block }: EditedBlock, cell: TextTarget['cell']): ChangedItem[] {
   if (id === undefined) return [];
   if (block.kind === 'table' && cell !== undefined) {
@@ -34,12 +38,15 @@ function changedItem({ id, block }: EditedBlock, cell: TextTarget['cell']): Chan
 }
 
 export async function replaceText(session: DocumentSession, target: TextTarget, text: string): Promise<EditResult> {
-  const changed = await session.edit(`replace_text ${targetLabel(target)}`, (document) => {
-    const [anchoredTarget] = anchored(document.ids, [target]);
-    if (anchoredTarget === undefined) throw new Error(`없는 블록 id 입니다: ${target.id}`);
-    return { kind: 'replace_text', target: anchoredTarget, text };
-  });
-  return { changed: changed.flatMap((edited) => changedItem(edited, target.cell)) };
+  const { changed, unmarked } = await session.edit(`replace_text ${targetLabel(target)}`, (document) => ({
+    kind: 'replace_text',
+    target: anchoredTarget(document.ids, target),
+    text,
+  }));
+  return {
+    changed: changed.flatMap((edited) => changedItem(edited, target.cell)),
+    ...(unmarked.length === 0 ? {} : { warnings: unmarked.map(unmarkedMessage) }),
+  };
 }
 
 export interface UndoResult {

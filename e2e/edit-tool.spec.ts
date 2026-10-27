@@ -82,6 +82,26 @@ test.describe('SPEC-002 편집 뒤 다시 그리기와 바뀐 블록 표시 (서
     await page.getByRole('region', { name: '1쪽' }).screenshot({ path: `${SCREENS}/edit-04-table-cell.png` });
   });
 
+  test('누름틀 값을 바꾸면 같은 문단도 바뀐 블록이고, 문단 테두리 하나로 감싼다(문단 안 누름틀 테두리는 겹쳐 그리지 않는다)', async ({ page }) => {
+    await session.open(fixturePath('notice.hwpx'));
+
+    const result = await replaceText(session, { id: 'b3' }, '각 동 주민센터');
+
+    expect(result.changed.map(({ id }) => id)).toEqual(['b2', 'b3']);
+    await expect(marks(page)).toHaveCount(1);
+    await page.getByRole('region', { name: '1쪽' }).screenshot({ path: `${SCREENS}/edit-05-field.png` });
+  });
+
+  test('새 문서를 열면 보던 자리와 상관없이 맨 위부터 보인다 (PR #26 리뷰)', async ({ page }) => {
+    await session.open(fixturePath('report.hwpx'));
+    await page.evaluate(() => window.scrollTo(0, 800));
+    expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+
+    await session.open(fixturePath('report.hwpx'));
+
+    expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  });
+
   test('AC-7 하이라이트를 그리면 바뀐 블록 표시는 지워진다', async ({ page }) => {
     await session.open(fixturePath('notice.hwpx'));
     await replaceText(session, { id: 'b1' }, '라마바구청');

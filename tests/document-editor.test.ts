@@ -58,7 +58,7 @@ describe('SPEC-002 replace_text (편집 공용 경로)', () => {
     const editor = mixedEditor();
     const boldId = charShapeIdAt(editor.doc, 0, 2);
 
-    const changed = editor.edit(replace(editor, 'b1', 'XYZ', { start: 2, end: 4 }));
+    const changed = editor.edit(replace(editor, 'b1', 'XYZ', { start: 2, end: 4 }), editor.depth);
 
     expect(blockText(editor, 0)).toBe('가나XYZ마바');
     expect([2, 3, 4].map((offset) => charShapeIdAt(editor.doc, 0, offset))).toEqual([boldId, boldId, boldId]);
@@ -72,7 +72,7 @@ describe('SPEC-002 replace_text (편집 공용 경로)', () => {
     const editor = new DocumentEditor(doc);
     const firstId = charShapeIdAt(doc, 10, 0);
 
-    editor.edit(replace(editor, 'b11', '회신 기한: 2026. 11. 7.(금)까지 회신하여 주시기 바랍니다.'));
+    editor.edit(replace(editor, 'b11', '회신 기한: 2026. 11. 7.(금)까지 회신하여 주시기 바랍니다.'), editor.depth);
 
     expect(blockText(editor, 10)).toBe('회신 기한: 2026. 11. 7.(금)까지 회신하여 주시기 바랍니다.');
     expect(charShapeIdAt(doc, 10, 20)).toBe(firstId);
@@ -85,7 +85,7 @@ describe('SPEC-002 replace_text (편집 공용 경로)', () => {
     const editor = new DocumentEditor(doc);
     const boldId = cellCharShapeIdAt(doc, 11, 0, 4, 4);
 
-    const changed = editor.edit(replace(editor, 'b12', '21.', { cell: { row: 1, col: 1 }, start: 4, end: 7 }));
+    const changed = editor.edit(replace(editor, 'b12', '21.', { cell: { row: 1, col: 1 }, start: 4, end: 7 }), editor.depth);
 
     const table = changed[0]?.block;
     expect(table?.kind === 'table' ? table.cells.find((c) => c.row === 1 && c.col === 1)?.text : undefined).toBe('11. 21.(목) 14:00');
@@ -95,14 +95,14 @@ describe('SPEC-002 replace_text (편집 공용 경로)', () => {
   it('AC-1 누름틀 값을 바꾸고 값 첫 글자 모양을 따른다(빈 누름틀은 값을 넣는다)', () => {
     const editor = new DocumentEditor(openFixture('application.hwpx'));
     // b7 = 신청인 누름틀(문단 5)
-    editor.edit(replace(editor, 'b7', '홍길동'));
+    editor.edit(replace(editor, 'b7', '홍길동'), editor.depth);
     expect(blockText(editor, 6)).toBe('홍길동');
     const field = listFields(editor.doc).find((f) => f.name === '신청인');
     if (field === undefined) throw new Error('신청인 누름틀이 없다');
     editor.doc.applyCharFormat(S, 5, field.startCharIdx, field.startCharIdx + 3, JSON.stringify({ bold: true }));
     const boldId = charShapeIdAt(editor.doc, 5, field.startCharIdx);
 
-    editor.edit(replace(editor, 'b7', '김철수입니다'));
+    editor.edit(replace(editor, 'b7', '김철수입니다'), editor.depth);
 
     expect(blockText(editor, 6)).toBe('김철수입니다');
     expect(charShapeIdAt(editor.doc, 5, field.startCharIdx + 5)).toBe(boldId);
@@ -118,8 +118,8 @@ describe('SPEC-002 replace_text (편집 공용 경로)', () => {
     expect(fieldIds).toHaveLength(2);
     const [, second = ''] = fieldIds;
 
-    editor.edit(replace(editor, second, '11월'));
-    editor.edit(replace(editor, second, ' 7일', { start: 3, end: 3 }));
+    editor.edit(replace(editor, second, '11월'), editor.depth);
+    editor.edit(replace(editor, second, ' 7일', { start: 3, end: 3 }), editor.depth);
 
     expect(editor.blocks.flatMap((block) => (block.kind === 'field' ? [`${block.name}=${block.value}`] : []))).toEqual([
       '성명=',
@@ -129,7 +129,7 @@ describe('SPEC-002 replace_text (편집 공용 경로)', () => {
 
   it('빈 글자로 바꾸면 범위를 지운다', () => {
     const editor = mixedEditor();
-    editor.edit(replace(editor, 'b1', '', { start: 2, end: 4 }));
+    editor.edit(replace(editor, 'b1', '', { start: 2, end: 4 }), editor.depth);
     expect(blockText(editor, 0)).toBe('가나마바');
   });
 
@@ -156,9 +156,9 @@ describe('SPEC-002 replace_text (편집 공용 경로)', () => {
     const editor = new DocumentEditor(openFixture('notice.hwpx'));
     const before = JSON.stringify(editor.blocks);
 
-    expect(() => editor.edit(replace(editor, id, text, extra))).toThrow(message);
+    expect(() => editor.edit(replace(editor, id, text, extra), editor.depth)).toThrow(message);
     expect(JSON.stringify(editor.blocks)).toBe(before);
-    expect(editor.undo(1)).toBe(0);
+    expect(editor.undo(1, editor.depth)).toBe(0);
   });
 
   it('뷰어 문서에 없는 블록 위치면 get_outline 을 다시 부르라고 한다', () => {
@@ -168,7 +168,7 @@ describe('SPEC-002 replace_text (편집 공용 경로)', () => {
       target: { id: 'b99', anchor: { section: 0, paragraph: 99, part: 'text' } },
       text: 'X',
     };
-    expect(() => editor.edit(operation)).toThrow('b99: 뷰어 문서에 이 블록이 없습니다. get_outline 을 다시 부르세요.');
+    expect(() => editor.edit(operation, editor.depth)).toThrow('b99: 뷰어 문서에 이 블록이 없습니다. get_outline 을 다시 부르세요.');
   });
 
   it('편집하다 중간에 실패하면(글자를 넣은 뒤 지우기에서 rhwp 오류) 스냅샷으로 되돌려 문서는 그대로다', () => {
@@ -180,61 +180,129 @@ describe('SPEC-002 replace_text (편집 공용 경로)', () => {
       throw new Error('rhwp 오류');
     };
 
-    expect(() => editor.edit(replace(editor, 'b1', 'XYZ', { start: 2, end: 4 }))).toThrow('rhwp 오류');
+    expect(() => editor.edit(replace(editor, 'b1', 'XYZ', { start: 2, end: 4 }), editor.depth)).toThrow('rhwp 오류');
     expect(doc.getTextRange(S, 0, 0, doc.getParagraphLength(S, 0))).toBe('가나다라마바');
     expect(JSON.stringify(editor.blocks)).toBe(before);
-    expect(editor.undo(1)).toBe(0);
+    expect(editor.undo(1, editor.depth)).toBe(0);
   });
 });
 
 describe('SPEC-002 되돌리기 (편집 공용 경로)', () => {
   it('AC-8 편집을 하나씩 되돌리고, 되돌릴 것이 없으면 0 을 돌려준다', () => {
     const editor = mixedEditor();
-    editor.edit(replace(editor, 'b1', '하', { start: 0, end: 1 }));
-    editor.edit(replace(editor, 'b1', '호', { start: 5, end: 6 }));
+    editor.edit(replace(editor, 'b1', '하', { start: 0, end: 1 }), editor.depth);
+    editor.edit(replace(editor, 'b1', '호', { start: 5, end: 6 }), editor.depth);
     expect(blockText(editor, 0)).toBe('하나다라마호');
 
-    expect(editor.undo(1)).toBe(1);
+    expect(editor.undo(1, editor.depth)).toBe(1);
     expect(blockText(editor, 0)).toBe('하나다라마바');
-    expect(editor.undo(1)).toBe(1);
+    expect(editor.undo(1, editor.depth)).toBe(1);
     expect(blockText(editor, 0)).toBe('가나다라마바');
-    expect(editor.undo(1)).toBe(0);
+    expect(editor.undo(1, editor.depth)).toBe(0);
   });
 
   it(`AC-8 ${UNDO_LIMIT}단계까지만 되돌리고, 그보다 옛 편집은 남는다`, () => {
     const editor = mixedEditor();
-    for (let i = 0; i <= UNDO_LIMIT; i += 1) editor.edit(replace(editor, 'b1', String(i % 10), { start: 0, end: 1 }));
+    for (let i = 0; i <= UNDO_LIMIT; i += 1) editor.edit(replace(editor, 'b1', String(i % 10), { start: 0, end: 1 }), editor.depth);
 
-    expect(editor.undo(UNDO_LIMIT + 5)).toBe(UNDO_LIMIT);
+    expect(editor.undo(UNDO_LIMIT + 5, editor.depth)).toBe(UNDO_LIMIT);
     // 첫 편집("0")은 되돌릴 수 없다
     expect(blockText(editor, 0)).toBe('0나다라마바');
   });
 
   it('AC-12 문서를 닫을 때 버린 편집 수를 돌려준다', () => {
     const editor = mixedEditor();
-    editor.edit(replace(editor, 'b1', 'X', { start: 0, end: 1 }));
-    editor.edit(replace(editor, 'b1', 'Y', { start: 0, end: 1 }));
+    editor.edit(replace(editor, 'b1', 'X', { start: 0, end: 1 }), editor.depth);
+    editor.edit(replace(editor, 'b1', 'Y', { start: 0, end: 1 }), editor.depth);
     expect(editor.dispose()).toBe(2);
+  });
+});
+
+describe('SPEC-002 편집 기록 맞추기 (PR #26 리뷰)', () => {
+  it('바뀐 블록을 보여 주다(다시 그리기 등) 던지면 스냅샷으로 되돌리고 편집 기록에 넣지 않는다', () => {
+    const editor = mixedEditor();
+    const before = JSON.stringify(editor.blocks);
+
+    expect(() =>
+      editor.edit(replace(editor, 'b1', 'XYZ', { start: 2, end: 4 }), editor.depth, () => {
+        throw new Error('다시 그리기 실패');
+      }),
+    ).toThrow('다시 그리기 실패');
+
+    expect(blockText(editor, 0)).toBe('가나다라마바');
+    expect(JSON.stringify(editor.blocks)).toBe(before);
+    expect(editor.depth).toBe(0);
+    expect(editor.undo(1, 0)).toBe(0);
+  });
+
+  it('서버가 아는 편집 순번이 뷰어 기록과 다르면 편집·되돌리기를 하지 않고 어긋났다고 알린다', () => {
+    const editor = mixedEditor();
+    editor.edit(replace(editor, 'b1', 'X', { start: 0, end: 1 }), 0);
+    expect(editor.depth).toBe(1);
+
+    // 서버는 첫 편집 결과를 받지 못해(타임아웃 등) 아직 0 이라고 안다
+    expect(() => editor.edit(replace(editor, 'b1', 'Y', { start: 0, end: 1 }), 0)).toThrow(
+      '편집 기록이 어긋났습니다(서버 0, 뷰어 1). open_document 로 문서를 다시 열어 주세요.',
+    );
+    expect(() => editor.undo(1, 0)).toThrow('편집 기록이 어긋났습니다(서버 0, 뷰어 1)');
+    expect(blockText(editor, 0)).toBe('X나다라마바');
+    expect(editor.undo(1, 1)).toBe(1);
+    expect(editor.depth).toBe(0);
+  });
+});
+
+describe('SPEC-002 바뀐 블록 (PR #26 리뷰)', () => {
+  it('편집으로 글자를 모두 지운 문단은 빈 블록으로 남아 다시 채울 수 있다(처음 열 때 빈 문단은 빼는 규칙은 그대로)', () => {
+    const editor = new DocumentEditor(openFixture('notice.hwpx'));
+    const count = editor.blocks.length;
+
+    const emptied = editor.edit(replace(editor, 'b5', ''), editor.depth);
+
+    expect(emptied.map(({ block }) => textOf(block))).toEqual(['']);
+    expect(editor.blocks).toHaveLength(count);
+    editor.edit(replace(editor, 'b5', '제목  다시 쓴 제목'), editor.depth);
+    expect(blockText(editor, 4)).toBe('제목  다시 쓴 제목');
+    // 처음부터 비어 있던 문단(4번 등)은 여전히 블록이 아니다
+    expect(new DocumentEditor(openFixture('notice.hwpx')).blocks.some((b) => b.kind === 'paragraph' && b.paragraph === 4)).toBe(false);
+  });
+
+  it('누름틀 값을 바꾸면 같은 문단의 문단 블록도 바뀐 블록으로 알린다', () => {
+    const editor = new DocumentEditor(openFixture('application.hwpx'));
+
+    const changed = editor.edit(replace(editor, 'b7', '홍길동'), editor.depth);
+
+    expect(changed.map(({ block }) => `${block.kind}:${textOf(block)}`)).toEqual(['paragraph:신청인  홍길동', 'field:홍길동']);
+  });
+
+  it('누름틀이 든 문단의 글자를 바꾸면 그 누름틀 블록도 바뀐 블록으로 알린다', () => {
+    const editor = new DocumentEditor(openFixture('notice.hwpx'));
+
+    const changed = editor.edit(replace(editor, 'b2', '받는 곳', { start: 0, end: 2 }), editor.depth);
+
+    expect(changed.map(({ block }) => block.kind)).toEqual(['paragraph', 'field']);
   });
 });
 
 describe('SPEC-002 바뀐 블록 표시 자리', () => {
   it('AC-7 바뀐 블록마다 블록 전체(문단 줄·표)를 감싸는 사각형을 쪽마다 하나 준다', () => {
     const editor = new DocumentEditor(openFixture('notice.hwpx'));
-    const paragraph = editor.edit(replace(editor, 'b7', '짧은 문장'));
-    const table = editor.edit(replace(editor, 'b12', '3회차', { cell: { row: 2, col: 0 } }));
+    const paragraph = editor.edit(replace(editor, 'b7', '짧은 문장'), editor.depth);
+    const table = editor.edit(replace(editor, 'b12', '3회차', { cell: { row: 2, col: 0 } }), editor.depth);
 
-    const [paragraphBox] = blockBoxes(editor.doc, editor.blocks, paragraph.map(({ anchor }) => anchor));
-    const tableBoxes = blockBoxes(editor.doc, editor.blocks, table.map(({ anchor }) => anchor));
+    const [paragraphBox] = blockBoxes(editor.doc, editor.blocks, paragraph.map(({ anchor }) => anchor)).boxes;
+    const tableBoxes = blockBoxes(editor.doc, editor.blocks, table.map(({ anchor }) => anchor)).boxes;
 
     expect(paragraphBox?.width).toBeGreaterThan(0);
     expect(tableBoxes).toHaveLength(1);
     expect(tableBoxes[0]?.height).toBeGreaterThan(paragraphBox?.height ?? 0);
   });
 
-  it('글자를 모두 지운 빈 문단은 표시할 자리가 없어 건너뛴다', () => {
+  it('글자를 모두 지운 빈 문단은 표시할 자리가 없어 건너뛰고 표시하지 못한 블록으로 알린다', () => {
     const editor = mixedEditor();
-    const changed = editor.edit(replace(editor, 'b1', ''));
-    expect(blockBoxes(editor.doc, editor.blocks, changed.map(({ anchor }) => anchor))).toEqual([]);
+    const changed = editor.edit(replace(editor, 'b1', ''), editor.depth);
+    expect(blockBoxes(editor.doc, editor.blocks, changed.map(({ anchor }) => anchor))).toEqual({
+      boxes: [],
+      unmarked: [{ section: 0, paragraph: 0, part: 'text' }],
+    });
   });
 });

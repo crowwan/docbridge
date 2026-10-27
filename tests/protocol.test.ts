@@ -82,8 +82,9 @@ const sampleParams: { [M in ViewerMethod]: ViewerParams<M> } = {
   clear_highlight: {},
   edit: {
     operation: { kind: 'replace_text', target: { id: 'b1', anchor: { section: 0, paragraph: 0, part: 'text' } }, text: '새 글자' },
+    depth: 0,
   },
-  undo: { steps: 1 },
+  undo: { steps: 1, depth: 1 },
 };
 
 describe('SPEC-001 뷰어의 요청 처리', () => {

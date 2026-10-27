@@ -43,7 +43,7 @@ export function fieldOrdinal(anchor: BlockAnchor): number | undefined {
 }
 
 /** 블록 목록의 각 블록 위치. 누름틀은 같은 문단 안에서 몇 번째인지로 가른다 */
-function anchorsOf(blocks: BlockPosition[]): BlockAnchor[] {
+export function anchorsOf(blocks: BlockPosition[]): BlockAnchor[] {
   const fieldCount = new Map<string, number>();
   return blocks.map((block) => {
     const at = `${block.section}:${block.paragraph}`;

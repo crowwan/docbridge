@@ -24,6 +24,13 @@ export function anchored(ids: BlockIdTable, targets: TextTarget[]): AnchoredTarg
   });
 }
 
+/** 대상 하나의 블록 id 를 id 표 위치로 바꾼다. 없는 id 면 던진다 */
+export function anchoredTarget(ids: BlockIdTable, target: TextTarget): AnchoredTarget {
+  const anchor = ids.anchor(target.id);
+  if (anchor === undefined) throw new Error(unknownIdsMessage([target.id]));
+  return { ...target, anchor };
+}
+
 export async function highlight(session: DocumentSession, targets: TextTarget[], note?: string): Promise<HighlightResult> {
   const trimmed = note?.trim() ?? '';
   const { pages, warnings } = await session.requestWithDocument('highlight', (document) => ({

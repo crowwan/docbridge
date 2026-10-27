@@ -5,7 +5,8 @@ import { HwpDocument } from '@rhwp/core';
 import { blockPositionSchema } from '../src/core/block-schema.ts';
 import { DocumentEditor } from '../src/core/document-editor.ts';
 import { findInBlocks } from '../src/core/find-text.ts';
-import { highlightTargets } from '../src/core/highlight-targets.ts';
+import { blockBoxes, highlightTargets } from '../src/core/highlight-targets.ts';
+import type { BlockAnchor } from '../src/core/block-ids.ts';
 import { initRhwpForNode } from '../src/core/rhwp-node.ts';
 import type { RequestMessage } from '../src/shared/protocol.ts';
 
@@ -43,11 +44,16 @@ export function rhwpViewer(): RhwpViewer {
       case 'clear_highlight':
         return {};
       case 'edit': {
-        const changed = opened().edit(request.params.operation);
-        return { changed, pageCount: opened().doc.pageCount() };
+        // 그리지는 않고, 뷰어와 같은 함수로 표시 자리를 구해 표시하지 못한 블록을 돌려준다
+        let unmarked: BlockAnchor[] = [];
+        const editor = opened();
+        const changed = editor.edit(request.params.operation, request.params.depth, (changedBlocks, blocks) => {
+          unmarked = blockBoxes(editor.doc, blocks, changedBlocks.map(({ anchor }) => anchor)).unmarked;
+        });
+        return { changed, unmarked, pageCount: editor.doc.pageCount() };
       }
       case 'undo':
-        return { undone: opened().undo(request.params.steps), pageCount: opened().doc.pageCount() };
+        return { undone: opened().undo(request.params.steps, request.params.depth), pageCount: opened().doc.pageCount() };
     }
   };
   return { handle, editor: opened };

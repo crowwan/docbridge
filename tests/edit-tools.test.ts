@@ -8,8 +8,9 @@ import { UNDO_LIMIT } from '../src/core/edit-history.ts';
 import { startBridge, type Bridge } from '../src/server/bridge.ts';
 import { createMcpServer } from '../src/server/mcp.ts';
 import { DocumentSession } from '../src/server/session.ts';
-import type { RequestMessage } from '../src/shared/protocol.ts';
-import { FakeViewer } from './fake-viewer.ts';
+import { REQUEST_TIMEOUT_MS, type RequestMessage } from '../src/shared/protocol.ts';
+import { replaceText } from '../src/server/edit-tools.ts';
+import { FakeViewer, NO_RESPONSE } from './fake-viewer.ts';
 import { fixturePath } from './fixtures.ts';
 import { rhwpViewer, type RhwpViewer } from './rhwp-viewer.ts';
 
@@ -81,6 +82,7 @@ describe('SPEC-002 글자 바꾸기·되돌리기 도구 (replace_text · undo)'
         target: { id: 'b11', start: 13, end: 20, anchor: { section: 0, paragraph: 10, part: 'text' } },
         text: '11. 7.',
       },
+      depth: 0,
     });
   });
 
@@ -88,8 +90,8 @@ describe('SPEC-002 글자 바꾸기·되돌리기 도구 (replace_text · undo)'
     expect(await json('replace_text', { target: { id: 'b12', cell: { row: 2, col: 2 } }, text: '구민회관 3층 강당' })).toEqual({
       changed: [{ id: 'b12', cell: { row: 2, col: 2 }, text: '구민회관 3층 강당' }],
     });
-    expect(await json('replace_text', { target: { id: 'b3' }, text: '각 동 주민센터' })).toEqual({
-      changed: [{ id: 'b3', text: '각 동 주민센터' }],
+    expect(await json('replace_text', { target: { id: 'b3' }, text: '각 동 주민센터' })).toMatchObject({
+      changed: [{ id: 'b2' }, { id: 'b3', text: '각 동 주민센터' }],
     });
     expect(await readText('b3')).toBe('각 동 주민센터');
   });
@@ -177,6 +179,69 @@ describe('SPEC-002 글자 바꾸기·되돌리기 도구 (replace_text · undo)'
       warnings: ['저장하지 않은 편집 1개를 버렸습니다'],
     });
     expect(session.unsavedEdits).toBe(0);
+  });
+
+  it('뷰어가 편집을 적용했는데 결과를 읽지 못하면, 다음 편집·되돌리기는 기록이 어긋났다고 알리고 아무것도 바꾸지 않는다 (PR #26 리뷰)', async () => {
+    viewer.serve((request) => {
+      const result = rhwp.handle(request);
+      // 편집은 적용하고 서버가 읽지 못하는 결과를 돌려준다
+      return request.method === 'edit' ? { 엉뚱한: true } : result;
+    });
+    expect(await errorText('replace_text', { target: { id: 'b1' }, text: '라마바구청' })).toContain('뷰어 응답을 읽지 못했습니다(edit)');
+    viewer.serve(rhwp.handle);
+    const blocksBefore = JSON.stringify(rhwp.editor().blocks);
+
+    const mismatch = '편집 기록이 어긋났습니다(서버 0, 뷰어 1). open_document 로 문서를 다시 열어 주세요.';
+    expect(await errorText('replace_text', { target: { id: 'b3' }, text: '각 동' })).toBe(mismatch);
+    // 서버 기록에는 되돌릴 편집이 없다 → 뷰어에 묻지 않는다. 뷰어 문서는 그대로
+    expect(await errorText('undo')).toBe('되돌릴 편집이 없습니다.');
+    expect(JSON.stringify(rhwp.editor().blocks)).toBe(blocksBefore);
+  });
+
+  it('편집 요청이 타임아웃돼도(뷰어는 적용함) 다음 편집에서 기록이 어긋났다고 알린다 (PR #26 리뷰)', async () => {
+    let reached: () => void = () => undefined;
+    const arrived = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    viewer.serve((request) => {
+      const result = rhwp.handle(request);
+      if (request.method !== 'edit') return result;
+      reached();
+      return NO_RESPONSE;
+    });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const first = replaceText(session, { id: 'b1' }, '라마바구청').then(
+        () => '성공',
+        (error: unknown) => String(error),
+      );
+      await arrived;
+      vi.advanceTimersByTime(REQUEST_TIMEOUT_MS);
+      expect(await first).toContain('응답하지 않았습니다(edit)');
+    } finally {
+      vi.useRealTimers();
+    }
+    viewer.serve(rhwp.handle);
+
+    expect(await errorText('replace_text', { target: { id: 'b1' }, text: '사아자구청' })).toBe(
+      '편집 기록이 어긋났습니다(서버 0, 뷰어 1). open_document 로 문서를 다시 열어 주세요.',
+    );
+    expect(await readText('b1')).toBe('라마바구청');
+  });
+
+  it('누름틀 값을 바꾸면 같은 문단 블록도 바뀐 블록으로 돌려주고, 비운 문단은 같은 id 로 다시 채울 수 있다 (PR #26 리뷰)', async () => {
+    expect(await json('replace_text', { target: { id: 'b3' }, text: '각 동 주민센터' })).toEqual({
+      changed: [
+        { id: 'b2', text: '수신  각 동 주민센터' },
+        { id: 'b3', text: '각 동 주민센터' },
+      ],
+    });
+    expect(await json('replace_text', { target: { id: 'b5' }, text: '' })).toEqual({
+      changed: [{ id: 'b5', text: '' }],
+      warnings: ['b5: 화면에 표시할 자리가 없어(빈 문단 등) 바뀐 블록 표시를 하지 못했습니다.'],
+    });
+    await json('replace_text', { target: { id: 'b5' }, text: '새 제목' });
+    expect(await readText('b5')).toBe('새 제목');
   });
 
   it('뷰어가 연결되어 있지 않으면 정해진 오류 문구와 마지막 파일 경로를 돌려준다', async () => {

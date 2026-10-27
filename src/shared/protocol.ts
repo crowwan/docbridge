@@ -42,11 +42,15 @@ export const loadDocumentResultSchema = z.object({
   blocks: z.array(blockPositionSchema),
 });
 
-/** 편집 결과: 바뀐 블록(편집 뒤 위치와 내용)과 다시 그린 쪽 수 */
+/** 편집 결과: 바뀐 블록(편집 뒤 위치와 내용), 화면에 표시하지 못한 블록, 다시 그린 쪽 수 */
 export const editResultSchema = z.object({
   changed: z.array(z.object({ anchor: blockAnchorSchema, block: blockSchema })),
+  unmarked: z.array(blockAnchorSchema),
   pageCount: z.number(),
 });
+
+/** 서버가 아는 편집 순번(연 뒤 적용한 편집 수 − 되돌린 수). 뷰어 순번과 다르면 뷰어는 아무것도 하지 않고 거부한다 */
+const depthSchema = z.number().int().min(0);
 
 /** 서버가 뷰어에 부르는 메서드와 입력·결과 스키마 */
 export const viewerMethodSchemas = {
@@ -62,12 +66,12 @@ export const viewerMethodSchemas = {
   clear_highlight: { params: z.object({}), result: z.object({}) },
   /**
    * 편집 공용 경로(SPEC-002): 스냅샷 → 편집 → 다시 그리기 → 블록 다시 뽑기 → 바뀐 블록 표시(이전 표시·하이라이트는 지워진다).
-   * 실패하면 스냅샷으로 되돌려 문서는 그대로다. 편집 종류는 operation.kind(core/edit-operations.ts)
+   * 다시 그리기·표시까지 성공해야 기록에 들어가고, 실패하면 스냅샷으로 되돌려 문서는 그대로다. 편집 종류는 operation.kind(core/edit-operations.ts)
    */
-  edit: { params: z.object({ operation: editOperationSchema }), result: editResultSchema },
+  edit: { params: z.object({ operation: editOperationSchema, depth: depthSchema }), result: editResultSchema },
   /** 스냅샷으로 steps 만큼(있는 만큼만) 되돌리고 다시 그린다. 결과는 되돌린 수(없으면 0) */
   undo: {
-    params: z.object({ steps: z.number().int().min(1) }),
+    params: z.object({ steps: z.number().int().min(1), depth: depthSchema }),
     result: z.object({ undone: z.number(), pageCount: z.number() }),
   },
 } as const;

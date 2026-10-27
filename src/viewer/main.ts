@@ -6,6 +6,7 @@
 // 편집(SPEC-002)은 core/document-editor.ts 공용 경로로 하고, 여기서는 다시 그리고 바뀐 블록에 초록 테두리를 남긴다.
 import init, { HwpDocument } from '@rhwp/core';
 import wasmUrl from '@rhwp/core/rhwp_bg.wasm?url';
+import type { BlockAnchor } from '../core/block-ids.ts';
 import { blockPositionSchema, type Block } from '../core/block-schema.ts';
 import { DocumentEditor } from '../core/document-editor.ts';
 import type { EditOperation } from '../core/edit-operations.ts';
@@ -195,8 +196,8 @@ function showDocument(bytes: Uint8Array, fileName: string): { doc: HwpDocument; 
   currentDoc = doc;
   currentFileName = fileName;
   hideNotice();
-  // 쪽을 새로 그리면 이전 문서의 하이라이트·note 도 같이 사라진다
-  const { pageRenderMs } = redraw(doc);
+  // 쪽을 새로 그리면 이전 문서의 하이라이트·note 도 같이 사라진다. 새 문서는 맨 위부터
+  const { pageRenderMs } = redraw(doc, 'top');
   api.highlight = (range) => {
     const rects = selectionRects(doc, range);
     paintHighlights(currentPageEls, [rects]);
@@ -205,9 +206,9 @@ function showDocument(bytes: Uint8Array, fileName: string): { doc: HwpDocument; 
   return { doc, parseMs, pageRenderMs };
 }
 
-/** 쪽을 모두 다시 그린다(하이라이트·바뀐 블록 표시도 지워진다). 보던 자리는 그대로 둔다 */
-function redraw(doc: HwpDocument): { pageRenderMs: number[] } {
-  const scrollY = window.scrollY;
+/** 쪽을 모두 다시 그린다(하이라이트·바뀐 블록 표시도 지워진다). 편집 뒤에는 보던 자리를 그대로, 새 문서는 맨 위로 */
+function redraw(doc: HwpDocument, scroll: 'keep' | 'top'): { pageRenderMs: number[] } {
+  const scrollY = scroll === 'keep' ? window.scrollY : 0;
   const { pageRenderMs, pageEls } = renderPages(doc);
   currentPageEls = pageEls;
   window.scrollTo(0, scrollY);
@@ -261,9 +262,9 @@ function handleRequest(request: RequestMessage): unknown {
       clearHighlights();
       return {};
     case 'edit':
-      return applyEdit(request.params.operation);
+      return applyEdit(request.params.operation, request.params.depth);
     case 'undo':
-      return undoEdits(request.params.steps);
+      return undoEdits(request.params.steps, request.params.depth);
     default: {
       // 메서드를 더하고 여기 처리를 빠뜨리면 컴파일 오류가 난다
       const unhandled: never = request;
@@ -283,19 +284,42 @@ function openedBlocks(): Block[] {
   return openedEditor().blocks;
 }
 
-/** 편집하고 다시 그린 뒤 바뀐 블록에 표시를 남긴다. 편집이 실패하면 문서·화면은 그대로다 */
-function applyEdit(operation: EditOperation): ViewerResult<'edit'> {
+/**
+ * 편집하고 다시 그린 뒤 바뀐 블록에 표시를 남긴다. 다시 그리기·표시까지 성공해야 편집 기록에 들어간다.
+ * 그 사이 던지면 문서는 스냅샷으로 돌아가므로 화면도 되돌린 문서로 다시 그린다
+ */
+function applyEdit(operation: EditOperation, depth: number): ViewerResult<'edit'> {
   const editor = openedEditor();
-  const changed = editor.edit(operation);
-  redraw(editor.doc);
-  paintEditMarks(blockBoxes(editor.doc, editor.blocks, changed.map(({ anchor }) => anchor)));
-  return { changed, pageCount: editor.doc.pageCount() };
+  let unmarked: BlockAnchor[] = [];
+  let drawn = false;
+  try {
+    const changed = editor.edit(operation, depth, (changedBlocks, blocks) => {
+      drawn = true;
+      redraw(editor.doc, 'keep');
+      const marks = blockBoxes(editor.doc, blocks, changedBlocks.map(({ anchor }) => anchor));
+      paintEditMarks(marks.boxes);
+      unmarked = marks.unmarked;
+    });
+    return { changed, unmarked, pageCount: editor.doc.pageCount() };
+  } catch (error) {
+    if (drawn) redrawAfterFailure(editor.doc);
+    throw error;
+  }
 }
 
-function undoEdits(steps: number): ViewerResult<'undo'> {
+/** 편집이 되돌려진 뒤 화면을 다시 그린다. 이것도 실패하면 상태 줄에 남기고 원래 오류를 서버에 돌려준다 */
+function redrawAfterFailure(doc: HwpDocument): void {
+  try {
+    redraw(doc, 'keep');
+  } catch (error) {
+    setStatus(`화면을 다시 그리지 못했습니다: ${errorMessage(error)}`);
+  }
+}
+
+function undoEdits(steps: number, depth: number): ViewerResult<'undo'> {
   const editor = openedEditor();
-  const undone = editor.undo(steps);
-  if (undone > 0) redraw(editor.doc);
+  const undone = editor.undo(steps, depth);
+  if (undone > 0) redraw(editor.doc, 'keep');
   return { undone, pageCount: editor.doc.pageCount() };
 }
 

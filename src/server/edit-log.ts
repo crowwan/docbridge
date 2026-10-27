@@ -40,6 +40,11 @@ export class EditLog<S> {
     return this.chain.length - shared + (this.savedChain.length - shared);
   }
 
+  /** 편집 순번: 연 뒤 적용한 편집 수 − 되돌린 수(20칸 상한과 상관없음). 뷰어 DocumentEditor.depth 와 같아야 한다 */
+  get depth(): number {
+    return this.chain.length - 1;
+  }
+
   /** 저장하지 않은 편집이 있는지 */
   get dirty(): boolean {
     return this.unsavedEdits > 0;

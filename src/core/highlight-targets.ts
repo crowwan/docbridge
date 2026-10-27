@@ -8,6 +8,7 @@ import { blockIndexByAnchor, fieldOrdinal, type BlockAnchor } from './block-ids.
 import type { Block, FieldBlock, TableBlock } from './block-schema.ts';
 import { cellParagraphTexts } from './blocks.ts';
 import { charLength } from './chars.ts';
+import { spanIn, targetLabel } from './text-targets.ts';
 import { selectionRects, type CellLocation, type SelectionRect } from './highlight-rects.ts';
 
 /** 하이라이트 대상 (shared/protocol.ts 의 TextTarget + 서버가 붙인 블록 위치) */
@@ -57,21 +58,8 @@ export interface Caret {
   height: number;
 }
 
-/** 대상의 start·end 를 검사해 [시작, 끝) 으로. 둘 다 없으면 전체 */
-function spanIn(target: HighlightTarget, text: string, where: string): { start: number; end: number } {
-  const length = charLength(text);
-  const start = target.start ?? 0;
-  const end = target.end ?? length;
-  if (start >= end || end > length) {
-    throw new Error(
-      `${where}: 글자 범위가 맞지 않습니다(start ${start}, end ${end}, 글자 수 ${length}). 0 ≤ start < end ≤ 글자 수로 주세요.`,
-    );
-  }
-  return { start, end };
-}
-
-const whereOf = (target: HighlightTarget) =>
-  target.cell === undefined ? target.id : `${target.id} 칸(${target.cell.row},${target.cell.col})`;
+/** 하이라이트는 칠할 글자가 있어야 한다(빈 범위 안 됨) */
+const HIGHLIGHT_SPAN = { allowEmpty: false };
 const isWhole = (target: HighlightTarget) => target.start === undefined && target.end === undefined;
 
 /** 쪽마다 사각형들을 감싸는 사각형 하나로 합친다 */
@@ -182,7 +170,7 @@ class HighlightContext {
     switch (block.kind) {
       case 'paragraph': {
         if (target.cell !== undefined) throw new Error(`${target.id}: 표 블록이 아니라 cell 을 줄 수 없습니다.`);
-        const { start, end } = spanIn(target, block.text, target.id);
+        const { start, end } = spanIn(target, block.text, HIGHLIGHT_SPAN);
         rects = selectionRects(this.doc, {
           section: block.section,
           startParagraph: block.paragraph,
@@ -199,7 +187,7 @@ class HighlightContext {
         rects = this.fieldRects(block, target);
         break;
     }
-    if (rects.length === 0) throw new Error(`${whereOf(target)}: 화면에서 하이라이트할 자리를 찾지 못했습니다.`);
+    if (rects.length === 0) throw new Error(`${targetLabel(target)}: 화면에서 하이라이트할 자리를 찾지 못했습니다.`);
     return rects;
   }
 
@@ -226,7 +214,7 @@ class HighlightContext {
     const text = paragraphs.join('\n');
     // 빈 칸 전체: 글자가 없으니 칸 자리를 칠한다
     if (charLength(text) === 0 && isWhole(target)) return this.cellBoxes(block).filter((box) => box.cellIndex === cellIndex);
-    const { start, end } = spanIn(target, text, whereOf(target));
+    const { start, end } = spanIn(target, text, HIGHLIGHT_SPAN);
     const from = cellPosition(paragraphs, start);
     const to = cellPosition(paragraphs, end);
     return selectionRects(this.doc, {
@@ -263,7 +251,7 @@ class HighlightContext {
     const { cell, paragraph } = fieldPlace(target.id, field, block.section, this.blocks);
 
     if (charLength(block.value) === 0 && isWhole(target)) return this.emptyFieldRects(target, block, field, cell, paragraph);
-    const { start, end } = spanIn(target, block.value, target.id);
+    const { start, end } = spanIn(target, block.value, HIGHLIGHT_SPAN);
     return selectionRects(this.doc, {
       section: block.section,
       ...(cell === undefined ? {} : { cell }),
@@ -306,17 +294,36 @@ export function highlightTargets(doc: HwpDocument, blocks: Block[], targets: Hig
   return { rects, pages, warnings: context.warnings };
 }
 
+export interface BlockBoxes {
+  /** 쪽마다 블록을 감싸는 사각형. 다른 사각형 안에 든 것(문단 안 누름틀 값 등)은 뺀다 */
+  boxes: SelectionRect[];
+  /** 화면에서 자리를 찾지 못해 표시하지 못한 블록(글자를 모두 지운 빈 문단 등) */
+  unmarked: BlockAnchor[];
+}
+
+const contains = (outer: SelectionRect, inner: SelectionRect) =>
+  outer.pageIndex === inner.pageIndex &&
+  outer.x <= inner.x &&
+  outer.y <= inner.y &&
+  inner.x + inner.width <= outer.x + outer.width &&
+  inner.y + inner.height <= outer.y + outer.height;
+
 /**
  * 바뀐 블록 표시(SPEC-002): 블록마다 쪽별로 블록 전체(문단 줄·표·누름틀 값)를 감싸는 사각형.
- * 화면에 자리가 없는 블록(글자를 모두 지운 빈 문단 등)은 표시하지 않는다(편집은 이미 끝났다)
+ * 자리를 못 찾은 블록은 표시하지 않고 unmarked 로 알린다(편집은 이미 끝났다)
  */
-export function blockBoxes(doc: HwpDocument, blocks: Block[], anchors: BlockAnchor[]): SelectionRect[] {
+export function blockBoxes(doc: HwpDocument, blocks: Block[], anchors: BlockAnchor[]): BlockBoxes {
   const context = new HighlightContext(doc, blocks);
-  return anchors.flatMap((anchor) => {
+  const unmarked: BlockAnchor[] = [];
+  const all = anchors.flatMap((anchor) => {
     try {
       return unionByPage(context.rects({ id: '', anchor }));
     } catch {
+      // 이유(빈 문단·글상자 누름틀 등)는 결과에 블록 id 로 남긴다. 문구는 서버가 붙인다
+      unmarked.push(anchor);
       return [];
     }
   });
+  const boxes = all.filter((box, i) => !all.some((other, j) => j !== i && contains(other, box) && !(contains(box, other) && j > i)));
+  return { boxes, unmarked };
 }

@@ -4,10 +4,9 @@
 // 대상 블록은 서버가 붙인 위치(anchor)로 지금 블록 목록에서 찾고, 범위·칸 검사는 블록 글자를 가진 여기서 한다.
 import type { HwpDocument } from '@rhwp/core';
 import { z } from 'zod';
-import { blockIndexByAnchor, fieldOrdinal, type BlockAnchor } from './block-ids.ts';
+import { blockIndexByAnchor, fieldOrdinal } from './block-ids.ts';
 import { anchoredTargetSchema, type AnchoredTarget, type Block, type FieldBlock, type TableBlock } from './block-schema.ts';
-import { cellParagraphTexts } from './blocks.ts';
-import { charLength } from './chars.ts';
+import { spanIn, targetLabel } from './text-targets.ts';
 import { listFields, replaceCellText, replaceFieldText, replaceParagraphText } from './edits.ts';
 
 export const replaceTextOperationSchema = z.object({
@@ -21,26 +20,22 @@ export const editOperationSchema = z.discriminatedUnion('kind', [replaceTextOper
 export type EditOperation = z.infer<typeof editOperationSchema>;
 export type ReplaceTextOperation = z.infer<typeof replaceTextOperationSchema>;
 
-/** 편집한 뒤 바뀐 블록들의 위치(바뀐 블록 표시·결과에 쓴다) */
+/** 본문 문단 위치 */
+export interface ParagraphPosition {
+  section: number;
+  paragraph: number;
+}
+
+/**
+ * 편집이 바꾼 본문 문단(편집 뒤 위치). 그 문단에 걸린 블록(문단 글자·표·누름틀)을 모두 바뀐 블록으로 본다 —
+ * 누름틀 값을 바꾸면 같은 문단 글자도, 문단 글자를 바꾸면 그 안 누름틀도 바뀌기 때문이다(PR #26 리뷰)
+ */
 export interface EditApplied {
-  changed: BlockAnchor[];
+  paragraphs: ParagraphPosition[];
 }
 
-const whereOf = (target: AnchoredTarget) =>
-  target.cell === undefined ? target.id : `${target.id} 칸(${target.cell.row},${target.cell.col})`;
-
-/** 대상의 start·end 를 검사해 [시작, 끝) 으로. 없으면 처음·끝. 빈 범위(start = end)는 그 자리에 넣기 */
-function spanIn(target: AnchoredTarget, text: string): { start: number; end: number } {
-  const length = charLength(text);
-  const start = target.start ?? 0;
-  const end = target.end ?? length;
-  if (start > end || end > length) {
-    throw new Error(
-      `${whereOf(target)}: 글자 범위가 맞지 않습니다(start ${start}, end ${end}, 글자 수 ${length}). 0 ≤ start ≤ end ≤ 글자 수로 주세요.`,
-    );
-  }
-  return { start, end };
-}
+/** 편집은 빈 범위(start = end)를 그 자리에 넣기로 받는다 */
+const EDIT_SPAN = { allowEmpty: true };
 
 function blockAt(blocks: Block[], target: AnchoredTarget): Block {
   const index = blockIndexByAnchor(blocks)(target.anchor);
@@ -58,8 +53,7 @@ function replaceInTable(doc: HwpDocument, block: TableBlock, target: AnchoredTar
       `${target.id}: 표에 없는 칸입니다(row ${row}, col ${col}). 이 표는 ${block.rowCount}행 ${block.colCount}열이고, 합친 칸은 왼쪽 위 칸 좌표로 고릅니다(read_blocks 의 cells).`,
     );
   }
-  const cellText = cellParagraphTexts(doc, block.section, block.paragraph, block.controlIndex, cellIndex).join('\n');
-  const { start, end } = spanIn(target, cellText);
+  const { start, end } = spanIn(target, block.cells[cellIndex]?.text ?? '', EDIT_SPAN);
   assertSomethingToChange(target, start, end, text);
   const address = { section: block.section, paragraph: block.paragraph, controlIndex: block.controlIndex, cellIndex };
   replaceCellText(doc, address, text, start, end);
@@ -78,14 +72,14 @@ function replaceInField(doc: HwpDocument, block: FieldBlock, target: AnchoredTar
   if (path.length > 1 || path.some((step) => step.type !== 'cell')) {
     throw new Error(`${target.id}: 표 안 표나 글상자에 든 누름틀은 아직 바꿀 수 없습니다.`);
   }
-  const { start, end } = spanIn(target, block.value);
+  const { start, end } = spanIn(target, block.value, EDIT_SPAN);
   assertSomethingToChange(target, start, end, text);
   replaceFieldText(doc, field.fieldId, text, start, end);
 }
 
 function assertSomethingToChange(target: AnchoredTarget, start: number, end: number, text: string): void {
   if (start === end && text.length === 0) {
-    throw new Error(`${whereOf(target)}: 바꿀 것이 없습니다(빈 범위에 빈 글자). 지우려면 범위를, 넣으려면 글자를 주세요.`);
+    throw new Error(`${targetLabel(target)}: 바꿀 것이 없습니다(빈 범위에 빈 글자). 지우려면 범위를, 넣으려면 글자를 주세요.`);
   }
 }
 
@@ -96,7 +90,7 @@ function replaceText(doc: HwpDocument, blocks: Block[], { target, text }: Replac
   switch (block.kind) {
     case 'paragraph': {
       if (target.cell !== undefined) throw new Error(`${target.id}: 표 블록이 아니라 cell 을 줄 수 없습니다.`);
-      const { start, end } = spanIn(target, block.text);
+      const { start, end } = spanIn(target, block.text, EDIT_SPAN);
       assertSomethingToChange(target, start, end, text);
       replaceParagraphText(doc, block.section, block.paragraph, text, start, end);
       break;
@@ -108,7 +102,7 @@ function replaceText(doc: HwpDocument, blocks: Block[], { target, text }: Replac
       replaceInField(doc, block, target, text);
       break;
   }
-  return { changed: [target.anchor] };
+  return { paragraphs: [{ section: block.section, paragraph: block.paragraph }] };
 }
 
 /** 편집 하나를 문서에 적용한다. 던지면 문서가 반쯤 바뀌었을 수 있다 — 되돌리기는 부르는 쪽 스냅샷이 맡는다 */

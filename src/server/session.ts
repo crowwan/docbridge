@@ -42,6 +42,12 @@ export interface EditedBlock {
   block: Block;
 }
 
+export interface EditOutcome {
+  changed: EditedBlock[];
+  /** 바뀌었지만 화면에 표시하지 못한 블록 id(빈 문단 등) */
+  unmarked: string[];
+}
+
 const samePositions = (a: BlockPosition[], b: BlockPosition[]) => JSON.stringify(a) === JSON.stringify(b);
 
 export interface OpenResult {
@@ -55,8 +61,6 @@ export interface OpenResult {
 
 export const discardedEditsMessage = (count: number) => `저장하지 않은 편집 ${count}개를 버렸습니다`;
 
-/** 열린 문서가 없을 때의 편집 상태 */
-const NO_EDITS = { editCount: 0, unsavedEdits: 0, dirty: false } as const;
 
 export interface SessionOptions {
   /** 기본 브라우저로 주소를 연다 (테스트에서는 가짜) */
@@ -109,17 +113,17 @@ export class DocumentSession {
 
   /** 되돌릴 수 있는 편집 수(최대 20). 열린 문서가 없으면 0 */
   get editCount(): number {
-    return this.current?.edits.editCount ?? NO_EDITS.editCount;
+    return this.current?.edits.editCount ?? 0;
   }
 
   /** 마지막으로 열거나 저장한 파일과 지금 문서 사이의 편집 수(저장 때 0). 열린 문서가 없으면 0 */
   get unsavedEdits(): number {
-    return this.current?.edits.unsavedEdits ?? NO_EDITS.unsavedEdits;
+    return this.current?.edits.unsavedEdits ?? 0;
   }
 
   /** 저장하지 않은 편집이 있는지 */
   get dirty(): boolean {
-    return this.current?.edits.dirty ?? NO_EDITS.dirty;
+    return this.current?.edits.dirty ?? false;
   }
 
   /** 문서를 여는 중이거나 새로고침으로 다시 띄우는 중이면 끝날 때까지 기다린다 */
@@ -188,22 +192,27 @@ export class DocumentSession {
    * 편집 공용 경로(SPEC-002). 편집은 줄에 세워 하나씩 한다(편집 전 id 표 사본과 뷰어 스냅샷이 같은 순서로 쌓여야 한다).
    * 뷰어가 스냅샷 → 편집 → 다시 그리기 → 블록 다시 뽑기 → 바뀐 블록 표시를 하고, 성공하면 서버는
    * updateIds 로 id 표를 편집에 맞춰 옮기고(넣기·지우기·옮기기, #20·#21) 편집 전 id 표를 되돌리기 칸에 쌓는다.
-   * 뷰어가 실패하면(스냅샷으로 되돌림) id 표·기록은 그대로다. 결과는 바뀐 블록과 그 id(새 블록은 updateIds 가 준 id)
+   * 뷰어가 실패하면(스냅샷으로 되돌림) id 표·기록은 그대로다. 결과는 바뀐 블록과 그 id(새 블록은 updateIds 가 준 id).
+   * 요청에 서버 편집 순번을 실어 보낸다: 앞 편집 결과를 못 받았으면(타임아웃 등 — 뷰어는 적용했을 수 있다) 뷰어가 어긋남으로 거부한다
    */
   async edit(
     label: string,
     operationFor: (document: OpenedDocument) => EditOperation,
     updateIds: (ids: BlockIdTable) => void = () => undefined,
-  ): Promise<EditedBlock[]> {
+  ): Promise<EditOutcome> {
     return this.enqueue(async () => {
       const document = this.openedDocument();
       const operation = operationFor(document);
       const before = document.ids.clone();
-      const { changed, pageCount } = await this.send('edit', { operation });
+      const { changed, unmarked, pageCount } = await this.send('edit', { operation, depth: document.edits.depth });
       updateIds(document.ids);
       document.edits.record(label, before);
       document.pageCount = pageCount;
-      return changed.map(({ anchor, block }) => ({ id: document.ids.idAt(anchor), block }));
+      const { ids } = document;
+      return {
+        changed: changed.map(({ anchor, block }) => ({ id: ids.idAt(anchor), block })),
+        unmarked: unmarked.flatMap((anchor) => ids.idAt(anchor) ?? []),
+      };
     });
   }
 
@@ -216,7 +225,7 @@ export class DocumentSession {
       const document = this.openedDocument();
       const available = Math.min(steps, document.edits.editCount);
       if (available === 0) return [];
-      const { undone, pageCount } = await this.send('undo', { steps: available });
+      const { undone, pageCount } = await this.send('undo', { steps: available, depth: document.edits.depth });
       document.pageCount = pageCount;
       // 뷰어가 되돌린 만큼만(뷰어 스냅샷이 서버 기록보다 적을 수 있다 — 새로고침 뒤 등)
       const taken = document.edits.undo(undone);
