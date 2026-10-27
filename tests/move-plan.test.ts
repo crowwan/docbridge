@@ -62,6 +62,17 @@ describe('SPEC-002 문단 옮기기 계획 (move_blocks)', () => {
     expect(planMove(noticeIds(), ['b5'], 'b7', 'before')).toMatchObject({ start: 3, end: 4, before: 6 });
   });
 
+  it('기준 블록이 같은 문단의 다른 블록과 이웃하면 문단 가운데로는 옮길 수 없다고 거부한다 (PR #28 재리뷰)', () => {
+    // 문단 1 = b2(글자) + b3(누름틀)
+    const middle = '는 다른 블록과 같은 문단(b2, b3)에 있어 그 사이로는 옮길 수 없습니다. b2 앞이나 b3 뒤로 옮기세요.';
+    expect(() => planMove(noticeIds(), ['b4'], 'b2', 'after')).toThrow(`기준 블록 b2 ${middle}`);
+    expect(() => planMove(noticeIds(), ['b5'], 'b3', 'before')).toThrow(`기준 블록 b3 ${middle}`);
+    // 문단 처음 블록 앞, 마지막 블록 뒤는 블록 순서로 판정한다
+    expect(planMove(noticeIds(), ['b5'], 'b2', 'before')).toMatchObject({ before: 1 });
+    expect(planMove(noticeIds(), ['b5'], 'b3', 'after')).toMatchObject({ before: 2 });
+    expect(() => planMove(noticeIds(), ['b4'], 'b3', 'after')).toThrow('b4 은 이미 b3 뒤에 있습니다. 옮길 것이 없습니다.');
+  });
+
   it('누름틀 블록만 고르면 누름틀이 든 블록을 옮기라고 거부한다. 누름틀 말고 블록이 없는 문단은 누름틀로 고른다', () => {
     expect(() => planMove(noticeIds(), ['b3'], 'b7', 'after')).toThrow(
       'b3: 누름틀 블록만 옮길 수는 없습니다. 누름틀이 든 블록 b2 를 옮기세요.',

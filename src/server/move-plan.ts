@@ -72,6 +72,15 @@ export function planMove(ids: BlockIdTable, given: string[], referenceId: string
   if (start <= reference.paragraph && reference.paragraph < end) {
     throw new Error(`기준 블록 ${referenceId} 가 옮길 블록 안에 있습니다.`);
   }
+  // 옮기는 단위는 문단이라, 기준 블록 앞(뒤)에 같은 문단의 다른 블록이 있으면 그 사이로는 옮길 수 없다
+  const referenceParagraph = inSection.filter(({ anchor }) => anchor.paragraph === reference.paragraph);
+  const edge = where === 'before' ? referenceParagraph[0] : referenceParagraph.at(-1);
+  if (edge !== undefined && edge.id !== referenceId) {
+    const sameIds = referenceParagraph.map(({ id }) => id);
+    throw new Error(
+      `기준 블록 ${referenceId} 는 다른 블록과 같은 문단(${sameIds.join(', ')})에 있어 그 사이로는 옮길 수 없습니다. ${sameIds[0]} 앞이나 ${sameIds.at(-1)} 뒤로 옮기세요.`,
+    );
+  }
   const before = where === 'before' ? reference.paragraph : reference.paragraph + 1;
   // 이미 그 자리: 블록 순서로 본다. 옮길 범위와 기준 사이에 블록이 든 문단이 없으면 빈 문단 위아래만 바뀐다
   const hasBlockBetween = (from: number, to: number) => inSection.some(({ anchor }) => from < anchor.paragraph && anchor.paragraph < to);
