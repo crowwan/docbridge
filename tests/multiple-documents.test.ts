@@ -7,7 +7,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import type { BlockAnchor } from '../src/core/block-ids.ts';
-import { startBridge, type Bridge } from '../src/server/bridge.ts';
+import { INACTIVE_VIEWER, startBridge, type Bridge } from '../src/server/bridge.ts';
 import { DocumentSessions, MAX_DOCUMENTS, TOO_MANY_DOCUMENTS } from '../src/server/documents.ts';
 import { NOTHING_TO_UNDO } from '../src/server/edit-tools.ts';
 import { createMcpServer } from '../src/server/mcp.ts';
@@ -328,13 +328,13 @@ describe('SPEC-007 여러 문서 세션·탭과 doc 인자 (list_documents · cl
     expect(notices(await call('get_outline', { doc: 'd1' }))).toEqual(['사용자가 화면에서 고침: 되돌림(replace_text b1 (사용자 화면 편집))']);
   });
 
-  it('닫은 문서 탭이 보낸 사람 편집은 받지 않는다', async () => {
+  it('닫은 문서 탭은 빈 탭이라 그 탭이 보낸 사람 편집은 받지 않는다', async () => {
     await json('open_document', { path: fixturePath('notice.hwpx') });
     const anchor = anchorOf('d1', 'b1');
     await json('close_document');
 
     const response = await tab('d1').socket.userRequest('user_edit', { edit: { kind: 'replace_text', target: { anchor }, text: 'X' }, state: 0 });
 
-    expect(response.ok).toBe(false);
+    expect(response).toMatchObject({ ok: false, error: INACTIVE_VIEWER });
   });
 });
