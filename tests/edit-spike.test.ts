@@ -471,6 +471,21 @@ describe('SPEC-002 문단 넣기 (기술 검증)', () => {
     expect(sectionDefs(new HwpDocument(doc.exportHwpx()))).toEqual([0, 1]);
   });
 
+  it('빈 문단을 앞에 넣어도 기준 문단 첫 글자 모양을 갖는다 (PR #24 리뷰)', () => {
+    const doc = openFixture('notice.hwpx');
+    const title = paragraphIndex(doc, '가나다구청');
+    const receiver = paragraphIndex(doc, '수신');
+    // 기준(수신) 첫 글자 모양과 앞 문단(가나다구청) 끝 글자 모양이 다르다
+    expect(charLook(doc, S, receiver, 0)).not.toBe(charLook(doc, S, title, 0));
+    const look = charLook(doc, S, receiver, 0);
+
+    const at = insertParagraphNear(doc, S, receiver, 'before', '');
+
+    expect(textOf(doc, at)).toBe('');
+    doc.insertText(S, at, 0, '나중에 친 글자');
+    expect(charLook(doc, S, at, 0)).toBe(look);
+  });
+
   it('rhwp insertParagraph 는 앞 문단 모양을 물려줘서 앞에 넣을 때 바로잡는다 (근거)', () => {
     const doc = openFixture('notice.hwpx');
     const firstSub = paragraphIndex(doc, '교육 대상');

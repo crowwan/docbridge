@@ -268,12 +268,14 @@ export function insertParagraphNear(
   doc.insertParagraph(section, at);
   const shiftedReference = where === 'before' ? reference + 1 : reference;
   if (paraShapeIdOf(doc, section, at) !== referenceShape) doc.setParaShapeId(section, at, referenceShape);
-  if (text.length === 0) return at;
-  doc.insertText(section, at, 0, text);
+  // 빈 문단도 글자 모양을 맞추려고 자리 글자 하나를 넣었다가 지운다(빈 문단은 마지막 글자 모양을 남긴다)
+  const filled = text.length > 0 ? text : ' ';
+  doc.insertText(section, at, 0, filled);
   if (referenceLook !== undefined && charLook(doc, section, at, 0) !== charLook(doc, section, shiftedReference, lookOffset)) {
     // 글자 모양 id 를 직접 정하는 API 가 없어 속성으로 건다(같은 속성의 새 id 가 생길 수 있다)
-    doc.applyCharFormat(section, at, 0, charLength(text), referenceLook);
+    doc.applyCharFormat(section, at, 0, charLength(filled), referenceLook);
   }
+  if (text.length === 0) doc.deleteText(section, at, 0, 1);
   return at;
 }
 
