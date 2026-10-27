@@ -3,7 +3,7 @@
 import type { ContentLoss } from '../core/hwpx-export.ts';
 import { base64Length, MAX_DOCUMENT_BYTES, tooLargeMessage } from '../shared/limits.ts';
 import type { ViewerResult } from '../shared/protocol.ts';
-import { resolveSavePath, writeSave } from './save-path.ts';
+import { protectedSource, resolveSavePath, writeSave } from './save-path.ts';
 import type { DocumentSession, OpenedDocument } from './session.ts';
 
 export interface SaveArgs {
@@ -61,14 +61,18 @@ export function decodeExport(data: string, byteLength: number, maxBytes = MAX_DO
  */
 export function saveDocument(session: DocumentSession, args: SaveArgs, write = writeSave): Promise<SaveResult> {
   return session.exclusive(async (document, send) => {
+    // overwrite 는 path 를 줬을 때만 뜻이 있다. path 가 없으면 늘 기본 이름을 새로 만든다(겹치면 번호)
+    const overwrite = args.path !== undefined && (args.overwrite ?? false);
     // 경로가 틀렸으면 내보내기(큰 문서는 0.5초)를 하지 않는다
-    const overwrite = args.overwrite ?? false;
     const resolved = await resolveSavePath({ sourcePath: document.sourcePath, path: args.path, overwrite });
     const exported = await send('export_hwpx', {});
     if (!exported.verified) throw verificationError(document, exported);
     const bytes = decodeExport(exported.data, exported.byteLength);
     // 기본 이름은 그사이 같은 이름이 생기면(동시 저장, 다른 프로그램) 다음 번호로 쓴다
-    const path = await write({ path: resolved, overwrite, numbered: args.path === undefined }, bytes);
+    const path = await write(
+      { path: resolved, overwrite, numbered: args.path === undefined, protectedPath: protectedSource(document.sourcePath) },
+      bytes,
+    );
     await session.recordSave(document, path, exported.blocks);
     const warnings = exported.losses.map(lossWarning);
     return {

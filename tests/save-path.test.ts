@@ -1,4 +1,4 @@
-import { chmod, copyFile, lstat, mkdir, mkdtemp, readdir, readFile, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, link, lstat, mkdir, mkdtemp, readdir, readFile, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -73,6 +73,29 @@ describe('SPEC-002 저장 경로 정하기 (save_document 경로 규칙)', () =>
     await expect(resolveSavePath({ sourcePath, path: sourcePath, overwrite: true }, home)).rejects.toThrow(
       '원본(.hwp)은 덮어쓸 수 없습니다. 저장은 항상 HWPX 입니다. path 를 빼면 공문-수정.hwpx 로 저장합니다.',
     );
+  });
+
+  it('원본 .hwp 를 가리키는 링크(.hwpx 이름의 심볼릭·하드 링크)도 원본으로 보고 덮어쓰지 않는다', async () => {
+    const sourcePath = await source('공문.hwp');
+    await symlink(sourcePath, join(dir, '공문-link.hwpx'));
+    await link(sourcePath, join(dir, '공문-hard.hwpx'));
+
+    for (const path of ['공문-link.hwpx', '공문-link', '공문-hard.hwpx']) {
+      await expect(resolveSavePath({ sourcePath, path, overwrite: true }, home)).rejects.toThrow(
+        '원본(.hwp)은 덮어쓸 수 없습니다. 저장은 항상 HWPX 입니다. path 를 빼면 공문-수정.hwpx 로 저장합니다.',
+      );
+    }
+  });
+
+  it('쓰기 직전에도 원본 .hwp 를 다시 확인한다(경로를 정한 뒤 원본을 가리키게 바뀐 링크)', async () => {
+    const sourcePath = await source('공문.hwp');
+    const path = join(dir, '회신.hwpx');
+    await symlink(sourcePath, path);
+
+    await expect(writeSave({ path, overwrite: true, numbered: false, protectedPath: sourcePath }, new TextEncoder().encode('새 내용'))).rejects.toThrow(
+      '원본(.hwp)은 덮어쓸 수 없습니다.',
+    );
+    expect(await readFile(sourcePath)).toEqual(await readFile(fixturePath('notice.hwp')));
   });
 
   it('이미 있는 다른 파일은 overwrite: true 일 때만 덮어쓴다', async () => {

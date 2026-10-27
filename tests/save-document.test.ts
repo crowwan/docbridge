@@ -1,5 +1,5 @@
 import { once } from 'node:events';
-import { chmod, copyFile, mkdtemp, readdir, readFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HwpDocument } from '@rhwp/core';
@@ -185,6 +185,21 @@ describe('SPEC-002 저장 (save_document)', () => {
 
     expect(results.map((r) => r.path).toSorted()).toEqual([join(dir, '공문-수정-2.hwpx'), join(dir, '공문-수정.hwpx')]);
     expect((await readdir(dir)).toSorted()).toEqual(['공문-수정-2.hwpx', '공문-수정.hwpx', '공문.hwpx']);
+  });
+
+  it('path 없이 overwrite: true 를 줘도 기본 이름을 덮지 않고 다음 번호로 저장한다(overwrite 는 path 를 줬을 때만)', async () => {
+    // AC-9
+    await connectRhwp();
+    await openCopy('notice.hwpx', '공문.hwpx');
+
+    // 경로를 정한 뒤 쓰기 전에 기본 이름 파일이 생긴다(다른 프로그램)
+    const result = await saveDocument(session, { overwrite: true }, async (target, bytes) => {
+      await writeFile(join(dir, '공문-수정.hwpx'), '먼저 있던 파일');
+      return writeSave(target, bytes);
+    });
+
+    expect(result.path).toBe(join(dir, '공문-수정-2.hwpx'));
+    expect(await readFile(join(dir, '공문-수정.hwpx'), 'utf8')).toBe('먼저 있던 파일');
   });
 
   it('원본이 .hwp 면 overwrite: true 여도 원본을 덮어쓰지 않는다', async () => {

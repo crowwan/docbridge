@@ -3,8 +3,7 @@
 // 문서 상태의 기준은 뷰어다. 서버는 파일을 읽어 넘기고 id 표만 들고 있다(SPEC-001 구성).
 // 저장하면 저장 경로가 마지막 파일이 되고, 그때 id 표를 기준 표로 떠 둔다. 새로고침하면 마지막 파일과 기준 표로 돌아간다(SPEC-002, ADR 002).
 import { readFile, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { basename, extname, join, resolve } from 'node:path';
+import { basename, extname } from 'node:path';
 import { BlockIdTable, type BlockPosition } from '../core/block-ids.ts';
 import type { Block } from '../core/block-schema.ts';
 import type { EditOperation } from '../core/edit-operations.ts';
@@ -14,6 +13,7 @@ import { MAX_DOCUMENT_BYTES, MB } from '../shared/limits.ts';
 import { ViewerNotConnectedError, type Bridge } from './bridge.ts';
 import { EditLog } from './edit-log.ts';
 import { log } from './log.ts';
+import { absolutePath } from './paths.ts';
 
 /** 이보다 큰 파일은 읽지 않는다 */
 export const MAX_FILE_BYTES = MAX_DOCUMENT_BYTES;
@@ -79,10 +79,6 @@ export interface SessionOptions {
   readFile?: (path: string) => Promise<Uint8Array>;
 }
 
-/** ~/ 로 시작하면 홈 폴더로 바꾸고 절대 경로로 만든다 */
-function absolutePath(path: string): string {
-  return resolve(path === '~' || path.startsWith('~/') ? join(homedir(), path.slice(1)) : path);
-}
 
 async function readDocumentFile(path: string, read: (path: string) => Promise<Uint8Array>): Promise<Uint8Array> {
   const extension = extname(path).toLowerCase();
@@ -201,7 +197,7 @@ export class DocumentSession {
 
   /** 문서를 뷰어에 띄운다. 뷰어가 없으면 브라우저로 뷰어 주소를 열고 붙기를 기다린다 */
   async open(inputPath: string): Promise<OpenResult> {
-    const path = absolutePath(inputPath);
+    const path = absolutePath(inputPath, process.cwd());
     const bytes = await readDocumentFile(path, this.readFile);
     const fileName = basename(path);
     return this.enqueue(async () => {

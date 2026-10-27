@@ -129,10 +129,10 @@ export function createMcpServer(session: DocumentSession): McpServer {
     'save_document',
     {
       description:
-        '열린 문서를 HWPX 로 저장한다(원본이 .hwp 여도). path 가 없으면 원본 옆 <이름>-수정.hwpx(있으면 -수정-2 …). 상대 경로는 원본 폴더 기준, ~/ 는 홈, 확장자가 없으면 .hwpx 를 붙인다. 원본(.hwpx 일 때만)과 이미 있는 파일은 overwrite: true 일 때만 덮어쓴다. 저장 전에 내보낸 파일을 다시 열어 블록 글자를 비교하고, 다르면 파일을 쓰지 않고 달라진 블록 id 를 오류로 돌려준다. 결과 { path, bytes, verified: { blockCount }, warnings? } — warnings 는 내보내며 빠진 내용이라 사용자에게 알린다. 저장하면 이 파일이 마지막 파일(뷰어 새로고침 때 다시 읽는 파일)이 된다',
+        '열린 문서를 HWPX 로 저장한다(원본이 .hwp 여도). path 가 없으면 원본 옆 <이름>-수정.hwpx(있으면 -수정-2 …). 상대 경로는 원본 폴더 기준, ~/ 는 홈, 확장자가 없으면 .hwpx 를 붙인다. 원본(.hwpx 일 때만)과 이미 있는 파일은 path 에 그 경로를 주고 overwrite: true 일 때만 덮어쓴다(원본을 덮어쓰려면 path 에 원본 경로 + overwrite: true. path 가 없으면 overwrite 는 무시하고 늘 새 이름). 저장 전에 내보낸 파일을 다시 열어 블록 글자를 비교하고, 다르면 파일을 쓰지 않고 달라진 블록 id 를 오류로 돌려준다. 결과 { path, bytes, verified: { blockCount }, warnings? } — warnings 는 내보내며 빠진 내용이라 사용자에게 알린다. 저장하면 이 파일이 마지막 파일(뷰어 새로고침 때 다시 읽는 파일)이 된다',
       inputSchema: {
         path: z.string().optional().describe('저장할 경로(.hwpx). 없으면 원본 옆 <이름>-수정.hwpx'),
-        overwrite: z.boolean().optional().describe('원본(.hwpx)이나 이미 있는 파일을 덮어쓴다(기본 false)'),
+        overwrite: z.boolean().optional().describe('path 의 파일(원본 .hwpx 나 이미 있는 파일)을 덮어쓴다(기본 false). path 가 없으면 무시'),
       },
     },
     (args) => toolResult(() => saveDocument(session, args)),
