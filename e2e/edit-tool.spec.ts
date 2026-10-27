@@ -3,7 +3,7 @@
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 import { startBridge, type Bridge } from '../src/server/bridge.ts';
-import { replaceText, undo } from '../src/server/edit-tools.ts';
+import { deleteBlocks, insertParagraph, replaceText, undo } from '../src/server/edit-tools.ts';
 import { highlight } from '../src/server/highlight-tools.ts';
 import { readBlockContents } from '../src/server/read-tools.ts';
 import { DocumentSession } from '../src/server/session.ts';
@@ -111,5 +111,37 @@ test.describe('SPEC-002 편집 뒤 다시 그리기와 바뀐 블록 표시 (서
 
     await expect(marks(page)).toHaveCount(0);
     await expect(page.locator('.highlight')).not.toHaveCount(0);
+  });
+});
+
+test.describe('SPEC-002 문단 넣기·지우기 화면 (서버가 내주는 뷰어)', () => {
+  test('AC-2 insert_paragraph 뒤 넣은 문단이 그려지고 초록 테두리가 감싼다. 뒤 블록은 아래로 밀린다', async ({ page }) => {
+    await session.open(fixturePath('notice.hwpx'));
+    const firstPage = page.getByRole('region', { name: '1쪽' });
+
+    const result = await insertParagraph(session, { after: 'b11', text: '문의: 안전총괄과(02-123-4567)' });
+
+    expect(result).toEqual({ inserted: 'b15', changed: [{ id: 'b15', text: '문의: 안전총괄과(02-123-4567)' }] });
+    expect(await paragraphText('b15')).toBe('문의: 안전총괄과(02-123-4567)');
+    await expect(marks(page)).toHaveCount(1);
+    const mark = await markOnFirstPage(page, 0);
+    expect(await inkBounds(page, 0, mark)).not.toBeNull();
+    await firstPage.screenshot({ path: `${SCREENS}/insert-01-after-insert.png` });
+  });
+
+  test('AC-3 delete_blocks 뒤 지운 문단·표가 화면에서 사라지고 표시는 남지 않는다. undo 하면 돌아온다', async ({ page }) => {
+    await session.open(fixturePath('notice.hwpx'));
+    const firstPage = page.getByRole('region', { name: '1쪽' });
+    await insertParagraph(session, { after: 'b1', text: '넣은 문단' });
+    await expect(marks(page)).toHaveCount(1);
+
+    expect(await deleteBlocks(session, ['b8', 'b10', 'b12'])).toEqual({ deleted: ['b8', 'b10', 'b12'] });
+
+    await expect(marks(page)).toHaveCount(0);
+    expect((await readBlockContents(session, { fromPage: 1 })).blocks.map(({ kind }) => kind)).not.toContain('table');
+    await firstPage.screenshot({ path: `${SCREENS}/insert-02-after-delete.png` });
+
+    expect(await undo(session, 1)).toEqual({ undone: 1, edits: ['delete_blocks b8, b10, b12'] });
+    expect((await readBlockContents(session, { ids: ['b12'] })).blocks.map(({ kind }) => kind)).toEqual(['table']);
   });
 });
