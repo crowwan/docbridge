@@ -306,6 +306,24 @@ describe('SPEC-002 편집 도구 (replace_text · move_blocks · undo)', () => {
     });
   });
 
+  it('AC-6 옛 자리와 새 자리 사이에서 순서가 바뀐 문단의 직접 입력 번호도 경고한다 (PR #28 재리뷰)', async () => {
+    // "머리 / 1. 가 / 2. 나 / 3. 다" 에서 "3. 다" 를 "1. 가" 앞으로 → 1·2 문단도 순서가 바뀌어 번호가 틀어진다
+    const doc = createBlankDocument();
+    doc.insertText(0, 0, 0, '머리');
+    ['1. 가', '2. 나', '3. 다'].forEach((text, i) => {
+      doc.splitParagraph(0, i, doc.getParagraphLength(0, i));
+      doc.insertText(0, i + 1, 0, text);
+    });
+    const path = join(mkdtempSync(join(tmpdir(), 'docbridge-move-')), 'typed.hwpx');
+    writeFileSync(path, doc.exportHwpx());
+    await json('open_document', { path });
+
+    expect(await json('move_blocks', { ids: ['b4'], before: 'b2' })).toMatchObject({
+      moved: ['b4'],
+      warnings: ['직접 입력한 번호가 있는 문단: b4, b2, b3. 번호를 고치려면 replace_text 를 쓰세요.'],
+    });
+  });
+
   it('AC-5 옮길 수 없는 문단이 있으면 이유와 블록 id 를 돌려주고 아무것도 바꾸지 않는다', async () => {
     const doc = createBlankDocument();
     doc.insertText(0, 0, 0, '첫째');

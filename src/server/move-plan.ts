@@ -15,6 +15,8 @@ export interface MovePlan {
   before: number;
   /** 범위에 든 블록 모두(문서 순서). 고르지 않은 같은 문단 블록(문단 안 누름틀 등)도 같이 옮겨진다 */
   blocks: Array<{ id: string; anchor: BlockAnchor }>;
+  /** 옛 자리와 새 자리 사이에서 옮긴 문단과 순서가 바뀐 블록 id(문서 순서) — 직접 입력한 번호가 틀어질 수 있는 문단 */
+  shifted: string[];
 }
 
 export const DIFFERENT_SECTION = '다른 구역으로는 옮길 수 없습니다. 같은 구역 안에서 옮기세요.';
@@ -79,5 +81,7 @@ export function planMove(ids: BlockIdTable, given: string[], referenceId: string
   if (alreadyThere) {
     throw new Error(`${chosenIds.join(', ')} 은 이미 ${referenceId} ${whereName(where)}에 있습니다. 옮길 것이 없습니다.`);
   }
-  return { section, start, end, before, blocks };
+  const [shiftFrom, shiftTo] = before < start ? [before, start] : [end, before];
+  const shifted = inSection.filter(({ anchor }) => shiftFrom <= anchor.paragraph && anchor.paragraph < shiftTo).map(({ id }) => id);
+  return { section, start, end, before, blocks, shifted };
 }

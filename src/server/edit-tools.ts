@@ -7,6 +7,7 @@ import { targetLabel } from '../core/text-targets.ts';
 import type { TextTarget } from '../shared/protocol.ts';
 import { anchored, anchoredTarget } from './highlight-tools.ts';
 import { planMove, type MovePlan, type MoveWhere } from './move-plan.ts';
+import { labeledBlocks } from './read-tools.ts';
 import { outlineItem, preview } from './reading.ts';
 import type { DocumentSession, EditedBlock } from './session.ts';
 
@@ -148,7 +149,11 @@ export async function moveBlocks(session: DocumentSession, ids: string[], refere
     const number = block.kind === 'paragraph' ? block.number : undefined;
     return [{ id, block, item: { id, ...(number === undefined ? {} : { number }), text: outlineItem({ id, block }).text } }];
   });
-  const typed = items.filter(({ id, block }) => movedIds.has(id) && block.kind === 'paragraph' && hasTypedNumber(block.text));
+  // 직접 입력한 번호: 옮긴 문단과 사이에서 순서가 바뀐 문단을 본다. 사이 문단은 바뀐 블록이 아니라 글자를 뷰어에서 다시 받는다
+  const reordered = new Set([...movedIds, ...(plan?.shifted ?? [])]);
+  const typed = (await labeledBlocks(session)).filter(
+    ({ id, block }) => reordered.has(id) && block.kind === 'paragraph' && hasTypedNumber(block.text),
+  );
   const warnings = [...(typed.length === 0 ? [] : [typedNumberMessage(typed.map(({ id }) => id))]), ...unmarked.map(unmarkedMessage)];
   return {
     moved: items.filter(({ id }) => movedIds.has(id)).map(({ id }) => id),

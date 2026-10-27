@@ -19,6 +19,8 @@ describe('SPEC-002 문단 옮기기 계획 (move_blocks)', () => {
       end: 11,
       before: 5,
       blocks: [{ id: 'b11', anchor: anchor(10) }],
+      // 옛 자리와 새 자리 사이에서 순서가 바뀐 블록
+      shifted: ['b6', 'b7', 'b8', 'b9', 'b10'],
     });
     expect(planMove(noticeIds(), ['b6'], 'b12', 'after')).toMatchObject({ start: 5, end: 6, before: 12 });
   });
