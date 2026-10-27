@@ -1,6 +1,8 @@
 // SPEC-002 기술 검증(#18): rhwp 편집 API 로 옮기기·바꾸기·넣기·되돌리기·HWPX 저장 검증이 스펙대로 되는지.
 // 측정(시간·메모리)은 시간에 기대지 않게 테스트가 아니라 scripts/measure-edits.ts 로 잰다.
-import type { HwpDocument } from '@rhwp/core';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { HwpDocument } from '@rhwp/core';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { BlockIdTable } from '../src/core/block-ids.ts';
@@ -17,7 +19,7 @@ import {
   replaceParagraphText,
 } from '../src/core/edits.ts';
 import { differentBlocks, exportVerifiedHwpx } from '../src/core/hwpx-export.ts';
-import { createBlankDocument } from '../src/core/rhwp-node.ts';
+import { createBlankDocument, openDocumentFile } from '../src/core/rhwp-node.ts';
 import { openFixture } from './fixtures.ts';
 
 const S = 0;
@@ -110,29 +112,71 @@ describe('SPEC-002 문단 옮기기 (기술 검증)', () => {
     expect(after.find((b) => b.kind === 'table')?.paragraph).toBe(table.paragraph + 1);
   });
 
-  it('각주·책갈피·새 번호가 든 문단은 아무것도 바꾸지 않고 문단과 이유를 모두 돌려준다', () => {
+  it('각주·새 번호·책갈피가 든 문단은 아무것도 바꾸지 않고 문단과 이유를 모두 돌려준다', () => {
     const doc = createBlankDocument();
     doc.insertText(S, 0, 0, '첫째');
-    ['둘째 책갈피', '셋째 각주', '넷째 새 번호', '다섯째'].forEach((text, i) => {
+    ['둘째', '셋째 각주', '넷째 새 번호', '다섯째 책갈피'].forEach((text, i) => {
       doc.splitParagraph(S, i, doc.getParagraphLength(S, i));
       doc.insertText(S, i + 1, 0, text);
     });
-    doc.addBookmark(S, 1, 2, '책갈피1');
+    doc.addBookmark(S, 4, 2, '책갈피1');
     doc.insertFootnote(S, 2, 2);
     doc.insertNewNumber(S, 3, 2, 5);
     const before = paragraphTexts(doc);
 
-    const result = moveParagraphs(doc, S, 1, 5, 0);
+    const result = moveParagraphs(doc, S, 2, 5, 1);
 
     expect(result).toEqual({
       ok: false,
       rejected: [
-        { paragraph: 1, reason: '책갈피 등 해석하지 못한 컨트롤 데이터' },
         { paragraph: 2, reason: '각주' },
         { paragraph: 3, reason: '새 번호로 시작' },
+        { paragraph: 4, reason: '책갈피' },
       ],
     });
     expect(paragraphTexts(doc)).toEqual(before);
+  });
+
+  it('구역 첫 문단(구역·단 정의가 든 문단)은 옮기지 않고, 그 앞으로도 옮기지 않는다', () => {
+    const doc = openFixture('notice.hwpx');
+    const related = paragraphIndex(doc, '관련:');
+
+    expect(moveParagraphs(doc, S, 0, 1, related)).toEqual({ ok: false, rejected: [{ paragraph: 0, reason: '구역·단 시작 문단' }] });
+    expect(() => moveParagraphs(doc, S, related, related + 1, 0)).toThrow('구역 첫 문단 앞으로는 옮길 수 없습니다.');
+  });
+
+  it('rhwp 는 구역 첫 문단 앞에 넣은 문단 뒤에 구역 정의를 남긴다 (근거)', () => {
+    const doc = openFixture('notice.hwpx');
+    const source = new HwpDocument(doc.exportHwp());
+    doc.importParagraphBlock(
+      source,
+      JSON.stringify({ request: { sourceSection: S, sourceStart: 5, sourceEnd: 6, targetSection: S, insertBefore: 0, count: 1 }, dryRun: false }),
+    );
+    const sectionDef = z.array(z.object({ ctrlId: z.string(), para: z.number() })).parse(JSON.parse(doc.getControls())).find((c) => c.ctrlId === 'secd');
+    expect(sectionDef?.para).toBe(1);
+  });
+
+  // 한컴이 저장한 그리기 개체는 rhwp 로 만들 수 없어서, 레포에 넣지 않은 로컬 한컴 문서가 있을 때만 돈다(ADR 001·002)
+  const realHwpx01 = join(process.env.DOCBRIDGE_EXTRA_FIXTURES_DIR ?? '', 'real-hwpx-01.hwpx');
+  it.runIf(process.env.DOCBRIDGE_EXTRA_FIXTURES_DIR !== undefined && existsSync(realHwpx01))(
+    '한컴 HWPX 의 그리기 개체 문단은 HWP 사본에서 거부되면 HWPX 사본으로 옮긴다 (로컬 한컴 문서)',
+    () => {
+      const doc = openDocumentFile(realHwpx01);
+      const drawing = 29; // 그리기 개체(gso) 하나만 든 문단
+      const viaHwp = new HwpDocument(doc.exportHwp());
+      const request = JSON.stringify({ request: { sourceSection: S, sourceStart: drawing, sourceEnd: drawing + 1, targetSection: S, insertBefore: 1, count: 1 }, dryRun: true });
+      expect(() => doc.importParagraphBlock(viaHwp, request)).toThrow('uninterpreted CTRL_DATA payload');
+
+      expect(moveParagraphs(doc, S, drawing, drawing + 1, 1)).toEqual({ ok: true, moved: { start: 1, end: 2 } });
+    },
+  );
+
+  it('rhwp HWPX 사본은 번호 문단을 거부해서 HWP 사본을 먼저 쓴다 (근거)', () => {
+    const doc = openFixture('notice.hwpx');
+    const reply = paragraphIndex(doc, '회신 기한');
+    const viaHwpx = new HwpDocument(doc.exportHwpx());
+    const request = JSON.stringify({ request: { sourceSection: S, sourceStart: reply, sourceEnd: reply + 1, targetSection: S, insertBefore: 5, count: 1 }, dryRun: true });
+    expect(() => doc.importParagraphBlock(viaHwpx, request)).toThrow('opaque HWPX paraHead import is not supported');
   });
 
   it('rhwp 거부 문구에서 이유를 읽고, 모르는 이유는 그대로 둔다', () => {
@@ -406,11 +450,13 @@ describe('SPEC-002 되돌리기 (기술 검증)', () => {
     const doc = createBlankDocument();
     doc.insertText(S, 0, 0, '첫째');
     doc.splitParagraph(S, 0, 2);
-    doc.insertText(S, 1, 0, '각주 문단');
-    doc.insertFootnote(S, 1, 1);
+    doc.insertText(S, 1, 0, '둘째');
+    doc.splitParagraph(S, 1, 2);
+    doc.insertText(S, 2, 0, '각주 문단');
+    doc.insertFootnote(S, 2, 1);
     const history = new EditHistory<null>(doc);
 
-    const result = history.apply('옮기기', null, () => moveParagraphs(doc, S, 1, 2, 0), (r) => r.ok);
+    const result = history.apply('옮기기', null, () => moveParagraphs(doc, S, 2, 3, 1), (r) => r.ok);
 
     expect(result.ok).toBe(false);
     expect(history.size).toBe(0);

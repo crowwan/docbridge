@@ -302,8 +302,8 @@ const importRequest = (section: number, start: number, end: number, before: numb
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /**
- * 같은 구역 안 이어진 문단 [start, end) 를 before 문단 앞으로 옮긴다(before 는 0..문단 수, 문단 수면 맨 끝).
- * 절차(rhwp-code-analysis 5-3): 사본(exportHwp → new HwpDocument) → dryRun → 실행 → 원본 지우기(인덱스 보정)
+ * 같은 구역 안 이어진 문단 [start, end) 를 before 문단 앞으로 옮긴다(before 는 1..문단 수, 문단 수면 맨 끝).
+ * 절차(rhwp-code-analysis 5-3): 사본(exportHwp, 거부되면 exportHwpx → new HwpDocument) → dryRun → 실행 → 원본 지우기(인덱스 보정)
  * → 문단 모양 되돌리기. 거부되면 아무것도 바꾸지 않고 거부된 문단과 이유를 모두 돌려준다.
  * 실행 중 예외는 그대로 던진다 — 되돌리기는 부르는 쪽 스냅샷(EditHistory.apply)이 맡는다.
  */
@@ -313,24 +313,35 @@ export function moveParagraphs(doc: HwpDocument, section: number, start: number,
     throw new Error(`옮길 문단 범위가 맞지 않습니다(start ${start}, end ${end}, before ${before}, 문단 수 ${count}).`);
   }
   if (start <= before && before <= end) throw new Error('기준 문단이 옮길 문단 안이나 바로 옆에 있습니다.');
-  // HWPX 사본은 한컴 HWPX 의 번호 정의(paraHead)를 가져오지 못해 거부될 수 있어 HWP 로 사본을 만든다(ADR 002)
-  const source = new HwpDocument(doc.exportHwp());
-  try {
-    const rejected = dryRunRejections(doc, source, section, start, end, before);
-    if (rejected.length > 0) return { ok: false, rejected };
-    const shapes = Array.from({ length: end - start }, (_, i) => paraShapeIdOf(source, section, start + i));
-    doc.importParagraphBlock(source, importRequest(section, start, end, before, false));
-    const size = end - start;
-    const originalStart = before <= start ? start + size : start;
-    for (let p = originalStart + size - 1; p >= originalStart; p -= 1) doc.deleteParagraph(section, p);
-    const movedStart = before <= start ? before : before - size;
-    shapes.forEach((shape, i) => {
-      if (paraShapeIdOf(doc, section, movedStart + i) !== shape) doc.setParaShapeId(section, movedStart + i, shape);
-    });
-    return { ok: true, moved: { start: movedStart, end: movedStart + size } };
-  } finally {
-    source.free();
+  // 구역 첫 문단 앞에 넣으면 구역·단 정의가 둘째 문단에 남는다(rhwp 는 열지만 한글 파일 구조와 다르다, ADR 002)
+  if (before === 0) throw new Error('구역 첫 문단 앞으로는 옮길 수 없습니다.');
+  const size = end - start;
+  let rejected: MoveRejection[] = [];
+  // 사본은 HWP 로 먼저 만든다. HWPX 사본은 HWPX 번호 정의(paraHead)를 가져오지 못해 번호 문단을 거부한다.
+  // HWP 사본에서 거부되면(HWPX 문서의 그리기 개체 등이 HWP 로 바뀌며 해석하지 못한 컨트롤 데이터가 된다) HWPX 사본으로 한 번 더 본다(ADR 002)
+  for (const exportCopy of [() => doc.exportHwp(), () => doc.exportHwpx()]) {
+    const source = new HwpDocument(exportCopy());
+    try {
+      const found = dryRunRejections(doc, source, section, start, end, before);
+      if (found.length > 0) {
+        // 둘 다 거부되면 거부가 적은 쪽, 같으면 HWPX 사본 쪽 이유(책갈피 등 컨트롤 이름이 남는다)
+        if (rejected.length === 0 || found.length <= rejected.length) rejected = found;
+        continue;
+      }
+      const shapes = Array.from({ length: size }, (_, i) => paraShapeIdOf(source, section, start + i));
+      doc.importParagraphBlock(source, importRequest(section, start, end, before, false));
+      const originalStart = before <= start ? start + size : start;
+      for (let p = originalStart + size - 1; p >= originalStart; p -= 1) doc.deleteParagraph(section, p);
+      const movedStart = before <= start ? before : before - size;
+      shapes.forEach((shape, i) => {
+        if (paraShapeIdOf(doc, section, movedStart + i) !== shape) doc.setParaShapeId(section, movedStart + i, shape);
+      });
+      return { ok: true, moved: { start: movedStart, end: movedStart + size } };
+    } finally {
+      source.free();
+    }
   }
+  return { ok: false, rejected };
 }
 
 function dryRunRejections(
