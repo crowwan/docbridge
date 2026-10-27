@@ -48,6 +48,7 @@ npm run demo           # 빌드 후 데모 영상 녹화(scripts/demo/, 서버 �
 ```
 
 - 처음 E2E 를 돌릴 때 `npx playwright install chromium`
+- Vitest 시간 제한은 60초(멈춘 테스트를 잡는 용도, `vitest.config.ts`). 파일마다 작업자가 동시에 돌아 WASM 큰 작업은 혼자 돌 때보다 몇 배 느리므로, 테스트는 시간·기계 부하에 기대지 않게 쓴다(타이머는 가짜 타이머, 문서는 테스트마다 새로 열기) — #78
 - E2E 개발 서버 포트(기본 7792)는 `DOCBRIDGE_E2E_PORT` 로 바꾼다(워크트리 여러 개를 동시에 돌릴 때, 숫자가 아니면 오류). 서버 쪽 E2E 는 빈 포트(0)를 쓴다
 - 측정 결과는 `e2e-results/metrics.json`, 스크린샷은 `test-results/screens/` (둘 다 git 에 넣지 않음)
 
