@@ -24,3 +24,27 @@ export function charIndexes(text: string): number[] {
   indexes.push(chars);
   return indexes;
 }
+
+/** 글자 범위 [start, end) 를 text 로 바꾸기(replace_text 대상 하나) */
+export interface CharEdit {
+  start: number;
+  end: number;
+  text: string;
+}
+
+/**
+ * 입력 전후를 비교해 바뀐 범위만 구한다(SPEC-006 글자 고치기): 앞뒤 같은 글자를 잘라 [start, end) 를 text 로.
+ * 앞뒤 같은 글자를 건드리지 않아 그 부분 서식(굵게 등)이 남는다. 같으면 undefined. 위치는 글자 단위
+ */
+export function changedRange(before: string, after: string): CharEdit | undefined {
+  const from = [...before];
+  const to = [...after];
+  const shorter = Math.min(from.length, to.length);
+  let head = 0;
+  while (head < shorter && from[head] === to[head]) head += 1;
+  // 앞에서 맞춘 글자는 뒤에서 다시 세지 않는다("aa" → "aaa" 는 끝에 넣기)
+  let tail = 0;
+  while (tail < shorter - head && from[from.length - 1 - tail] === to[to.length - 1 - tail]) tail += 1;
+  if (head === from.length && head === to.length) return undefined;
+  return { start: head, end: from.length - tail, text: to.slice(head, to.length - tail).join('') };
+}

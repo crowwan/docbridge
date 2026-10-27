@@ -6,11 +6,13 @@
 // 편집(SPEC-002)은 core/document-editor.ts 공용 경로로 하고, 여기서는 다시 그리고 바뀐 블록에 초록 테두리를 남긴다.
 // 사람 편집(SPEC-006)은 바로 고치지 않고 서버에 user_edit 로 보낸다. 서버가 Claude 편집과 같은 줄로 처리해 edit 요청으로 돌려준다.
 // ⌘Z(윈도우 Ctrl+Z)는 서버 공용 되돌리기(user_undo).
+// 더블클릭 글자 고치기(inline-edit.ts)는 고칠 자리·바뀐 범위만(core/edit-spot.ts)을 user_edit 로 보내고, 안 되면 뷰어 아래 알림(toast.ts).
 import init, { HwpDocument } from '@rhwp/core';
 import wasmUrl from '@rhwp/core/rhwp_bg.wasm?url';
 import type { BlockAnchor } from '../core/block-ids.ts';
 import { blockPositionSchema, type Block } from '../core/block-schema.ts';
 import { DocumentEditor } from '../core/document-editor.ts';
+import { BLOCK_CHANGED_WHILE_EDITING, editSpotAt, replaceEditAt, type EditSpot } from '../core/edit-spot.ts';
 import type { EditOperation } from '../core/edit-operations.ts';
 import { findInBlocks } from '../core/find-text.ts';
 import { selectionRects, type SelectionRect } from '../core/highlight-rects.ts';
@@ -24,7 +26,9 @@ import { errorMessage } from '../shared/errors.ts';
 import {
   answerRequest,
   parseUserResult,
+  REQUEST_TIMEOUT_MS,
   RequestTracker,
+  userRequestTimeoutMessage,
   userResponseMessageSchema,
   type CreateDocumentResult,
   type UserEdit,
@@ -37,6 +41,8 @@ import {
   type ViewerResult,
 } from '../shared/protocol.ts';
 import type { RenderMetrics, ViewerApi } from './api.ts';
+import { setupInlineEdit } from './inline-edit.ts';
+import { showToast } from './toast.ts';
 
 const ZOOM = 1;
 
@@ -263,6 +269,7 @@ function redraw(doc: HwpDocument, scroll: 'keep' | 'top'): { pageRenderMs: numbe
   const scrollY = scroll === 'keep' ? window.scrollY : 0;
   const { pageRenderMs, pageEls } = renderPages(doc);
   currentPageEls = pageEls;
+  inlineEdit?.reattach();
   window.scrollTo(0, scrollY);
   showStatus(doc);
   return { pageRenderMs };
@@ -270,6 +277,7 @@ function redraw(doc: HwpDocument, scroll: 'keep' | 'top'): { pageRenderMs: numbe
 
 /** 이전 문서의 되돌리기 스냅샷을 버린다(서버가 버린 편집 수를 알린다, AC-12) */
 function closeEditor(): void {
+  inlineEdit?.cancel();
   currentEditor?.dispose();
   currentEditor = undefined;
 }
@@ -428,6 +436,8 @@ function applyEdit(operation: EditOperation, depth: number, unsaved: number): Vi
       unmarked = marks.unmarked;
     });
     unsavedEdits = unsaved;
+    // 열린 입력칸은 닫지 않고 블록 위치를 따라간다(SPEC-006, 같은 블록이 바뀌었으면 적용할 때 거부)
+    inlineEdit?.followEdit(changes);
     return { changed, unmarked, pageCount: editor.doc.pageCount(), ...(changes === undefined ? {} : { changes }) };
   } catch (error) {
     if (drawn) redrawAfterFailure(editor.doc);
@@ -449,7 +459,10 @@ function undoEdits(steps: number, depth: number, unsaved: number): ViewerResult<
   const editor = openedEditor();
   const undone = editor.undo(steps, depth);
   if (undone === steps) unsavedEdits = unsaved;
-  if (undone > 0) redraw(editor.doc, 'keep');
+  if (undone > 0) {
+    inlineEdit?.loseSpot();
+    redraw(editor.doc, 'keep');
+  }
   return { undone, pageCount: editor.doc.pageCount() };
 }
 
@@ -457,8 +470,8 @@ const DISCONNECTED = 'docbridge 와 연결이 끊겨 고칠 수 없습니다';
 
 /** 서버에 붙은 연결. 끊기면 undefined */
 let serverSocket: WebSocket | undefined;
-/** 뷰어 → 서버 요청(사람 편집·⌘Z)의 응답을 id 로 기다린다 */
-const userRequests = new RequestTracker();
+/** 뷰어 → 서버 요청(사람 편집·⌘Z)의 응답을 id 로 기다린다. 늦으면 docbridge 가 답하지 않았다는 문구(서버 마감보다 길다) */
+const userRequests = new RequestTracker(REQUEST_TIMEOUT_MS, userRequestTimeoutMessage);
 
 /** 서버에 뷰어 요청을 보내고 응답을 기다린다. 연결이 끊겨 있으면 보내지 않고 DISCONNECTED 로 실패한다 */
 function sendUserRequest<M extends UserMethod>(method: M, params: UserParams<M>): Promise<UserResult<M>> {
@@ -474,6 +487,35 @@ async function requestUserEdit(edit: UserEdit): Promise<void> {
   openedEditor();
   await sendUserRequest('user_edit', { edit, state: documentState });
 }
+
+/**
+ * 더블클릭 입력칸 적용: 바뀐 범위만 user_edit 로 보낸다. 입력칸이 열린 동안 Claude 가 그 블록을 바꿨거나(AC-8)
+ * 누름틀 값과 바깥에 걸치면 보내지 않고, 서버가 거부하면 그 문구를 뷰어 아래 알림으로 보여 준다
+ */
+function commitInlineEdit(spot: EditSpot | undefined, text: string): void {
+  try {
+    if (spot === undefined) throw new Error(BLOCK_CHANGED_WHILE_EDITING);
+    const edit = replaceEditAt(openedBlocks(), spot, text);
+    if (edit !== undefined) requestUserEdit(edit).catch(reportEditFailure);
+  } catch (error) {
+    reportEditFailure(error);
+  }
+}
+
+function reportEditFailure(error: unknown): void {
+  showToast(errorMessage(error));
+}
+
+/** 서버가 연 문서에서만 고친다(개발용 ?fixture 화면은 보기만) */
+const inlineEdit =
+  pagesEl === null
+    ? undefined
+    : setupInlineEdit(pagesEl, {
+        spotAt: (pageIndex, point) => (currentEditor === undefined ? undefined : editSpotAt(currentEditor.doc, currentEditor.blocks, pageIndex, point)),
+        pageEls: () => currentPageEls,
+        zoom: ZOOM,
+        commit: commitInlineEdit,
+      });
 
 /** 상태 줄에 사람 편집·되돌리기가 안 된 이유를 남긴다(다음 다시 그리기 때 원래 상태 줄로 돌아간다) */
 function reportUserFailure(error: unknown): void {

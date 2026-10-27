@@ -6,6 +6,7 @@ import {
   RequestTracker,
   requestMessageSchema,
   textTargetSchema,
+  userRequestTimeoutMessage,
   viewerMethodSchemas,
   type RequestMessage,
   type ViewerMethod,
@@ -60,6 +61,17 @@ describe('SPEC-001 서버↔뷰어 요청/응답', () => {
       `뷰어가 ${REQUEST_TIMEOUT_MS / 1000}초 안에 응답하지 않았습니다(load_document). 뷰어 탭을 확인하고 다시 시도하세요.`,
     );
     expect(tracker.pendingCount()).toBe(0);
+  });
+
+  it('SPEC-006 뷰어가 보낸 사람 편집이 타임아웃이면 docbridge 가 답하지 않았다는 문구로 실패한다', async () => {
+    const tracker = new RequestTracker(REQUEST_TIMEOUT_MS, userRequestTimeoutMessage);
+    const request = tracker.start('user_edit', numberResult);
+
+    vi.advanceTimersByTime(REQUEST_TIMEOUT_MS);
+
+    await expect(request.promise).rejects.toThrow(
+      `docbridge 가 ${REQUEST_TIMEOUT_MS / 1000}초 안에 답하지 않았습니다. 화면이 바뀌지 않았으면 다시 해 주세요.`,
+    );
   });
 
   it('뷰어 연결이 끊기면 기다리던 요청을 모두 그 이유로 실패시킨다', async () => {

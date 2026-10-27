@@ -107,6 +107,18 @@ export class FakeViewer {
     return response;
   }
 
+  /**
+   * 앞서 보낸 뷰어 요청을 서버가 모두 받을 때까지 기다린다. 읽을 수 없는 뷰어 요청은 줄에 서지 않고 바로 오류 응답이 오고,
+   * 한 연결 안 메시지는 차례대로 처리되므로 그 응답이 오면 앞 요청은 이미 받았다(시간에 기대지 않는 차례 맞추기)
+   */
+  async untilReceived(): Promise<void> {
+    const id = this.nextUserId;
+    this.nextUserId += 1;
+    const response = new Promise<UserResponseMessage>((resolve) => this.userWaiters.set(id, resolve));
+    this.ws.send(JSON.stringify({ type: 'user_request', id, method: 'until_received', params: {} }));
+    await response;
+  }
+
   close(): void {
     this.ws.close();
   }

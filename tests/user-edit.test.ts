@@ -12,8 +12,14 @@ import { INACTIVE_VIEWER, startBridge, type Bridge } from '../src/server/bridge.
 import { NOTHING_TO_UNDO } from '../src/server/edit-tools.ts';
 import { createMcpServer } from '../src/server/mcp.ts';
 import { DocumentSession } from '../src/server/session.ts';
-import { STALE_USER_EDIT } from '../src/server/user-edit.ts';
-import type { RequestMessage, UserEdit, UserResponseMessage } from '../src/shared/protocol.ts';
+import { LATE_USER_REQUEST, STALE_USER_EDIT } from '../src/server/user-edit.ts';
+import {
+  REQUEST_TIMEOUT_MS,
+  USER_REQUEST_DEADLINE_MS,
+  type RequestMessage,
+  type UserEdit,
+  type UserResponseMessage,
+} from '../src/shared/protocol.ts';
 import { FakeViewer, NO_RESPONSE } from './fake-viewer.ts';
 import { fixturePath } from './fixtures.ts';
 import { rhwpViewer } from './rhwp-viewer.ts';
@@ -353,6 +359,54 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
 
     expect(response).toMatchObject({ id: 7, ok: false });
     expect(response.error).toContain('서버가 읽을 수 없는 뷰어 요청입니다');
+  });
+
+  it('받은 뒤 줄 차례가 USER_REQUEST_DEADLINE_MS 넘게 늦으면 적용하지 않고 거부한다(뷰어 타임아웃 뒤 늦게 적용되지 않게)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const held = holdNextEdit();
+      const claude = json('replace_text', { target: { id: 'b1' }, text: '라마바구청' });
+      const { request, release } = await held;
+      const user = userEdit(replaceB11(), 'state' in request.params ? request.params.state : undefined);
+      const undo = viewer.userRequest('user_undo', {});
+      await viewer.untilReceived();
+
+      // 앞선 Claude 편집이 뷰어 응답을 기다리는 사이 시간이 흐른다
+      vi.setSystemTime(Date.now() + USER_REQUEST_DEADLINE_MS);
+      release();
+      await claude;
+
+      expect(failure(await user)).toBe(LATE_USER_REQUEST);
+      expect(failure(await undo)).toBe(LATE_USER_REQUEST);
+      expect(await readText('b11')).toBe(B11_BEFORE);
+      expect(session.editCount).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('줄 차례가 USER_REQUEST_DEADLINE_MS 안에 오면 앞선 편집을 기다린 사람 편집도 적용한다', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const held = holdNextEdit();
+      const claude = json('replace_text', { target: { id: 'b1' }, text: '라마바구청' });
+      const { request, release } = await held;
+      const user = userEdit(replaceB11(), 'state' in request.params ? request.params.state : undefined);
+      await viewer.untilReceived();
+
+      vi.setSystemTime(Date.now() + USER_REQUEST_DEADLINE_MS - 1);
+      release();
+      await claude;
+
+      succeeded(await user);
+      expect(await readText('b11')).toBe(B11_AFTER);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('서버 마감은 뷰어가 기다리는 시간보다 짧다(뷰어가 실패를 보여 준 편집은 적용되지 않는다)', () => {
+    expect(USER_REQUEST_DEADLINE_MS).toBeLessThan(REQUEST_TIMEOUT_MS);
   });
 
   it('요청을 받는 뷰어가 아닌 이전 탭의 사람 편집은 거부한다', async () => {
