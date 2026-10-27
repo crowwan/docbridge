@@ -1,6 +1,8 @@
 // docbridge 뷰어: @rhwp/core 로 문서를 Canvas 에 그리고, getSelectionRects(줄 끝 보정) 로 하이라이트와 note 를 겹친다.
 // 하이라이트는 쪽 요소 안에 있어서 새 문서를 열거나 새로고침하면 사라진다.
 // - ?token=<세션 토큰>: 서버가 연 탭. WebSocket 으로 붙어 서버 요청(load_document 등)을 처리한다
+//   &doc=<문서 이름>: 이 탭의 문서(SPEC-007, 문서마다 탭 하나). 연결할 때 서버에 알리고, 새로고침해도 같은 문서로 다시 붙는다.
+//   없으면 빈 탭 — 서버가 다음에 여는 문서를 보내며 이름을 알려 주면 주소에 넣는다
 // - ?fixture=<이름>: 개발 서버의 fixtures/ 에서 문서를 연다(개발·E2E 전용)
 // - 둘 다 없거나 토큰이 거부되면 "docbridge 가 연 탭이 아닙니다" 화면
 // 편집(SPEC-002)은 core/document-editor.ts 공용 경로로 하고, 여기서는 다시 그리고 바뀐 블록에 초록 테두리를 남긴다.
@@ -49,6 +51,7 @@ const ZOOM = 1;
 const statusEl = document.getElementById('status');
 const pagesEl = document.getElementById('pages');
 const noticeEl = document.getElementById('notice');
+const docNameEl = document.getElementById('doc-name');
 
 function setStatus(text: string): void {
   if (statusEl) statusEl.textContent = text;
@@ -285,6 +288,62 @@ function closeEditor(): void {
 /** 상태 줄: 마지막 파일 이름(새 문서는 저장할 이름과 "새 문서")과 쪽 수 */
 function showStatus(doc: HwpDocument): void {
   setStatus(`${currentFileName}${unsavedNewDocument ? ' (새 문서)' : ''} — ${doc.pageCount()}쪽`);
+  showTitle();
+}
+
+/** 이 탭의 문서 이름(SPEC-007). 주소의 &doc= 이고, 서버가 문서를 보내며 알려 준다 */
+let docName = new URLSearchParams(location.search).get('doc') ?? '';
+/** 탭을 보지 않는 사이 하이라이트·편집이 생겼다(탭 제목 앞 표시). 탭을 보면 지운다 */
+let unseenChange = false;
+
+/** 탭 제목 = 파일 이름. 보지 않는 사이 바뀌었으면 앞에 표시(tokens.css --tab-unseen-mark) */
+function showTitle(): void {
+  const mark = getComputedStyle(document.documentElement).getPropertyValue('--tab-unseen-mark').trim().replace(/^['"]|['"]$/g, '');
+  const name = currentFileName === '' ? 'docbridge 뷰어' : currentFileName;
+  document.title = unseenChange ? `${mark} ${name}` : name;
+}
+
+/** 이 탭의 문서 이름을 정한다: 도구 막대에 보이고, 주소에 넣어 새로고침해도 같은 문서로 다시 붙는다. 빈 이름이면 빈 탭 */
+function assignDoc(name: string): void {
+  docName = name;
+  if (docNameEl) {
+    docNameEl.textContent = name;
+    docNameEl.hidden = name === '';
+  }
+  const url = new URL(location.href);
+  if (name === '') url.searchParams.delete('doc');
+  else url.searchParams.set('doc', name);
+  history.replaceState(null, '', url);
+}
+
+/** 하이라이트·편집이 생겼다: 탭을 보고 있지 않으면 제목에 표시를 단다 */
+function noteChange(): void {
+  if (document.visibilityState === 'visible') return;
+  unseenChange = true;
+  showTitle();
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !unseenChange) return;
+  unseenChange = false;
+  showTitle();
+});
+
+/** close_document(SPEC-007): 문서를 닫고 확인 창을 끈다. 탭은 빈 탭으로 남아 다음 문서가 쓴다(스크립트가 열지 않은 탭은 브라우저가 닫게 두지 않는다) */
+function closeDocument(): void {
+  const closedName = docName;
+  closeEditor();
+  currentDoc?.free();
+  currentDoc = undefined;
+  currentPageEls = [];
+  currentFileName = '';
+  unsavedEdits = 0;
+  unsavedNewDocument = false;
+  unseenChange = false;
+  assignDoc('');
+  showNotice('문서를 닫았습니다', `${closedName} 문서를 닫았습니다. 이 탭은 닫아도 됩니다.`);
+  setStatus('닫힘');
+  showTitle();
 }
 
 /**
@@ -369,15 +428,20 @@ function replaceDocument<T>(fileName: string, newDocument: boolean, failure: str
 function handleRequest(request: RequestMessage): unknown {
   switch (request.method) {
     case 'load_document':
+      assignDoc(request.params.doc);
       return loadDocument(request.params.fileName, request.params.data);
     case 'create_document':
+      assignDoc(request.params.doc);
       return createDocument(request.params);
     case 'get_blocks':
       return openedBlocks();
     case 'find_text':
       return findInBlocks(openedBlocks(), request.params.query);
-    case 'highlight':
-      return paintTargets(request.params);
+    case 'highlight': {
+      const result = paintTargets(request.params);
+      noteChange();
+      return result;
+    }
     case 'clear_highlight':
       clearHighlights();
       return {};
@@ -386,18 +450,23 @@ function handleRequest(request: RequestMessage): unknown {
     case 'edit': {
       const result = applyEdit(request.params.operation, request.params.depth, request.params.unsavedEdits);
       documentState = request.params.state;
+      noteChange();
       return result;
     }
     case 'undo': {
       const result = undoEdits(request.params.steps, request.params.depth, request.params.unsavedEdits);
       // 덜 되돌렸으면 서버가 edit_state 로 맞춘다
       if (result.undone === request.params.steps) documentState = request.params.state;
+      if (result.undone > 0) noteChange();
       return result;
     }
     case 'export_hwpx':
       return exportHwpx();
     case 'edit_state':
       applyEditState(request.params.fileName, request.params.unsavedEdits, request.params.newDocument, request.params.state);
+      return {};
+    case 'close_document':
+      closeDocument();
       return {};
     default: {
       // 메서드를 더하고 여기 처리를 빠뜨리면 컴파일 오류가 난다
@@ -537,7 +606,9 @@ const NOT_DOCBRIDGE_DETAIL = 'Claude 채팅에서 open_document 로 문서를 �
 
 /** 서버에 붙어 요청을 처리한다. 한 번도 열리지 못하고 닫히면(토큰 거부) 안내 화면 */
 function connect(token: string): void {
-  const socket = new WebSocket(`ws://${location.host}/?token=${encodeURIComponent(token)}`);
+  // 문서 탭이면 문서 이름을 알린다(새로고침하면 서버가 그 문서를 다시 보낸다, SPEC-007)
+  const doc = docName === '' ? '' : `&doc=${encodeURIComponent(docName)}`;
+  const socket = new WebSocket(`ws://${location.host}/?token=${encodeURIComponent(token)}${doc}`);
   serverSocket = socket;
   let opened = false;
   setStatus('연결 중…');

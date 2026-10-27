@@ -87,7 +87,7 @@ describe('SPEC-001 서버↔뷰어 요청/응답', () => {
 
 // 메서드마다 맞는 입력 하나. 메서드를 더하고 여기를 빠뜨리면 타입 검사에서 걸린다
 const sampleParams: { [M in ViewerMethod]: ViewerParams<M> } = {
-  load_document: { fileName: '공문.hwpx', data: '' },
+  load_document: { doc: 'd1', fileName: '공문.hwpx', data: '' },
   get_blocks: {},
   find_text: { query: '회신' },
   highlight: { targets: [{ id: 'b1', anchor: { section: 0, paragraph: 0, part: 'text' }, start: 0, end: 2 }], note: '근거' },
@@ -102,7 +102,8 @@ const sampleParams: { [M in ViewerMethod]: ViewerParams<M> } = {
   undo: { steps: 1, depth: 1, unsavedEdits: 0, state: 0 },
   export_hwpx: {},
   edit_state: { fileName: '공문-수정.hwpx', unsavedEdits: 0, newDocument: false, state: 0 },
-  create_document: { fileName: '제안서.hwpx', template: { fileName: '양식.hwpx', data: 'AA==', keepContent: false } },
+  close_document: {},
+  create_document: { doc: 'd2', fileName: '제안서.hwpx', template: { fileName: '양식.hwpx', data: 'AA==', keepContent: false } },
 };
 
 describe('SPEC-001 뷰어의 요청 처리', () => {
@@ -118,7 +119,7 @@ describe('SPEC-001 뷰어의 요청 처리', () => {
   const methodOf = (message: RequestMessage) => message.method;
 
   it('요청을 메서드별 입력 모양으로 읽어 처리하고 같은 id 로 응답한다', () => {
-    const response = answerRequest(request('load_document', { fileName: '공문.hwpx', data: '' }), methodOf);
+    const response = answerRequest(request('load_document', { doc: 'd1', fileName: '공문.hwpx', data: '' }), methodOf);
     expect(response).toEqual({ type: 'response', id: 7, ok: true, result: 'load_document' });
   });
 
@@ -138,7 +139,7 @@ describe('SPEC-001 뷰어의 요청 처리', () => {
   });
 
   it('처리하다 난 오류는 그 이유로 응답한다', () => {
-    const response = answerRequest(request('load_document', { fileName: 'a.hwpx', data: '' }), () => {
+    const response = answerRequest(request('load_document', { doc: 'd1', fileName: 'a.hwpx', data: '' }), () => {
       throw new Error('손상된 파일입니다');
     });
     expect(response).toEqual({ type: 'response', id: 7, ok: false, error: '손상된 파일입니다' });

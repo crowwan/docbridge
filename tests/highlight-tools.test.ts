@@ -9,10 +9,11 @@ import { z } from 'zod';
 import { createBlankDocument } from '../src/core/rhwp-node.ts';
 import { startBridge, type Bridge } from '../src/server/bridge.ts';
 import { createMcpServer } from '../src/server/mcp.ts';
-import { DocumentSession } from '../src/server/session.ts';
+import { DocumentSessions } from '../src/server/documents.ts';
 import { NOTE_MAX_CHARS, type RequestMessage } from '../src/shared/protocol.ts';
 import { FakeViewer } from './fake-viewer.ts';
 import { fixturePath } from './fixtures.ts';
+import { withoutDoc } from './tool-result.ts';
 import { rhwpViewerHandler } from './rhwp-viewer.ts';
 
 const toolResultSchema = z.object({
@@ -23,7 +24,7 @@ const matchesSchema = z.object({ matches: z.array(z.record(z.string(), z.unknown
 
 describe('SPEC-001 근거 하이라이트 도구 (highlight · clear_highlight)', () => {
   let bridge: Bridge;
-  let session: DocumentSession;
+  let sessions: DocumentSessions;
   let client: Client;
   let viewer: FakeViewer;
 
@@ -32,7 +33,12 @@ describe('SPEC-001 근거 하이라이트 도구 (highlight · clear_highlight)'
   const json = async (name: string, args: Record<string, unknown> = {}): Promise<unknown> => {
     const result = await call(name, args);
     if (result.isError) throw new Error(result.content[0]?.text);
-    return JSON.parse(result.content[0]?.text ?? '');
+    return withoutDoc(JSON.parse(result.content[0]?.text ?? ''));
+  };
+  /** 다른 파일을 이 탭에서 연다: 지금 문서를 닫고(빈 탭이 된다) 연다 — 문서마다 탭이라(SPEC-007) 그냥 열면 새 탭이 필요하다 */
+  const openInPlace = async (path: string) => {
+    await json('close_document', { discard: true });
+    return json('open_document', { path });
   };
   const errorText = async (name: string, args: Record<string, unknown> = {}) => {
     const result = await call(name, args);
@@ -44,9 +50,9 @@ describe('SPEC-001 근거 하이라이트 도구 (highlight · clear_highlight)'
 
   beforeEach(async () => {
     bridge = await startBridge({ port: 0, viewerDir: tmpdir() });
-    session = new DocumentSession(bridge, { openBrowser: vi.fn() });
+    sessions = new DocumentSessions(bridge, { openBrowser: vi.fn() });
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
-    await createMcpServer(session).connect(serverSide);
+    await createMcpServer(sessions).connect(serverSide);
     client = new Client({ name: 'docbridge-test', version: '0.0.0' });
     await client.connect(clientSide);
     viewer = await FakeViewer.connect(bridge.viewerUrl);
@@ -88,7 +94,7 @@ describe('SPEC-001 근거 하이라이트 도구 (highlight · clear_highlight)'
     await writeFile(path, doc.exportHwpx());
     const pageCount = doc.pageCount();
     doc.free();
-    await json('open_document', { path });
+    await openInPlace(path);
 
     expect(pageCount).toBeGreaterThan(1);
     expect(await json('highlight', { targets: [{ id: 'b1' }] })).toEqual({
@@ -104,7 +110,7 @@ describe('SPEC-001 근거 하이라이트 도구 (highlight · clear_highlight)'
     const path = join(await mkdtemp(join(tmpdir(), 'docbridge-field-')), '빈 누름틀.hwpx');
     await writeFile(path, doc.exportHwpx());
     doc.free();
-    await json('open_document', { path });
+    await openInPlace(path);
 
     expect(await json('highlight', { targets: [{ id: 'b2' }] })).toEqual({
       highlighted: 1,

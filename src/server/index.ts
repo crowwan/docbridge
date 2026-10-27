@@ -7,7 +7,7 @@ import { openInBrowser } from './browser.ts';
 import { log } from './log.ts';
 import { createMcpServer } from './mcp.ts';
 import { portFromEnv } from './port.ts';
-import { DocumentSession } from './session.ts';
+import { DocumentSessions } from './documents.ts';
 
 let port: number;
 try {
@@ -22,7 +22,7 @@ const viewerDir = fileURLToPath(new URL('../viewer/', import.meta.url));
 const bridge = await startBridge({ port, viewerDir });
 log(`뷰어 주소: ${bridge.viewerUrl}`);
 
-const server = createMcpServer(new DocumentSession(bridge, { openBrowser: openInBrowser }));
+const server = createMcpServer(new DocumentSessions(bridge, { openBrowser: openInBrowser }));
 await server.connect(new StdioServerTransport());
 
 process.stdin.on('close', () => {

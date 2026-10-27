@@ -41,9 +41,9 @@ SPEC-001·002 로 받은 문서를 열고 묻고 고치고 저장할 수 있다.
 
 스타일 이름은 한글 이름과 영문 이름(예: "개요 1" / "Outline 1") 둘 다 받는다. 한글 이름이 같은 스타일을 먼저 보고, 없을 때만 영문 이름으로 찾는다(한 스타일의 영문 이름이 다른 스타일의 한글 이름과 같을 수 있다). `insert_paragraph` 결과의 `changed` 도 `{ id, number?, text }` 다(새 문단과 번호가 다시 매겨진 문단).
 
-`create_document` 는 저장하지 않은 편집이 있는 문서를 대신한다(SPEC-002 "새 문서를 열면" 규칙 — 버린 편집 수 알림). 한 번도 저장하지 않은 새 문서를 `create_document`·`open_document` 로 대신하면 편집이 없어도(양식 `keep_content` 등) 되살릴 파일이 없으므로 "저장하지 않은 새 문서 <이름> 을 버렸습니다(편집 n개)" 를 알린다.
+`create_document` 는 열린 문서를 대신하지 않고 새 탭에 만들고 문서 이름 `doc` 을 매긴다(SPEC-007 — 열린 문서와 그 편집은 그대로, 8개 상한은 `open_document` 와 같다). 한 번도 저장하지 않은 새 문서는 편집이 없어도(양식 `keep_content` 등) 되살릴 파일이 없으므로 `close_document` 가 `discard: true` 없이는 닫지 않고("저장하지 않은 새 문서 <이름> 입니다(편집 n개). 저장하거나 discard: true 로 닫아 주세요."), 버리고 닫으면 "저장하지 않은 새 문서 <이름> 을 버렸습니다(편집 n개)" 를 알린다. 사용자가 그 탭을 닫았을 때 알림에도 같은 말을 붙인다.
 
-`create_document` 결과 모양: `{ path, pageCount, blockCount, firstBlock, styles: [{ name, englishName, outlineLevel? }], template?, viewerUrl, warnings? }`. `firstBlock` 은 첫 블록 id, `styles` 는 문단 스타일(`outlineLevel` 은 개요 스타일의 수준 1~), `template` 은 양식을 줬을 때 `{ fileName, removedObjects, keptObjects }`(개체 이름별 수, `keep_content: true` 면 `{ fileName, keptContent: true }`), `warnings` 는 버린 편집 수.
+`create_document` 결과 모양: `{ doc, path, pageCount, blockCount, firstBlock, styles: [{ name, englishName, outlineLevel? }], template?, viewerUrl }`(SPEC-007 부터 `doc` 이 맨 위, 대신하는 문서가 없어 `warnings` 는 없다, `viewerUrl` 은 그 문서 탭 주소). `firstBlock` 은 첫 블록 id, `styles` 는 문단 스타일(`outlineLevel` 은 개요 스타일의 수준 1~), `template` 은 양식을 줬을 때 `{ fileName, removedObjects, keptObjects }`(개체 이름별 수, `keep_content: true` 면 `{ fileName, keptContent: true }`), (옛 `warnings` 는 버린 편집 수였다).
 
 ### 새 문서의 스타일·첫 블록
 
@@ -59,7 +59,7 @@ SPEC-001·002 로 받은 문서를 열고 묻고 고치고 저장할 수 있다.
 - `save_document` 를 경로 없이 부르면 `path` 에 저장한다(배타 생성, SPEC-002). 그사이 그 자리에 파일이 생겼으면 덮지 않고 "이미 있는 파일입니다: <path>. 덮어쓰려면 path 에 그 경로와 overwrite: true 를 주거나 다른 경로를 주세요." 로 거부한다(경로가 없으면 `overwrite` 는 쓰이지 않는다). 저장하면 그 파일이 "마지막 파일"이 된다.
 - 새 문서에 `save_document(path)` 로 경로를 주면 SPEC-002 규칙 그대로다. 상대 경로는 `create_document` 의 `path` 폴더 기준이다(원본 폴더 대신).
 - 처음 저장한 파일은 그 뒤로 원본처럼 쓴다: 다음 경로 없는 저장은 `<이름>-수정.hwpx`, 덮어쓰려면 `path` + `overwrite: true`(SPEC-002 원본 규칙).
-- 한 번도 저장하지 않은 새 문서는 새로고침하면 사라진다. 뷰어는 편집이 없어도 확인 창을 띄우고(저장하기 전까지), 다음 도구 결과에 "뷰어를 새로고침해서 저장하지 않은 새 문서가 사라졌습니다(<path>, 편집 n개). create_document 로 다시 만드세요." 를 알린다(SPEC-002 AC-14 와 같은 방식). 서버의 열린 문서도 비운다.
+- 한 번도 저장하지 않은 새 문서는 새로고침하면 사라진다. 뷰어는 편집이 없어도 확인 창을 띄우고(저장하기 전까지), 다음 도구 결과에 "뷰어를 새로고침해서 저장하지 않은 새 문서가 사라졌습니다(<path>, 편집 n개). create_document 로 다시 만드세요." 를 알린다(SPEC-002 AC-14 와 같은 방식). 서버의 열린 문서도 비운다(SPEC-007 부터: 그 문서를 열린 문서에서 뺀다).
 - `template` 파일은 읽기만 한다. 양식 파일을 덮어쓰지 않는다. 경로는 `path` 처럼 절대 경로나 `~` 만 받는다(상대 경로 거부: "양식 경로는 절대 경로나 ~ 로 주세요(예: ~/양식/보고서.hwpx)" — 서버 작업 폴더는 사용자가 모른다).
 - **새 문서는 뷰어가 만든다.** 서버는 `create_document` 요청에 양식 바이트(있으면)만 싣고, 뷰어가 rhwp 로 빈 문서(`createBlankDocument`)나 양식(`clearTemplateBody`)을 만들어 제목 스타일을 더하고 그린 뒤 블록을 돌려준다. 문서 상태의 기준은 뷰어라는 SPEC-001 구성 그대로이고, 서버는 rhwp 를 띄우지 않는다(서버에서 만들어 HWPX 로 보내면 저장 전 HWPX 왕복이 한 번 더 들고 서버에 WASM 이 필요하다). 상태 줄은 저장 전까지 "<이름> (새 문서) — n쪽".
 
@@ -117,7 +117,7 @@ GO 기준: 빈 문서와 양식 문서 각각으로 제목·개요·본문·표�
 - 그림·도형·수식·차트 넣기
 - 머리말·꼬리말·쪽 번호 만들기·고치기(양식에 있는 것은 그대로 씀)
 - 표 행·열 추가·삭제, 칸 병합 (다음 스펙 후보)
-- 여러 문서 동시 열기(새 문서를 만들면 열린 문서를 대신한다)
+- ~~여러 문서 동시 열기~~ → SPEC-007 (#63)
 - `.hwp` 로 저장
 
 ## 기술 메모
@@ -154,5 +154,6 @@ GO 기준: 빈 문서와 양식 문서 각각으로 제목·개요·본문·표�
 | 2026-10-27 | PR #45 리뷰: 스타일 이름은 한글 이름 먼저·없을 때 영문 이름, 빈 이름 거부, 영문 이름 모호 거부 문구, `insert_paragraph` 결과에 `number` |
 | 2026-10-27 | #38 insert_table(AC-6 완료): 기준 규칙은 insert_paragraph 와 같음, 편집 하나·기존 id 유지, 결과 `inserted`·`cells`(칸 수)·`changed`, 크기 거부 문구, 표 안 표는 기준이 표여도 본문 문단 앞뒤 |
 | 2026-10-27 | PR #44 리뷰 반영: rhwp 가 예상 밖 문단을 더하면 insert_table 거부, rows·cols 정수 아님도 크기 문구로 |
+| 2026-10-27 | SPEC-007 #63 에 맞춰 고침: `create_document` 는 새 탭(대신하지 않음, 결과에 `doc`·`warnings` 없음), 저장하지 않은 새 문서를 버리는 알림은 `close_document` discard·탭 닫기로, 새로고침으로 사라진 새 문서는 열린 문서에서 뺌 |
 | 2026-10-27 | PR #46 리뷰: 첫 블록 규칙을 블록 추출 자체로(저장 전 검증·새로고침도 같은 블록), 저장하지 않은 새 문서를 대신하면 편집이 없어도 버렸다고 알림, 양식 경로도 절대·`~` 만, 경로 없는 새 문서 저장의 이미 있음 문구 |
 | 2026-10-27 | #36: 블록이 하나도 없는 문서는 (새 문서가 아니어도) 첫 문단을 빈 문단 블록으로 — 비운 채 저장한 새 문서를 새로고침해도 채울 수 있게, 새 문서는 뷰어가 만든다(바이트 경로), 새 문서 저장의 상대 경로 기준(`path` 폴더)·처음 저장 뒤 원본, 저장 전 확인 창은 편집이 없어도, 새로고침 알림 문구, 양식 경로는 `open_document` 와 같음 |

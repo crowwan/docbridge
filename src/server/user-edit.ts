@@ -1,5 +1,5 @@
-// 사람 편집(SPEC-006 "편집은 서버를 거친다"): 뷰어가 보낸 편집(블록 위치 대상)을 id 표로 블록 id 로 바꿔
-// Claude 편집과 같은 직렬 큐·편집 기록(session.edit)으로 처리한다. 거부 규칙도 Claude 편집과 같다(assertDeletable·planMove).
+// 사람 편집(SPEC-006 "편집은 서버를 거친다"): 뷰어가 보낸 편집(블록 위치 대상)을 그 탭 문서(doc, SPEC-007)의 id 표로 블록 id 로 바꿔
+// Claude 편집과 같은 그 문서의 직렬 큐·편집 기록(session.edit)으로 처리한다. 다른 문서의 편집·기록과는 섞이지 않는다. 거부 규칙도 Claude 편집과 같다(assertDeletable·planMove).
 // 편집 기록 이름에 출처(사용자 화면 편집)를 붙이고, 다음 도구 결과에 알림(notices)으로 한 번 알린다(session).
 import type { BlockAnchor, BlockIdTable } from '../core/block-ids.ts';
 import { assertDeletable } from '../core/delete-blocks.ts';
@@ -61,8 +61,9 @@ export interface Receipt {
 }
 
 /**
- * 줄 차례가 온 문서가 요청을 받은 순간의 문서와 다르면(그사이 open·create·새로고침으로 문서가 바뀜) 거부한다.
- * 상태 번호는 문서마다 0 부터라 번호만으로는 문서가 바뀐 것을 가리지 못한다(PR #71 리뷰).
+ * 줄 차례가 온 문서가 요청을 받은 순간의 문서와 다르면(그사이 그 탭에 같은 파일을 다시 열었거나 새로고침으로 문서가 바뀜) 거부한다.
+ * 상태 번호는 문서를 열 때마다 0 부터라 번호만으로는 문서가 바뀐 것을 가리지 못한다(PR #71 리뷰).
+ * 다른 문서(다른 탭)를 열거나 만들거나 고친 것은 이 문서를 바꾸지 않는다(SPEC-007 — 문서마다 세션이 따로다).
  * 뷰어는 문서를 바꾼 뒤에야 응답하고 한 연결 안에서는 순서가 지켜지므로, 이전 문서 화면에서 보낸 요청은 서버 문서가 바뀌기 전에 도착한다.
  * 받은 뒤 USER_REQUEST_DEADLINE_MS 넘게 늦게 차례가 와도 거부한다 — 뷰어는 REQUEST_TIMEOUT_MS 뒤 실패를 보여 주므로,
  * 그 뒤에 적용되면 화면 문구와 문서가 어긋난다(PR #71 리뷰)
@@ -104,7 +105,7 @@ export async function undoFromViewer(session: DocumentSession, received: Receipt
   return { undone };
 }
 
-/** 뷰어 요청 처리(bridge.serveUserRequests 에 넘긴다) */
+/** 뷰어 요청 처리(DocumentSessions 가 보낸 탭의 문서 세션으로 부른다) */
 export async function handleUserRequest(session: DocumentSession, request: UserRequestMessage): Promise<unknown> {
   // 받은 순간의 문서와 시각(첫 await 전 — bridge 가 메시지를 받은 그 차례에 부른다)
   const received: Receipt = { document: session.document, at: Date.now() };

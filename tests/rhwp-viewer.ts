@@ -103,6 +103,12 @@ export function rhwpViewer(options: RhwpViewerOptions = {}): RhwpViewer {
         unsaved = request.params.unsavedEdits;
         newDocument = request.params.newDocument;
         return {};
+      case 'close_document':
+        // 뷰어처럼 문서를 닫고 확인 창을 끈다(SPEC-007)
+        close();
+        unsaved = 0;
+        newDocument = false;
+        return {};
     }
   };
   return { handle, editor: opened, editStates, unsavedEdits: () => unsaved, confirmsUnload: () => unsaved > 0 || newDocument };

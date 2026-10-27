@@ -6,7 +6,7 @@ import { startBridge, type Bridge } from '../src/server/bridge.ts';
 import { deleteBlocks, insertParagraph, insertTable, moveBlocks, replaceAll, replaceText, undo } from '../src/server/edit-tools.ts';
 import { highlight } from '../src/server/highlight-tools.ts';
 import { readBlockContents } from '../src/server/read-tools.ts';
-import { DocumentSession } from '../src/server/session.ts';
+import { DocumentSessions } from '../src/server/documents.ts';
 import { inkBounds } from './viewer.ts';
 
 const viewerDir = fileURLToPath(new URL('../dist/viewer/', import.meta.url));
@@ -14,11 +14,11 @@ const fixturePath = (name: string) => fileURLToPath(new URL(`../fixtures/${name}
 const SCREENS = 'test-results/screens';
 
 let bridge: Bridge;
-let session: DocumentSession;
+let sessions: DocumentSessions;
 
 test.beforeEach(async ({ page }) => {
   bridge = await startBridge({ port: 0, viewerDir });
-  session = new DocumentSession(bridge, { openBrowser: (url) => void page.goto(url) });
+  sessions = new DocumentSessions(bridge, { openBrowser: (url) => void page.goto(url) });
 });
 
 test.afterEach(async () => {
@@ -29,7 +29,7 @@ test.afterEach(async () => {
 const marks = (page: Page) => page.locator('.edit-mark');
 
 async function paragraphText(id: string): Promise<string | undefined> {
-  const [block] = (await readBlockContents(session, { ids: [id] })).blocks;
+  const [block] = (await readBlockContents(sessions.get(), { ids: [id] })).blocks;
   return block?.kind === 'paragraph' ? block.text : undefined;
 }
 
@@ -43,11 +43,11 @@ async function markOnFirstPage(page: Page, index: number) {
 
 test.describe('SPEC-002 편집 뒤 다시 그리기와 바뀐 블록 표시 (서버가 내주는 뷰어)', () => {
   test('AC-7 replace_text 뒤 뷰어가 다시 그려지고 바뀐 문단을 초록 테두리가 감싼다. undo 하면 원래 글자로 돌아가고 표시가 없다', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
+    await sessions.open(fixturePath('notice.hwpx'));
     const firstPage = page.getByRole('region', { name: '1쪽' });
     await firstPage.screenshot({ path: `${SCREENS}/edit-01-before.png` });
 
-    const result = await replaceText(session, { id: 'b11', start: 13, end: 20 }, '11. 7.');
+    const result = await replaceText(sessions.get(), { id: 'b11', start: 13, end: 20 }, '11. 7.');
 
     expect(result.changed.map(({ id }) => id)).toEqual(['b11']);
     expect(await paragraphText('b11')).toBe('회신 기한: 2026. 11. 7.(금)까지 참석 인원을 회신하여 주시기 바랍니다.');
@@ -60,7 +60,7 @@ test.describe('SPEC-002 편집 뒤 다시 그리기와 바뀐 블록 표시 (서
     await expect(page.getByRole('status')).toHaveText('notice.hwpx — 1쪽');
     await firstPage.screenshot({ path: `${SCREENS}/edit-02-after-replace.png` });
 
-    expect(await undo(session, 1)).toEqual({ undone: 1, edits: ['replace_text b11'] });
+    expect(await undo(sessions.get(), 1)).toEqual({ undone: 1, edits: ['replace_text b11'] });
 
     expect(await paragraphText('b11')).toBe('회신 기한: 2026. 11. 14.(금)까지 참석 인원을 회신하여 주시기 바랍니다.');
     await expect(marks(page)).toHaveCount(0);
@@ -68,11 +68,11 @@ test.describe('SPEC-002 편집 뒤 다시 그리기와 바뀐 블록 표시 (서
   });
 
   test('AC-7 다음 편집을 하면 이전 표시는 지워지고 새로 바뀐 블록(표)만 표시한다', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
-    await replaceText(session, { id: 'b1' }, '라마바구청');
+    await sessions.open(fixturePath('notice.hwpx'));
+    await replaceText(sessions.get(), { id: 'b1' }, '라마바구청');
     const paragraphMark = await markOnFirstPage(page, 0);
 
-    await replaceText(session, { id: 'b12', cell: { row: 2, col: 2 } }, '구민회관 3층 강당');
+    await replaceText(sessions.get(), { id: 'b12', cell: { row: 2, col: 2 } }, '구민회관 3층 강당');
 
     await expect(marks(page)).toHaveCount(1);
     const tableMark = await markOnFirstPage(page, 0);
@@ -83,9 +83,9 @@ test.describe('SPEC-002 편집 뒤 다시 그리기와 바뀐 블록 표시 (서
   });
 
   test('누름틀 값을 바꾸면 같은 문단도 바뀐 블록이고, 문단 테두리 하나로 감싼다(문단 안 누름틀 테두리는 겹쳐 그리지 않는다)', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
+    await sessions.open(fixturePath('notice.hwpx'));
 
-    const result = await replaceText(session, { id: 'b3' }, '각 동 주민센터');
+    const result = await replaceText(sessions.get(), { id: 'b3' }, '각 동 주민센터');
 
     expect(result.changed.map(({ id }) => id)).toEqual(['b2', 'b3']);
     await expect(marks(page)).toHaveCount(1);
@@ -93,21 +93,21 @@ test.describe('SPEC-002 편집 뒤 다시 그리기와 바뀐 블록 표시 (서
   });
 
   test('새 문서를 열면 보던 자리와 상관없이 맨 위부터 보인다 (PR #26 리뷰)', async ({ page }) => {
-    await session.open(fixturePath('report.hwpx'));
+    await sessions.open(fixturePath('report.hwpx'));
     await page.evaluate(() => window.scrollTo(0, 800));
     expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
 
-    await session.open(fixturePath('report.hwpx'));
+    await sessions.open(fixturePath('report.hwpx'));
 
     expect(await page.evaluate(() => window.scrollY)).toBe(0);
   });
 
   test('AC-7 하이라이트를 그리면 바뀐 블록 표시는 지워진다', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
-    await replaceText(session, { id: 'b1' }, '라마바구청');
+    await sessions.open(fixturePath('notice.hwpx'));
+    await replaceText(sessions.get(), { id: 'b1' }, '라마바구청');
     await expect(marks(page)).toHaveCount(1);
 
-    await highlight(session, [{ id: 'b5' }]);
+    await highlight(sessions.get(), [{ id: 'b5' }]);
 
     await expect(marks(page)).toHaveCount(0);
     await expect(page.locator('.highlight')).not.toHaveCount(0);
@@ -116,10 +116,10 @@ test.describe('SPEC-002 편집 뒤 다시 그리기와 바뀐 블록 표시 (서
 
 test.describe('SPEC-002 문단 넣기·지우기 화면 (서버가 내주는 뷰어)', () => {
   test('AC-2 insert_paragraph 뒤 넣은 문단이 그려지고 초록 테두리가 감싼다. 뒤 블록은 아래로 밀린다', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
+    await sessions.open(fixturePath('notice.hwpx'));
     const firstPage = page.getByRole('region', { name: '1쪽' });
 
-    const result = await insertParagraph(session, { after: 'b11', text: '문의: 안전총괄과(02-123-4567)' });
+    const result = await insertParagraph(sessions.get(), { after: 'b11', text: '문의: 안전총괄과(02-123-4567)' });
 
     expect(result).toEqual({ inserted: 'b15', changed: [{ id: 'b15', number: '4.', text: '문의: 안전총괄과(02-123-4567)' }] });
     expect(await paragraphText('b15')).toBe('문의: 안전총괄과(02-123-4567)');
@@ -130,29 +130,29 @@ test.describe('SPEC-002 문단 넣기·지우기 화면 (서버가 내주는 뷰
   });
 
   test('AC-3 delete_blocks 뒤 지운 문단·표가 화면에서 사라지고, 지운 블록에는 표시가 없고 번호가 바뀐 문단에만 남는다. undo 하면 돌아온다', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
+    await sessions.open(fixturePath('notice.hwpx'));
     const firstPage = page.getByRole('region', { name: '1쪽' });
-    await insertParagraph(session, { after: 'b1', text: '넣은 문단' });
+    await insertParagraph(sessions.get(), { after: 'b1', text: '넣은 문단' });
     await expect(marks(page)).toHaveCount(1);
 
-    expect(await deleteBlocks(session, ['b8', 'b10', 'b12'])).toEqual({ deleted: ['b8', 'b10', 'b12'] });
+    expect(await deleteBlocks(sessions.get(), ['b8', 'b10', 'b12'])).toEqual({ deleted: ['b8', 'b10', 'b12'] });
 
     // "나. 교육 내용" 이 "가." 로 다시 매겨져 그 문단만 바뀐 블록이다(#21)
     await expect(marks(page)).toHaveCount(1);
-    expect((await readBlockContents(session, { fromPage: 1 })).blocks.map(({ kind }) => kind)).not.toContain('table');
+    expect((await readBlockContents(sessions.get(), { fromPage: 1 })).blocks.map(({ kind }) => kind)).not.toContain('table');
     await firstPage.screenshot({ path: `${SCREENS}/insert-02-after-delete.png` });
 
-    expect(await undo(session, 1)).toEqual({ undone: 1, edits: ['delete_blocks b8, b10, b12'] });
-    expect((await readBlockContents(session, { ids: ['b12'] })).blocks.map(({ kind }) => kind)).toEqual(['table']);
+    expect(await undo(sessions.get(), 1)).toEqual({ undone: 1, edits: ['delete_blocks b8, b10, b12'] });
+    expect((await readBlockContents(sessions.get(), { ids: ['b12'] })).blocks.map(({ kind }) => kind)).toEqual(['table']);
   });
 
   test('AC-4 move_blocks 뒤 옮긴 문단과 번호가 바뀐 문단이 다시 그려지고 초록 테두리가 남는다. undo 하면 번호가 돌아오고 표시가 없다', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
+    await sessions.open(fixturePath('notice.hwpx'));
     const firstPage = page.getByRole('region', { name: '1쪽' });
     await firstPage.screenshot({ path: `${SCREENS}/move-01-before.png` });
 
     // "3. 회신 기한" 을 "1. 관련" 앞으로
-    const result = await moveBlocks(session, { ids: ['b11'], before: 'b6' });
+    const result = await moveBlocks(sessions.get(), { ids: ['b11'], before: 'b6' });
 
     expect(result.changed.map(({ id, number }) => `${id} ${number}`)).toEqual(['b11 1.', 'b6 2.', 'b7 3.']);
     await expect(marks(page)).toHaveCount(3);
@@ -163,7 +163,7 @@ test.describe('SPEC-002 문단 넣기·지우기 화면 (서버가 내주는 뷰
     expect(await inkBounds(page, 0, moved)).not.toBeNull();
     await firstPage.screenshot({ path: `${SCREENS}/move-02-after.png` });
 
-    expect(await undo(session, 1)).toEqual({ undone: 1, edits: ['move_blocks b11'] });
+    expect(await undo(sessions.get(), 1)).toEqual({ undone: 1, edits: ['move_blocks b11'] });
 
     await expect(marks(page)).toHaveCount(0);
     expect(await paragraphText('b11')).toBe('회신 기한: 2026. 11. 14.(금)까지 참석 인원을 회신하여 주시기 바랍니다.');
@@ -175,11 +175,11 @@ test.describe('SPEC-003 표 만들기 화면 (서버가 내주는 뷰어)', () =
   test('AC-6 insert_table 뒤 개요 문단 아래에 머리글·두 줄 칸 표가 그려지고 초록 테두리가 감싼다. 뒤 개요 번호는 그대로이고 undo 하면 사라진다', async ({
     page,
   }) => {
-    await session.open(fixturePath('outline-demo.hwpx'));
+    await sessions.open(fixturePath('outline-demo.hwpx'));
     const firstPage = page.getByRole('region', { name: '1쪽' });
     await firstPage.screenshot({ path: `${SCREENS}/table-01-before.png` });
 
-    const result = await insertTable(session, {
+    const result = await insertTable(sessions.get(), {
       after: 'b1',
       rows: 3,
       cols: 2,
@@ -196,26 +196,26 @@ test.describe('SPEC-003 표 만들기 화면 (서버가 내주는 뷰어)', () =
     await expect(marks(page)).toHaveCount(1);
     const mark = await markOnFirstPage(page, 0);
     expect(await inkBounds(page, 0, mark)).not.toBeNull();
-    const [heading] = (await readBlockContents(session, { ids: ['b4'] })).blocks;
+    const [heading] = (await readBlockContents(sessions.get(), { ids: ['b4'] })).blocks;
     expect(heading?.kind === 'paragraph' ? heading.number : undefined).toBe('가.');
     await firstPage.screenshot({ path: `${SCREENS}/table-02-after-insert.png` });
 
-    expect(await undo(session, 1)).toEqual({ undone: 1, edits: ['insert_table after b1'] });
+    expect(await undo(sessions.get(), 1)).toEqual({ undone: 1, edits: ['insert_table after b1'] });
 
     await expect(marks(page)).toHaveCount(0);
-    expect((await readBlockContents(session, { fromPage: 1 })).blocks.map(({ kind }) => kind)).not.toContain('table');
+    expect((await readBlockContents(sessions.get(), { fromPage: 1 })).blocks.map(({ kind }) => kind)).not.toContain('table');
     await firstPage.screenshot({ path: `${SCREENS}/table-03-after-undo.png` });
   });
 });
 
 test.describe('SPEC-005 여러 자리 한 편집 화면 (서버가 내주는 뷰어)', () => {
   test('AC-7 replace_text 의 targets 로 바꾼 블록이 모두 초록 테두리로 남고, undo 한 번에 모두 돌아가 표시가 없다', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
+    await sessions.open(fixturePath('notice.hwpx'));
     const firstPage = page.getByRole('region', { name: '1쪽' });
 
     // b1 "가나다구청", b11 의 두 "회신", b12 표 칸 하나 — 블록 셋을 한 편집으로
     const result = await replaceText(
-      session,
+      sessions.get(),
       [
         { id: 'b1', start: 0, end: 3 },
         { id: 'b11', start: 0, end: 2 },
@@ -233,7 +233,7 @@ test.describe('SPEC-005 여러 자리 한 편집 화면 (서버가 내주는 뷰
     }
     await firstPage.screenshot({ path: `${SCREENS}/replace-many-01-after.png` });
 
-    expect(await undo(session, 1)).toEqual({ undone: 1, edits: ['replace_text b1, b11, b11 외 1곳'] });
+    expect(await undo(sessions.get(), 1)).toEqual({ undone: 1, edits: ['replace_text b1, b11, b11 외 1곳'] });
 
     await expect(marks(page)).toHaveCount(0);
     expect(await paragraphText('b1')).toBe('가나다구청');
@@ -241,18 +241,18 @@ test.describe('SPEC-005 여러 자리 한 편집 화면 (서버가 내주는 뷰
   });
 
   test('AC-1 replace_all 로 바꾼 블록이 모두 초록 테두리로 남고, undo 한 번에 모두 돌아간다', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
+    await sessions.open(fixturePath('notice.hwpx'));
     const firstPage = page.getByRole('region', { name: '1쪽' });
 
     // "가나다" 는 b1·b6·b14 에 있다
-    const result = await replaceAll(session, { find: '가나다', text: '라마바' });
+    const result = await replaceAll(sessions.get(), { find: '가나다', text: '라마바' });
 
     expect(result.replaced).toBe(3);
     expect(result.changed.map(({ id }) => id)).toEqual(['b1', 'b6', 'b14']);
     await expect(marks(page)).toHaveCount(3);
     await firstPage.screenshot({ path: `${SCREENS}/replace-all-01-after.png` });
 
-    expect(await undo(session, 1)).toEqual({ undone: 1, edits: ['replace_all "가나다" → "라마바" (3곳)'] });
+    expect(await undo(sessions.get(), 1)).toEqual({ undone: 1, edits: ['replace_all "가나다" → "라마바" (3곳)'] });
     await expect(marks(page)).toHaveCount(0);
     expect(await paragraphText('b14')).toBe('가나다구청장');
   });

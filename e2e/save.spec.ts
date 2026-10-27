@@ -11,7 +11,7 @@ import { initRhwpForNode } from '../src/core/rhwp-node.ts';
 import { startBridge, type Bridge } from '../src/server/bridge.ts';
 import { replaceText, undo } from '../src/server/edit-tools.ts';
 import { saveDocument } from '../src/server/save-tool.ts';
-import { DocumentSession } from '../src/server/session.ts';
+import { DocumentSessions } from '../src/server/documents.ts';
 
 const viewerDir = fileURLToPath(new URL('../dist/viewer/', import.meta.url));
 const fixturePath = (name: string) => fileURLToPath(new URL(`../fixtures/${name}`, import.meta.url));
@@ -30,19 +30,19 @@ async function closeTab(page: Page): Promise<string[]> {
 }
 
 let bridge: Bridge;
-let session: DocumentSession;
+let sessions: DocumentSessions;
 let source: string;
 
 /** notice.hwpx b11 = "회신 기한: 2026. 11. 14.(금)까지 …" */
-const edit = () => replaceText(session, { id: 'b11', start: 13, end: 20 }, '11. 7.');
+const edit = () => replaceText(sessions.get(), { id: 'b11', start: 13, end: 20 }, '11. 7.');
 
 test.beforeEach(async ({ page }) => {
   bridge = await startBridge({ port: 0, viewerDir });
-  session = new DocumentSession(bridge, { openBrowser: (url) => void page.goto(url) });
+  sessions = new DocumentSessions(bridge, { openBrowser: (url) => void page.goto(url) });
   const dir = await mkdtemp(join(tmpdir(), 'docbridge-e2e-save-'));
   source = join(dir, '공문.hwpx');
   await copyFile(fixturePath('notice.hwpx'), source);
-  await session.open(source);
+  await sessions.open(source);
   // 브라우저는 사용자가 페이지를 한 번이라도 누른 뒤에만 확인 창을 띄운다
   await page.getByTestId('page-canvas-0').click();
 });
@@ -64,15 +64,15 @@ test.describe('SPEC-002 새로고침 확인 창 (서버가 내주는 뷰어)', (
 
   test('편집한 뒤 저장하면 확인 창 없이 닫힌다', async ({ page }) => {
     await edit();
-    await saveDocument(session, {});
+    await saveDocument(sessions.get(), {});
 
     expect(await closeTab(page)).toEqual([]);
   });
 
   test('저장한 뒤 undo 해서 저장한 파일과 달라지면 다시 확인 창이 뜬다', async ({ page }) => {
     await edit();
-    await saveDocument(session, {});
-    await undo(session, 1);
+    await saveDocument(sessions.get(), {});
+    await undo(sessions.get(), 1);
 
     expect(await closeTab(page)).toEqual(['beforeunload']);
   });
@@ -82,7 +82,7 @@ test.describe('SPEC-002 저장 (서버가 내주는 뷰어)', () => {
   test('뷰어가 내보내 검증한 HWPX 를 원본 옆에 저장하고 상태 줄이 저장한 파일 이름이 된다', async ({ page }) => {
     await edit();
 
-    const result = await saveDocument(session, {});
+    const result = await saveDocument(sessions.get(), {});
 
     expect(result.path).toBe(join(source, '..', '공문-수정.hwpx'));
     expect(result.verified).toEqual({ blockCount: 14 });

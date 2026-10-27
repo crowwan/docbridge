@@ -39,7 +39,11 @@ export const REQUEST_TIMEOUT_MS = 30_000;
  */
 export const USER_REQUEST_DEADLINE_MS = 20_000;
 
+/** 문서 이름(SPEC-007: d1, d2 …). 서버가 매기고, 뷰어는 탭 주소(&doc=)·도구 막대에 둔다 — 새로고침하면 그 이름으로 다시 붙는다 */
+const docNameSchema = z.string().min(1);
+
 export const loadDocumentParamsSchema = z.object({
+  doc: docNameSchema,
   fileName: z.string(),
   /** 파일 바이트(base64) */
   data: z.string(),
@@ -53,6 +57,7 @@ export const loadDocumentResultSchema = z.object({
 
 /** 새 문서 만들기(SPEC-003): 새 문서 이름(상태 줄), 양식이 있으면 그 바이트(base64)와 본문을 남길지 */
 export const createDocumentParamsSchema = z.object({
+  doc: docNameSchema,
   fileName: z.string(),
   template: z.object({ fileName: z.string(), data: z.string(), keepContent: z.boolean() }).optional(),
 });
@@ -95,7 +100,7 @@ const unsavedEditsSchema = z.number().int().min(0);
 
 /** 서버가 뷰어에 부르는 메서드와 입력·결과 스키마 */
 export const viewerMethodSchemas = {
-  /** 문서를 열어 렌더링하고 블록을 추출한다. 이전 문서는 닫는다 */
+  /** 문서를 열어 렌더링하고 블록을 추출한다. 이 탭의 이전 문서는 닫는다(같은 파일 다시 열기). doc 은 이 탭의 문서 이름 */
   load_document: { params: loadDocumentParamsSchema, result: loadDocumentResultSchema },
   /** 새 문서(빈 문서 또는 양식)를 뷰어가 rhwp 로 만들어 렌더링하고 블록을 추출한다. 이전 문서는 닫는다. 서버는 새 문서 바이트를 갖지 않는다 */
   create_document: { params: createDocumentParamsSchema, result: createDocumentResultSchema },
@@ -134,6 +139,8 @@ export const viewerMethodSchemas = {
     params: z.object({ fileName: z.string(), unsavedEdits: z.number().int().min(0), newDocument: z.boolean(), state: stateSchema }),
     result: z.object({}),
   },
+  /** 문서를 닫는다(close_document, SPEC-007): 문서와 되돌리기 스냅샷을 버리고 확인 창을 끄고 "닫힌 문서" 화면. 탭은 다음 문서가 쓸 수 있다 */
+  close_document: { params: z.object({}), result: z.object({}) },
 } as const;
 
 type MethodSchemas = typeof viewerMethodSchemas;
@@ -157,6 +164,7 @@ export const parseViewerResult: { [M in ViewerMethod]: (result: unknown) => View
   undo: (result) => viewerMethodSchemas.undo.result.parse(result),
   export_hwpx: (result) => viewerMethodSchemas.export_hwpx.result.parse(result),
   edit_state: (result) => viewerMethodSchemas.edit_state.result.parse(result),
+  close_document: (result) => viewerMethodSchemas.close_document.result.parse(result),
 };
 
 const requestSchema = <M extends ViewerMethod, P extends z.ZodType>(method: M, params: P) =>
@@ -175,6 +183,7 @@ const requestSchemas = {
   undo: requestSchema('undo', viewerMethodSchemas.undo.params),
   export_hwpx: requestSchema('export_hwpx', viewerMethodSchemas.export_hwpx.params),
   edit_state: requestSchema('edit_state', viewerMethodSchemas.edit_state.params),
+  close_document: requestSchema('close_document', viewerMethodSchemas.close_document.params),
 } satisfies { [M in ViewerMethod]: z.ZodObject };
 
 /** 뷰어가 요청을 읽는 스키마. 메서드마다 입력 모양이 다르다 */
@@ -190,6 +199,7 @@ export const requestMessageSchema = z.discriminatedUnion('method', [
   requestSchemas.undo,
   requestSchemas.export_hwpx,
   requestSchemas.edit_state,
+  requestSchemas.close_document,
 ]);
 export type RequestMessage = z.infer<typeof requestMessageSchema>;
 

@@ -8,7 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { startBridge, type Bridge } from '../src/server/bridge.ts';
 import { createMcpServer } from '../src/server/mcp.ts';
-import { DocumentSession, MAX_FILE_BYTES, VIEWER_CONNECT_TIMEOUT_MS } from '../src/server/session.ts';
+import { DocumentSessions } from '../src/server/documents.ts';
+import { MAX_FILE_BYTES, VIEWER_CONNECT_TIMEOUT_MS } from '../src/server/session.ts';
 import { FakeViewer, loadParams, paragraphBlocks } from './fake-viewer.ts';
 import { fixturePath } from './fixtures.ts';
 
@@ -17,6 +18,7 @@ const toolResultSchema = z.object({
   isError: z.boolean().optional(),
 });
 const openResultSchema = z.object({
+  doc: z.string(),
   fileName: z.string(),
   pageCount: z.number(),
   blockCount: z.number(),
@@ -28,13 +30,14 @@ const NO_DOCUMENT = '열린 문서가 없습니다. open_document 로 문서를 
 
 describe('SPEC-001 문서 열기 (open_document)', () => {
   let bridge: Bridge;
-  let session: DocumentSession;
+  let sessions: DocumentSessions;
   let client: Client;
   let openBrowser: ReturnType<typeof vi.fn<(url: string) => void>>;
   const viewers: FakeViewer[] = [];
 
-  const connectViewer = async () => {
-    const viewer = await FakeViewer.connect(bridge.viewerUrl);
+  /** 뷰어 탭을 붙인다. doc 을 주면 그 문서 탭 주소(새로고침한 탭), 없으면 빈 탭 */
+  const connectViewer = async (doc?: string) => {
+    const viewer = await FakeViewer.connect(doc === undefined ? bridge.viewerUrl : bridge.viewerUrlFor(doc));
     viewers.push(viewer);
     return viewer;
   };
@@ -58,9 +61,9 @@ describe('SPEC-001 문서 열기 (open_document)', () => {
   beforeEach(async () => {
     bridge = await startBridge({ port: 0, viewerDir: tmpdir() });
     openBrowser = vi.fn<(url: string) => void>();
-    session = new DocumentSession(bridge, { openBrowser });
+    sessions = new DocumentSessions(bridge, { openBrowser });
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
-    await createMcpServer(session).connect(serverSide);
+    await createMcpServer(sessions).connect(serverSide);
     client = new Client({ name: 'docbridge-test', version: '0.0.0' });
     await client.connect(clientSide);
   });
@@ -88,14 +91,15 @@ describe('SPEC-001 문서 열기 (open_document)', () => {
     expect(Buffer.from(loadParams(request).data, 'base64')).toEqual(await readFile(fixturePath(fixture)));
     expect(result.isError).toBeUndefined();
     expect(openResultSchema.parse(JSON.parse(result.content[0]?.text ?? ''))).toEqual({
+      doc: 'd1',
       fileName,
       pageCount: 1,
       blockCount: 14,
-      viewerUrl: bridge.viewerUrl,
+      viewerUrl: bridge.viewerUrlFor('d1'),
     });
   });
 
-  it('연결된 뷰어가 없으면 기본 브라우저로 뷰어 주소를 열고, 그 탭이 붙으면 문서를 띄운다', async () => {
+  it('연결된 뷰어가 없으면 기본 브라우저로 그 문서 탭 주소를 열고, 그 탭이 붙으면 문서를 띄운다', async () => {
     openBrowser.mockImplementation((url) => {
       void FakeViewer.connect(url).then((viewer) => {
         viewers.push(viewer);
@@ -105,49 +109,45 @@ describe('SPEC-001 문서 열기 (open_document)', () => {
 
     const result = await callOpen(fixturePath('notice.hwpx'));
 
-    expect(openBrowser).toHaveBeenCalledExactlyOnceWith(bridge.viewerUrl);
+    expect(openBrowser).toHaveBeenCalledExactlyOnceWith(bridge.viewerUrlFor('d1'));
     expect(openResultSchema.parse(JSON.parse(result.content[0]?.text ?? '')).pageCount).toBe(1);
   });
 
-  it('이미 연결된 뷰어가 있으면 새 탭을 열지 않고 그 탭의 문서를 바꾼다', async () => {
+  it('SPEC-007 이미 열린 파일을 다시 열면 새 탭을 열지 않고 같은 doc 탭에 파일을 다시 띄운다', async () => {
     const viewer = await connectViewer();
     await Promise.all([callOpen(fixturePath('notice.hwpx')), answerNextLoad(viewer, 1, 14)]);
 
-    const [second, request] = await Promise.all([callOpen(fixturePath('report.hwpx')), answerNextLoad(viewer, 2, 30)]);
+    const [second, request] = await Promise.all([callOpen(fixturePath('notice.hwpx')), answerNextLoad(viewer, 1, 14)]);
 
     expect(openBrowser).not.toHaveBeenCalled();
-    expect(loadParams(request).fileName).toBe('report.hwpx');
-    expect(openResultSchema.parse(JSON.parse(second.content[0]?.text ?? ''))).toMatchObject({
-      fileName: 'report.hwpx',
-      pageCount: 2,
-      blockCount: 30,
-    });
-    expect(session.document?.fileName).toBe('report.hwpx');
+    expect(loadParams(request)).toMatchObject({ doc: 'd1', fileName: 'notice.hwpx' });
+    expect(openResultSchema.parse(JSON.parse(second.content[0]?.text ?? ''))).toMatchObject({ doc: 'd1', fileName: 'notice.hwpx' });
+    expect(sessions.list().documents.map(({ doc }) => doc)).toEqual(['d1']);
   });
 
-  it('SPEC-002 AC-12 새 문서를 열 때 저장하지 않은 편집이 있으면 버린 편집 수를 결과에 알리고, 새 문서는 편집 없이 시작한다', async () => {
+  it('SPEC-002 AC-12 같은 파일을 다시 열 때 저장하지 않은 편집이 있으면 버린 편집 수를 결과에 알리고, 다시 연 문서는 편집 없이 시작한다', async () => {
     const viewer = await connectViewer();
     await Promise.all([callOpen(fixturePath('notice.hwpx')), answerNextLoad(viewer, 1, 14)]);
-    const first = session.document;
+    const first = sessions.document;
     first?.edits.record('replace_text b1', first.ids.clone());
     first?.edits.record('replace_text b2', first.ids.clone());
-    expect([session.editCount, session.unsavedEdits, session.dirty]).toEqual([2, 2, true]);
+    expect([sessions.editCount, sessions.unsavedEdits, sessions.dirty]).toEqual([2, 2, true]);
 
-    const [second] = await Promise.all([callOpen(fixturePath('report.hwpx')), answerNextLoad(viewer, 2, 30)]);
+    const [second] = await Promise.all([callOpen(fixturePath('notice.hwpx')), answerNextLoad(viewer, 1, 14)]);
 
-    expect(JSON.parse(second.content[0]?.text ?? '')).toMatchObject({ warnings: ['저장하지 않은 편집 2개를 버렸습니다'] });
-    expect([session.editCount, session.unsavedEdits, session.dirty]).toEqual([0, 0, false]);
+    expect(JSON.parse(second.content[0]?.text ?? '')).toMatchObject({ doc: 'd1', warnings: ['저장하지 않은 편집 2개를 버렸습니다'] });
+    expect([sessions.editCount, sessions.unsavedEdits, sessions.dirty]).toEqual([0, 0, false]);
     const [third] = await Promise.all([callOpen(fixturePath('notice.hwpx')), answerNextLoad(viewer, 1, 14)]);
     expect(JSON.parse(third.content[0]?.text ?? '')).not.toHaveProperty('warnings');
   });
 
-  it('SPEC-002 AC-12 새 문서를 열지 못해도 이전 문서의 저장하지 않은 편집은 버려지므로 오류에 함께 알린다', async () => {
+  it('SPEC-002 AC-12 같은 파일을 다시 열지 못해도 그 탭의 저장하지 않은 편집은 버려지므로 오류에 함께 알린다', async () => {
     const viewer = await connectViewer();
     await Promise.all([callOpen(fixturePath('notice.hwpx')), answerNextLoad(viewer, 1, 14)]);
-    session.document?.edits.record('replace_text b1', session.document.ids.clone());
+    sessions.document?.edits.record('replace_text b1', sessions.document.ids.clone());
 
     const [result] = await Promise.all([
-      callOpen(fixturePath('report.hwpx')),
+      callOpen(fixturePath('notice.hwpx')),
       viewer.nextRequest().then((request) => viewer.fail(request.id, '손상된 파일입니다')),
     ]);
 
@@ -197,9 +197,9 @@ describe('SPEC-001 문서 열기 (open_document)', () => {
   it('브라우저를 띄웠는데 정해진 시간 안에 뷰어가 붙지 않으면 뷰어 주소와 함께 오류를 돌려준다', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const browserOpened = new Promise<void>((resolve) => openBrowser.mockImplementation(() => resolve()));
-    const opening = session.open(fixturePath('notice.hwpx'));
+    const opening = sessions.open(fixturePath('notice.hwpx'));
     const failed = expect(opening).rejects.toThrow(
-      `뷰어가 ${VIEWER_CONNECT_TIMEOUT_MS / 1000}초 안에 연결되지 않았습니다. 브라우저에서 ${bridge.viewerUrl} 을 열고 다시 시도하세요.`,
+      `뷰어가 ${VIEWER_CONNECT_TIMEOUT_MS / 1000}초 안에 연결되지 않았습니다. 브라우저에서 ${bridge.viewerUrlFor('d1')} 을 열고 다시 시도하세요.`,
     );
 
     await browserOpened;
@@ -211,26 +211,24 @@ describe('SPEC-001 문서 열기 (open_document)', () => {
   it('뷰어가 연결되어 있지 않을 때 문서가 필요한 도구는 정해진 오류 문구와 마지막 파일 경로를 돌려준다', async () => {
     const path = fixturePath('notice.hwpx');
     const viewer = await connectViewer();
-    await Promise.all([session.open(path), answerNextLoad(viewer, 1, 14)]);
+    await Promise.all([sessions.open(path), answerNextLoad(viewer, 1, 14)]);
     await closeViewer(viewer);
 
-    await expect(session.requestViewer('load_document', { fileName: 'x.hwpx', data: '' })).rejects.toThrow(
-      `${NOT_CONNECTED} 마지막 파일: ${path}`,
-    );
+    await expect(sessions.get().requestViewer('get_blocks', {})).rejects.toThrow(`${NOT_CONNECTED} 마지막 파일: ${path}`);
   });
 
   it('문서를 연 적이 없고 뷰어도 없으면 정해진 오류 문구만 돌려준다', async () => {
-    await expect(session.requestViewer('load_document', { fileName: 'x.hwpx', data: '' })).rejects.toThrow(
-      new RegExp(`^${NOT_CONNECTED.replace('.', '\\.')}$`),
-    );
+    const result = toolResultSchema.parse(await client.callTool({ name: 'get_outline', arguments: {} }));
+
+    expect(result.content.map(({ text }) => text)).toEqual([NOT_CONNECTED]);
   });
 
   it('요청 중에 뷰어 연결이 끊기면 같은 오류 문구와 마지막 파일 경로를 돌려준다', async () => {
     const path = fixturePath('notice.hwpx');
     const viewer = await connectViewer();
-    await Promise.all([session.open(path), answerNextLoad(viewer, 1, 14)]);
+    await Promise.all([sessions.open(path), answerNextLoad(viewer, 1, 14)]);
 
-    const pending = session.requestViewer('load_document', { fileName: 'x.hwpx', data: '' });
+    const pending = sessions.get().requestViewer('get_blocks', {});
     await viewer.nextRequest();
     viewer.close();
 
@@ -240,32 +238,36 @@ describe('SPEC-001 문서 열기 (open_document)', () => {
   it('뷰어 탭을 새로고침해도 같은 문서가 다시 뜨고 블록 id 가 그대로다', async () => {
     const path = fixturePath('notice.hwpx');
     const first = await connectViewer();
-    await Promise.all([session.open(path), answerNextLoad(first, 1, 14)]);
-    const idsBefore = session.document?.ids;
+    await Promise.all([sessions.open(path), answerNextLoad(first, 1, 14)]);
+    const idsBefore = sessions.document?.ids;
     const labelsBefore = idsBefore?.label(paragraphBlocks(14)).map(({ id }) => id);
 
-    // 새로고침 = 이전 연결이 끊기고 같은 주소로 새 연결이 붙는다
+    // 새로고침 = 이전 연결이 끊기고 같은 주소(문서 이름 포함)로 새 연결이 붙는다
     await closeViewer(first);
-    const reloaded = await connectViewer();
+    const reloaded = await connectViewer('d1');
     const request = await answerNextLoad(reloaded, 1, 14);
-    await session.ready();
+    await sessions.ready();
 
-    expect(loadParams(request).fileName).toBe('notice.hwpx');
+    expect(loadParams(request)).toMatchObject({ doc: 'd1', fileName: 'notice.hwpx' });
     expect(Buffer.from(loadParams(request).data, 'base64')).toEqual(await readFile(path));
     expect(openBrowser).not.toHaveBeenCalled();
-    expect(session.document?.ids).toBe(idsBefore);
-    expect(session.document?.ids.label(paragraphBlocks(14)).map(({ id }) => id)).toEqual(labelsBefore);
+    expect(sessions.document?.ids).toBe(idsBefore);
+    expect(sessions.document?.ids.label(paragraphBlocks(14)).map(({ id }) => id)).toEqual(labelsBefore);
   });
 
-  it('새로고침으로 이전 문서를 다시 띄우는 중에 다른 파일을 열면 뷰어에 마지막으로 남는 문서가 서버의 현재 문서다', async () => {
-    // 새로고침 쪽 파일 읽기를 붙잡아 두고, 새 파일 읽기가 끝난 다음 차례에 놓아준다
+  it('SPEC-007 한 문서 탭을 새로고침해 다시 띄우는 동안에도 다른 파일은 다른 탭에 바로 열린다(직렬 큐는 문서마다)', async () => {
+    // 새로고침 쪽 파일 읽기를 붙잡아 두고, 다른 문서 열기가 끝난 뒤에 놓아준다
     let holdReload = false;
     let releaseReload = () => {};
     let reloadReadStarted = () => {};
     const reloadReading = new Promise<void>((resolve) => {
       reloadReadStarted = resolve;
     });
-    const raced = new DocumentSession(bridge, {
+    // 읽기를 조절하는 세션은 따로 띄운 브리지에(같은 브리지에 세션 표가 둘이면 서로 모르는 탭을 빈 탭으로 돌린다)
+    await client.close();
+    await bridge.close();
+    bridge = await startBridge({ port: 0, viewerDir: tmpdir() });
+    const raced = new DocumentSessions(bridge, {
       openBrowser,
       readFile: async (path) => {
         if (holdReload && path.endsWith('notice.hwpx')) {
@@ -275,7 +277,6 @@ describe('SPEC-001 문서 열기 (open_document)', () => {
           reloadReadStarted();
           await released;
         }
-        if (path.endsWith('report.hwpx')) setImmediate(() => releaseReload());
         return readFile(path);
       },
     });
@@ -285,63 +286,69 @@ describe('SPEC-001 문서 열기 (open_document)', () => {
 
     holdReload = true;
     await closeViewer(first);
-    const reloaded = await connectViewer();
+    const reloaded = await connectViewer('d1');
     reloaded.autoRespond({ pageCount: 1, blocks: paragraphBlocks(14) });
     await reloadReading;
-    await raced.open(fixturePath('report.hwpx'));
+    const blank = await connectViewer();
+    blank.autoRespond({ pageCount: 2, blocks: paragraphBlocks(30) });
+
+    // d1 새로고침이 파일 읽기에 붙잡혀 있어도 d2 열기는 기다리지 않는다
+    expect(await raced.open(fixturePath('report.hwpx'))).toMatchObject({ doc: 'd2', fileName: 'report.hwpx' });
+    releaseReload();
     await raced.ready();
 
+    expect(loadParams(reloaded.history.at(-1))).toMatchObject({ doc: 'd1', fileName: 'notice.hwpx' });
+    expect(loadParams(blank.history.at(-1))).toMatchObject({ doc: 'd2', fileName: 'report.hwpx' });
     expect(raced.document?.fileName).toBe('report.hwpx');
-    expect(loadParams(reloaded.history.at(-1)).fileName).toBe('report.hwpx');
   });
 
-  it('새 파일을 rhwp 가 읽지 못하면 서버도 열린 문서를 비우고, 새로고침해도 이전 문서를 되살리지 않는다', async () => {
+  it('같은 파일을 다시 열다 rhwp 가 읽지 못하면 그 문서를 빼고, 새로고침해도 이전 문서를 되살리지 않는다', async () => {
     const viewer = await connectViewer();
-    await Promise.all([session.open(fixturePath('notice.hwpx')), answerNextLoad(viewer, 1, 14)]);
+    await Promise.all([sessions.open(fixturePath('notice.hwpx')), answerNextLoad(viewer, 1, 14)]);
 
-    const opening = session.open(fixturePath('report.hwpx'));
+    const opening = sessions.open(fixturePath('notice.hwpx'));
     const request = await viewer.nextRequest();
     viewer.fail(request.id, '손상된 파일입니다');
     await expect(opening).rejects.toThrow('문서를 열 수 없습니다: 손상된 파일입니다');
 
-    expect(session.document).toBeUndefined();
-    await expect(session.requestViewer('load_document', { fileName: 'x.hwpx', data: '' })).rejects.toThrow(NO_DOCUMENT);
+    expect(sessions.document).toBeUndefined();
+    expect(() => sessions.get()).toThrow(NO_DOCUMENT);
 
     await closeViewer(viewer);
-    const reloaded = await connectViewer();
+    const reloaded = await connectViewer('d1');
     reloaded.autoRespond({ pageCount: 1, blocks: paragraphBlocks(14) });
-    await session.ready();
+    await sessions.ready();
     expect(reloaded.history).toEqual([]);
   });
 
   it('새로고침 때 파일이 바뀌어 블록 위치가 달라졌으면 블록 id 를 새로 붙인다', async () => {
     const first = await connectViewer();
-    await Promise.all([session.open(fixturePath('notice.hwpx')), answerNextLoad(first, 1, 14)]);
-    const idsBefore = session.document?.ids;
+    await Promise.all([sessions.open(fixturePath('notice.hwpx')), answerNextLoad(first, 1, 14)]);
+    const idsBefore = sessions.document?.ids;
 
     await closeViewer(first);
-    const reloaded = await connectViewer();
+    const reloaded = await connectViewer('d1');
     reloaded.autoRespond({ pageCount: 1, blocks: paragraphBlocks(15) });
-    await session.ready();
+    await sessions.ready();
 
-    expect(session.document?.ids).not.toBe(idsBefore);
-    expect(session.document?.blockCount).toBe(15);
-    expect(session.document?.ids.label(paragraphBlocks(15)).map(({ id }) => id).at(-1)).toBe('b15');
+    expect(sessions.document?.ids).not.toBe(idsBefore);
+    expect(sessions.document?.blockCount).toBe(15);
+    expect(sessions.document?.ids.label(paragraphBlocks(15)).map(({ id }) => id).at(-1)).toBe('b15');
   });
 
-  it('새로고침 때 파일이 사라졌으면 열린 문서를 비우고 뷰어에 보내지 않는다', async () => {
+  it('새로고침 때 파일이 사라졌으면 그 문서를 빼고 뷰어에 보내지 않는다', async () => {
     const path = join(await mkdtemp(join(tmpdir(), 'docbridge-gone-')), '공문.hwpx');
     await copyFile(fixturePath('notice.hwpx'), path);
     const first = await connectViewer();
-    await Promise.all([session.open(path), answerNextLoad(first, 1, 14)]);
+    await Promise.all([sessions.open(path), answerNextLoad(first, 1, 14)]);
 
     await closeViewer(first);
     await rm(path);
-    const reloaded = await connectViewer();
+    const reloaded = await connectViewer('d1');
     reloaded.autoRespond({ pageCount: 1, blocks: paragraphBlocks(14) });
-    await session.ready();
+    await sessions.ready();
 
-    expect(session.document).toBeUndefined();
+    expect(sessions.document).toBeUndefined();
     expect(reloaded.history).toEqual([]);
   });
 });

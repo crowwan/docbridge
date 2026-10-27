@@ -122,7 +122,8 @@ describe('SPEC-001 MCP·뷰어 서버', () => {
     expect(openResultSchema.parse(JSON.parse(result.content[0]?.text ?? ''))).toEqual({
       fileName: 'notice.hwpx',
       pageCount: 1,
-      viewerUrl: await viewerUrl,
+      // 뷰어 주소에 문서 이름을 붙인 그 문서 탭 주소(SPEC-007)
+      viewerUrl: `${await viewerUrl}&doc=d1`,
     });
     expect(await viewerUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/\?token=.+/);
     viewer.close();
@@ -141,7 +142,8 @@ describe('SPEC-001 MCP·뷰어 서버', () => {
     const healthy = await FakeViewer.connect(bridge.viewerUrl);
 
     await sendMalformedFrame(bridge.port, bridge.token);
-    const answered = bridge.request('load_document', { fileName: 'a.hwpx', data: '' });
+    expect(bridge.claimViewer('d1')).toBe(true);
+    const answered = bridge.request('d1', 'load_document', { doc: 'd1', fileName: 'a.hwpx', data: '' });
     const request = await healthy.nextRequest();
     healthy.respond(request.id, { pageCount: 1, blocks: [] });
 

@@ -10,12 +10,13 @@ import { UNDO_LIMIT } from '../src/core/edit-history.ts';
 import { createBlankDocument } from '../src/core/rhwp-node.ts';
 import { startBridge, type Bridge } from '../src/server/bridge.ts';
 import { createMcpServer } from '../src/server/mcp.ts';
-import { DocumentSession } from '../src/server/session.ts';
+import { DocumentSessions } from '../src/server/documents.ts';
 import { REQUEST_TIMEOUT_MS, type RequestMessage } from '../src/shared/protocol.ts';
 import { NOTHING_TO_UNDO, replaceAll, REPLACE_ALL_STALE, replaceText, TARGET_REQUIRED, WHERE_REQUIRED } from '../src/server/edit-tools.ts';
 import { MAX_REPLACE_TARGETS, tooManyTargetsMessage } from '../src/core/edit-operations.ts';
 import { FakeViewer, NO_RESPONSE } from './fake-viewer.ts';
 import { fixturePath } from './fixtures.ts';
+import { withoutDoc } from './tool-result.ts';
 import { rhwpViewer, type RhwpViewer } from './rhwp-viewer.ts';
 
 const toolResultSchema = z.object({
@@ -25,7 +26,7 @@ const toolResultSchema = z.object({
 
 describe('SPEC-002 편집 도구 (replace_text · move_blocks · undo)', () => {
   let bridge: Bridge;
-  let session: DocumentSession;
+  let sessions: DocumentSessions;
   let client: Client;
   let viewer: FakeViewer;
   let rhwp: RhwpViewer;
@@ -35,7 +36,12 @@ describe('SPEC-002 편집 도구 (replace_text · move_blocks · undo)', () => {
   const json = async (name: string, args: Record<string, unknown> = {}): Promise<unknown> => {
     const result = await call(name, args);
     if (result.isError) throw new Error(result.content[0]?.text);
-    return JSON.parse(result.content[0]?.text ?? '');
+    return withoutDoc(JSON.parse(result.content[0]?.text ?? ''));
+  };
+  /** 다른 파일을 이 탭에서 연다: 지금 문서를 닫고(빈 탭이 된다) 연다 — 문서마다 탭이라(SPEC-007) 그냥 열면 새 탭이 필요하다 */
+  const openInPlace = async (path: string) => {
+    await json('close_document', { discard: true });
+    return json('open_document', { path });
   };
   const errorText = async (name: string, args: Record<string, unknown> = {}) => {
     const result = await call(name, args);
@@ -53,9 +59,9 @@ describe('SPEC-002 편집 도구 (replace_text · move_blocks · undo)', () => {
 
   beforeEach(async () => {
     bridge = await startBridge({ port: 0, viewerDir: tmpdir() });
-    session = new DocumentSession(bridge, { openBrowser: vi.fn() });
+    sessions = new DocumentSessions(bridge, { openBrowser: vi.fn() });
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
-    await createMcpServer(session).connect(serverSide);
+    await createMcpServer(sessions).connect(serverSide);
     client = new Client({ name: 'docbridge-test', version: '0.0.0' });
     await client.connect(clientSide);
     viewer = await FakeViewer.connect(bridge.viewerUrl);
@@ -109,7 +115,7 @@ describe('SPEC-002 편집 도구 (replace_text · move_blocks · undo)', () => {
     expect(await errorText('replace_text', { target: { id: 'b1', start: 2, end: 30 }, text: 'X' })).toBe(
       'b1: 글자 범위가 맞지 않습니다(start 2, end 30, 글자 수 5). 0 ≤ start ≤ end ≤ 글자 수로 주세요.',
     );
-    expect([session.editCount, session.dirty]).toEqual([0, false]);
+    expect([sessions.editCount, sessions.dirty]).toEqual([0, false]);
     expect(await errorText('undo')).toBe('되돌릴 편집이 없습니다.');
   });
 
@@ -144,7 +150,7 @@ describe('SPEC-002 편집 도구 (replace_text · move_blocks · undo)', () => {
 
   it('AC-8 되돌리면 블록 id 표도 그 편집 전 상태로 돌아간다', async () => {
     // 문단을 넣는 편집(#20)처럼 id 표를 옮기는 편집을 공용 경로로 흉내 낸다: 글자는 바꾸고 id 표는 문단 하나를 민다
-    await session.edit(
+    await sessions.get().edit(
       (document) => {
         const anchor = document.ids.anchor('b1');
         if (anchor === undefined) throw new Error('b1 이 없다');
@@ -152,12 +158,12 @@ describe('SPEC-002 편집 도구 (replace_text · move_blocks · undo)', () => {
       },
       (ids) => void ids.paragraphInserted(0, 1),
     );
-    expect(session.document?.ids.anchor('b2')).toEqual({ section: 0, paragraph: 2, part: 'text' });
+    expect(sessions.document?.ids.anchor('b2')).toEqual({ section: 0, paragraph: 2, part: 'text' });
 
     await json('undo');
 
-    expect(session.document?.ids.anchor('b2')).toEqual({ section: 0, paragraph: 1, part: 'text' });
-    expect(session.document?.ids.anchor('b15')).toBeUndefined();
+    expect(sessions.document?.ids.anchor('b2')).toEqual({ section: 0, paragraph: 1, part: 'text' });
+    expect(sessions.document?.ids.anchor('b15')).toBeUndefined();
     expect(await readText('b2')).toBe('수신  ');
   });
 
@@ -168,22 +174,22 @@ describe('SPEC-002 편집 도구 (replace_text · move_blocks · undo)', () => {
     await Promise.all([edit, read]);
 
     expect(viewer.history.map((request) => request.method).slice(-2)).toEqual(['edit', 'get_blocks']);
-    expect(session.document?.pageCount).toBeGreaterThan(1);
-    expect(session.document?.pageCount).toBe(rhwp.editor().doc.pageCount());
+    expect(sessions.document?.pageCount).toBeGreaterThan(1);
+    expect(sessions.document?.pageCount).toBe(rhwp.editor().doc.pageCount());
     await json('undo');
-    expect(session.document?.pageCount).toBe(1);
+    expect(sessions.document?.pageCount).toBe(1);
   });
 
-  it('AC-12 저장하지 않은 편집이 있는 채로 새 문서를 열면 버린 편집 수를 알린다', async () => {
+  it('AC-12 저장하지 않은 편집이 있는 채로 같은 파일을 다시 열면 버린 편집 수를 알린다(SPEC-007 — 다른 파일은 새 탭)', async () => {
     await json('replace_text', { target: { id: 'b1' }, text: '라마바구청' });
     await json('replace_text', { target: { id: 'b3' }, text: '각 동 주민센터' });
     await json('undo');
 
-    expect(await json('open_document', { path: fixturePath('report.hwpx') })).toMatchObject({
-      fileName: 'report.hwpx',
+    expect(await json('open_document', { path: fixturePath('notice.hwpx') })).toMatchObject({
+      fileName: 'notice.hwpx',
       warnings: ['저장하지 않은 편집 1개를 버렸습니다'],
     });
-    expect(session.unsavedEdits).toBe(0);
+    expect(sessions.unsavedEdits).toBe(0);
   });
 
   it('뷰어가 편집을 적용했는데 결과를 읽지 못하면, 다음 편집·되돌리기는 기록이 어긋났다고 알리고 아무것도 바꾸지 않는다 (PR #26 리뷰)', async () => {
@@ -216,7 +222,7 @@ describe('SPEC-002 편집 도구 (replace_text · move_blocks · undo)', () => {
     });
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
-      const first = replaceText(session, { id: 'b1' }, '라마바구청').then(
+      const first = replaceText(sessions.get(), { id: 'b1' }, '라마바구청').then(
         () => '성공',
         (error: unknown) => String(error),
       );
@@ -318,7 +324,7 @@ describe('SPEC-002 편집 도구 (replace_text · move_blocks · undo)', () => {
     });
     const path = join(mkdtempSync(join(tmpdir(), 'docbridge-move-')), 'typed.hwpx');
     writeFileSync(path, doc.exportHwpx());
-    await json('open_document', { path });
+    await openInPlace(path);
 
     expect(await json('move_blocks', { ids: ['b4'], before: 'b2' })).toMatchObject({
       moved: ['b4'],
@@ -336,14 +342,14 @@ describe('SPEC-002 편집 도구 (replace_text · move_blocks · undo)', () => {
     doc.insertFootnote(0, 2, 2);
     const path = join(mkdtempSync(join(tmpdir(), 'docbridge-move-')), 'footnote.hwpx');
     writeFileSync(path, doc.exportHwpx());
-    await json('open_document', { path });
+    await openInPlace(path);
     const before = await outline();
 
     expect(await errorText('move_blocks', { ids: ['b3'], before: 'b2' })).toBe(
       '이 문단은 옮길 수 없습니다(각주): b3. 글자만 옮기려면 insert_paragraph 와 delete_blocks 를 쓰세요.',
     );
     expect(await outline()).toEqual(before);
-    expect([session.editCount, session.dirty]).toEqual([0, false]);
+    expect([sessions.editCount, sessions.dirty]).toEqual([0, false]);
   });
 
   it('before 와 after 를 둘 다 주거나 하나도 안 주면, 또는 계획 단계에서 거부되면 뷰어에 보내지 않는다', async () => {
@@ -431,7 +437,7 @@ describe('SPEC-002 편집 도구 (replace_text · move_blocks · undo)', () => {
     ])('AC-3 일치가 0개면(%s) 오류이고 문서·undo 칸이 그대로다', async (_case, args, message) => {
       expect(await errorText('replace_all', args)).toBe(message);
       expect(requests('edit')).toHaveLength(0);
-      expect([session.editCount, session.dirty]).toEqual([0, false]);
+      expect([sessions.editCount, sessions.dirty]).toEqual([0, false]);
       expect(await errorText('undo')).toBe(NOTHING_TO_UNDO);
     });
 
@@ -440,7 +446,7 @@ describe('SPEC-002 편집 도구 (replace_text · move_blocks · undo)', () => {
       doc.insertText(0, 0, 0, '가'.repeat(MAX_REPLACE_TARGETS + 1));
       const path = join(mkdtempSync(join(tmpdir(), 'docbridge-replace-all-')), 'many.hwpx');
       writeFileSync(path, doc.exportHwpx());
-      await json('open_document', { path });
+      await openInPlace(path);
 
       expect(await errorText('replace_all', { find: '가', text: '나' })).toBe(
         `바꿀 자리가 ${MAX_REPLACE_TARGETS + 1} 곳이라 너무 많습니다(${MAX_REPLACE_TARGETS} 까지). ids 로 범위를 나눠 주세요.`,
@@ -463,15 +469,15 @@ describe('SPEC-002 편집 도구 (replace_text · move_blocks · undo)', () => {
         return NO_RESPONSE;
       });
 
-      const all = replaceAll(session, { find: '회신', text: '답장' });
+      const all = replaceAll(sessions.get(), { find: '회신', text: '답장' });
       await blocksArrived;
-      await replaceText(session, { id: 'b11', start: 0, end: 0 }, '재');
+      await replaceText(sessions.get(), { id: 'b11', start: 0, end: 0 }, '재');
       if (held === undefined) throw new Error('블록 읽기 요청이 오지 않았다');
       viewer.respondWith(held.id, held.blocks);
 
       await expect(all).rejects.toThrow(REPLACE_ALL_STALE);
       expect(await readText('b11')).toBe('재회신 기한: 2026. 11. 14.(금)까지 참석 인원을 회신하여 주시기 바랍니다.');
-      expect(session.editCount).toBe(1);
+      expect(sessions.editCount).toBe(1);
     });
   });
 
@@ -526,7 +532,7 @@ describe('SPEC-002 편집 도구 (replace_text · move_blocks · undo)', () => {
         '없는 블록 id 입니다: b99. get_outline 을 다시 불러 지금 블록 id 를 확인하세요.',
       );
       expect(await readText('b11')).toBe('회신 기한: 2026. 11. 14.(금)까지 참석 인원을 회신하여 주시기 바랍니다.');
-      expect([session.editCount, session.dirty]).toEqual([0, false]);
+      expect([sessions.editCount, sessions.dirty]).toEqual([0, false]);
     });
 
     it(`AC-8 targets 가 ${MAX_REPLACE_TARGETS} 곳을 넘으면 뷰어에 보내지 않고 오류다`, async () => {
