@@ -7,7 +7,7 @@ import type { Block } from '../src/core/block-schema.ts';
 import { DocumentEditor } from '../src/core/document-editor.ts';
 import { UNDO_LIMIT } from '../src/core/edit-history.ts';
 import type { EditOperation } from '../src/core/edit-operations.ts';
-import { charLook, listFields, paraShapeIdOf } from '../src/core/edits.ts';
+import { charLook, listFields, paraShapeIdOf, replaceFieldText } from '../src/core/edits.ts';
 import { blockBoxes } from '../src/core/highlight-targets.ts';
 import { createBlankDocument } from '../src/core/rhwp-node.ts';
 import { planMove, type MoveWhere } from '../src/server/move-plan.ts';
@@ -439,6 +439,23 @@ describe('SPEC-002 insert_paragraph (편집 공용 경로)', () => {
   });
 });
 
+/** "첫 문단 / 지울 문단 / 글상자 문단(글상자 안 '링크 글자' 의 '링크' 에 하이퍼링크)" 문서 (#42) */
+function textboxLinkDocument(): HwpDocument {
+  const doc = createBlankDocument();
+  doc.insertText(S, 0, 0, '첫 문단');
+  doc.splitParagraph(S, 0, 4);
+  doc.insertText(S, 1, 0, '지울 문단');
+  doc.splitParagraph(S, 1, 5);
+  doc.insertText(S, 2, 0, '글상자 문단');
+  doc.createShapeControl(
+    JSON.stringify({ sectionIdx: S, paraIdx: 2, charOffset: 0, width: 20000, height: 4000, horzOffset: 0, vertOffset: 0, treatAsChar: true, textWrap: 'Square' }),
+  );
+  doc.setTextBoxAt(2, 0, true);
+  doc.insertTextInCell(S, 2, 0, 0, 0, 0, '링크 글자');
+  doc.insertHyperlinkEx(JSON.stringify({ target: { section: S, para: 2, cellPath: [[0, 0, 0]] }, uri: 'https://example.com', start: 0, end: 2 }));
+  return doc;
+}
+
 describe('SPEC-002 delete_blocks (편집 공용 경로)', () => {
   it('AC-3 여러 문단을 한 편집으로 지우고, 한 번 되돌리면 모두 돌아온다', () => {
     const editor = new DocumentEditor(openFixture('notice.hwpx'));
@@ -604,6 +621,51 @@ describe('SPEC-002 delete_blocks (편집 공용 경로)', () => {
     expect(() => editor.edit(remove(editor, table), editor.depth)).toThrow(
       `${table}: 누름틀이 든 문단에서는 표만 지울 수 없습니다(표만 지우면 누름틀이 망가집니다). 구역 첫 문단이라 문단째 지울 수도 없으므로 이 표는 지울 수 없습니다.`,
     );
+  });
+
+  it('AC-3 글상자 안에 하이퍼링크가 있는 문서에서도 문단을 지운다. 글상자가 든 문단은 지우지 않는다 (#42)', () => {
+    const doc = textboxLinkDocument();
+    // rhwp 는 글상자 안 필드 위치를 칸 번호 없이 준다(실제 제안요청서와 같은 모양)
+    expect(JSON.parse(doc.getFieldList())).toMatchObject([
+      { fieldType: 'hyperlink', location: { sectionIndex: S, paraIndex: 2, path: [{ type: 'textbox', controlIndex: 0, paraIndex: 0 }] } },
+    ]);
+    const editor = new DocumentEditor(doc);
+    expect(describeBlocks(editor)).toEqual(['paragraph:첫 문단', 'paragraph:지울 문단', 'paragraph:글상자 문단']);
+    expect(listFields(doc)).toEqual([]);
+
+    editor.edit(remove(editor, 'b2'), editor.depth);
+
+    expect(describeBlocks(editor)).toEqual(['paragraph:첫 문단', 'paragraph:글상자 문단']);
+    expect(() => editor.edit(remove(editor, 'b2'), editor.depth)).toThrow(
+      'b2: 문단에 블록이 아닌 개체(사각형)가 있어 같이 사라지므로 지울 수 없습니다.',
+    );
+  });
+
+  it('표와 글상자 안 누름틀이 든 문단: 누름틀은 표 안이 아니라 표만 지울 수 없다고 알리고, 값도 바꾸지 않는다 (#42)', () => {
+    const doc = createBlankDocument();
+    doc.insertText(S, 0, 0, '첫 문단');
+    doc.splitParagraph(S, 0, 4);
+    doc.createTable(S, 1, 0, 1, 1); // 표 = 컨트롤 0
+    doc.createShapeControl(
+      JSON.stringify({ sectionIdx: S, paraIdx: 1, charOffset: 1, width: 20000, height: 4000, horzOffset: 0, vertOffset: 0, treatAsChar: true, textWrap: 'Square' }),
+    ); // 글상자 = 컨트롤 1
+    doc.setTextBoxAt(1, 1, true);
+    doc.insertClickHereFieldInCell(S, 1, 1, 0, 0, 0, true, '입력', '', '상자 누름틀', true);
+    const editor = new DocumentEditor(doc);
+    expect(editor.blocks.filter((block) => block.paragraph === 1).map((block) => (block.kind === 'field' ? `field:${block.inTable}` : block.kind))).toEqual([
+      'table',
+      'field:false',
+    ]);
+    const table = tableId(editor);
+
+    expect(() => editor.edit(remove(editor, table), editor.depth)).toThrow(
+      `${table}: 누름틀이 든 문단에서는 표만 지울 수 없습니다(표만 지우면 누름틀이 망가집니다). 표 밖에 누름틀이 있는 문단이라 문단째 지울 수도 없으므로 이 표는 지울 수 없습니다.`,
+    );
+    const [field] = listFields(doc);
+    if (field === undefined) throw new Error('누름틀이 없다');
+    // 값이 빈 누름틀도(setFieldValue 로 넣는 길) 거부한다
+    expect(() => replaceFieldText(doc, field.fieldId, '값')).toThrow('글상자 안 누름틀 상자 누름틀 은 아직 바꿀 수 없습니다.');
+    expect(listFields(doc)[0]?.value).toBe('');
   });
 
   it('지운 뒤에도 편집으로 비운 문단은 새 위치에서 빈 블록으로 남는다', () => {

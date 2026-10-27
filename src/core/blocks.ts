@@ -1,16 +1,15 @@
 // 문서를 Claude 에게 보여줄 블록(본문 문단·표·누름틀) 목록으로 바꾼다. rhwp 공개 API 만 쓴다.
 import type { HwpDocument } from '@rhwp/core';
 import { z } from 'zod';
-import { BODY_LIST, bodyParagraphLocator } from './body-paragraphs.ts';
+import { bodyControlsAt } from './body-paragraphs.ts';
+import { fieldTableIndex, listFields } from './fields.ts';
+import { positionKey as paragraphKey } from './paragraph-changes.ts';
 import { parseJson } from './json.ts';
 import type { Block, FieldBlock, ParagraphBlock, TableBlock } from './block-schema.ts';
 
 export type { Block, FieldBlock, ParagraphBlock, TableBlock, TableCell } from './block-schema.ts';
 
 
-const controlsSchema = z.array(
-  z.object({ ctrlId: z.string(), list: z.number(), para: z.number(), controlIndex: z.number() }),
-);
 const pageOfPositionSchema = z.object({ page: z.number() });
 const tableDimensionsSchema = z.object({ rowCount: z.number(), colCount: z.number(), cellCount: z.number() });
 const cellInfoSchema = z.object({ row: z.number(), col: z.number(), rowSpan: z.number(), colSpan: z.number() });
@@ -26,20 +25,6 @@ const textLayoutSchema = z.object({
     }),
   ),
 });
-const fieldListSchema = z.array(
-  z.object({
-    fieldType: z.string(),
-    name: z.string(),
-    guide: z.string(),
-    value: z.string(),
-    location: z.object({
-      sectionIndex: z.number(),
-      paraIndex: z.number(),
-      path: z.array(z.unknown()).optional(),
-    }),
-  }),
-);
-
 function paragraphText(doc: HwpDocument, section: number, paragraph: number): string {
   return doc.getTextRange(section, paragraph, 0, doc.getParagraphLength(section, paragraph));
 }
@@ -48,7 +33,8 @@ function pageOf(doc: HwpDocument, section: number, paragraph: number): number {
   return parseJson(pageOfPositionSchema, doc.getPageOfPosition(section, paragraph)).page + 1;
 }
 
-const positionKey = (section: number, paragraph: number) => `${section}:${paragraph}`;
+// bodyControlsAt 의 키와 같아야 한다
+const positionKey = (section: number, paragraph: number) => paragraphKey({ section, paragraph });
 
 export type LayoutRun = z.infer<typeof textLayoutSchema>['runs'][number];
 
@@ -176,23 +162,19 @@ function readTable(doc: HwpDocument, section: number, paragraph: number, control
 }
 
 // 본문(list 0)의 표만 블록이다. 그 밖의 list 는 표 칸·글상자 안이다(표 안 표는 바깥 표 블록에 속한다).
-// getControls 의 para 는 문서 전체 문단 번호라 bodyParagraphLocator 로 (구역, 문단)으로 바꾼다
+// getControls 의 para 는 문서 전체 문단 번호라 bodyControlsAt 이 (구역, 문단)으로 바꿔 모은다
 function tablesByParagraph(doc: HwpDocument): Map<string, number[]> {
-  const locate = bodyParagraphLocator(doc);
   const tables = new Map<string, number[]>();
-  for (const control of parseJson(controlsSchema, doc.getControls())) {
-    if (control.ctrlId !== 'tbl' || control.list !== BODY_LIST) continue;
-    const { section, paragraph } = locate(control.para);
-    const key = positionKey(section, paragraph);
-    tables.set(key, [...(tables.get(key) ?? []), control.controlIndex]);
+  for (const [key, controls] of bodyControlsAt(doc)) {
+    const indexes = controls.filter(({ ctrlId }) => ctrlId === 'tbl').map(({ controlIndex }) => controlIndex);
+    if (indexes.length > 0) tables.set(key, indexes);
   }
   return tables;
 }
 
 function fieldsByParagraph(doc: HwpDocument): Map<string, FieldBlock[]> {
   const fields = new Map<string, FieldBlock[]>();
-  for (const field of parseJson(fieldListSchema, doc.getFieldList())) {
-    if (field.fieldType !== 'clickhere') continue;
+  for (const field of listFields(doc)) {
     const { sectionIndex: section, paraIndex: paragraph, path } = field.location;
     const key = positionKey(section, paragraph);
     const block: FieldBlock = {
@@ -203,7 +185,8 @@ function fieldsByParagraph(doc: HwpDocument): Map<string, FieldBlock[]> {
       name: field.name,
       guide: field.guide,
       value: field.value,
-      inTable: (path?.length ?? 0) > 0,
+      // 표 칸 안만 표 안이다. 글상자 안 누름틀은 표 안이 아니다(지우기 판정과 같은 fieldTableIndex, #42)
+      inTable: fieldTableIndex(path) !== undefined,
     };
     fields.set(key, [...(fields.get(key) ?? []), block]);
   }
