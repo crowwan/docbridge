@@ -3,7 +3,7 @@
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 import { startBridge, type Bridge } from '../src/server/bridge.ts';
-import { deleteBlocks, insertParagraph, insertTable, moveBlocks, replaceText, undo } from '../src/server/edit-tools.ts';
+import { deleteBlocks, insertParagraph, insertTable, moveBlocks, replaceAll, replaceText, undo } from '../src/server/edit-tools.ts';
 import { highlight } from '../src/server/highlight-tools.ts';
 import { readBlockContents } from '../src/server/read-tools.ts';
 import { DocumentSession } from '../src/server/session.ts';
@@ -238,5 +238,22 @@ test.describe('SPEC-005 여러 자리 한 편집 화면 (서버가 내주는 뷰
     await expect(marks(page)).toHaveCount(0);
     expect(await paragraphText('b1')).toBe('가나다구청');
     expect(await paragraphText('b11')).toBe('회신 기한: 2026. 11. 14.(금)까지 참석 인원을 회신하여 주시기 바랍니다.');
+  });
+
+  test('AC-1 replace_all 로 바꾼 블록이 모두 초록 테두리로 남고, undo 한 번에 모두 돌아간다', async ({ page }) => {
+    await session.open(fixturePath('notice.hwpx'));
+    const firstPage = page.getByRole('region', { name: '1쪽' });
+
+    // "가나다" 는 b1·b6·b14 에 있다
+    const result = await replaceAll(session, { find: '가나다', text: '라마바' });
+
+    expect(result.replaced).toBe(3);
+    expect(result.changed.map(({ id }) => id)).toEqual(['b1', 'b6', 'b14']);
+    await expect(marks(page)).toHaveCount(3);
+    await firstPage.screenshot({ path: `${SCREENS}/replace-all-01-after.png` });
+
+    expect(await undo(session, 1)).toEqual({ undone: 1, edits: ['replace_all "가나다" → "라마바" (3곳)'] });
+    await expect(marks(page)).toHaveCount(0);
+    expect(await paragraphText('b14')).toBe('가나다구청장');
   });
 });

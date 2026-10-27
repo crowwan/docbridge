@@ -36,7 +36,7 @@ npm run build          # 서버(tsc → dist/server) + 뷰어(vite → dist/view
 npm start              # 빌드 결과 실행: MCP 서버(stdio) + 뷰어 서버(7790, 사용 중이면 7799 까지 다음 포트).
                        # = node dist/server/index.js. DOCBRIDGE_PORT 로 시작 포트 변경
 npm run typecheck
-npm test               # Vitest: 블록 추출·블록 id·글자 단위·하이라이트 계산·note 자리·요청/응답·open_document·읽기·하이라이트 도구(가짜/rhwp 테스트 뷰어)·편집 기술 검증·편집 공용 경로·replace_text·insert_paragraph·delete_blocks·move_blocks·undo·insert_table·저장(경로 규칙·검증·새로고침)·스타일(styles.ts·list_styles·set_style·insert_paragraph style)·새 문서 만들기(create_document·새 문서 저장·새로고침)·새 문서 만들기 기술 검증(빈 문서·표·양식 비우기)·
+npm test               # Vitest: 블록 추출·블록 id·글자 단위·하이라이트 계산·note 자리·요청/응답·open_document·읽기·하이라이트 도구(가짜/rhwp 테스트 뷰어)·편집 기술 검증·편집 공용 경로·replace_text·replace_all·insert_paragraph·delete_blocks·move_blocks·undo·insert_table·저장(경로 규칙·검증·새로고침)·스타일(styles.ts·list_styles·set_style·insert_paragraph style)·새 문서 만들기(create_document·새 문서 저장·새로고침)·새 문서 만들기 기술 검증(빈 문서·표·양식 비우기)·
                        # fixture 별 get_outline 기대 JSON(tests/outline/, rhwp 회귀 — 바꿀 때 -u)·서버 통합 (CI)
 npm run e2e            # 빌드 후 Playwright: 렌더링·하이라이트·측정·문서 열기·토큰 거부·읽기 도구·하이라이트 도구·편집 표시(표 넣기 포함)·스타일 바꾸기 표시·저장과 새로고침 확인 창·새 문서 만들기(빈 문서·양식·확인 창) (로컬 전용, CI 에 없음)
 node scripts/make-fixtures.ts   # fixtures/ 의 생성 문서 다시 만들기
@@ -57,14 +57,14 @@ src/
   server/      MCP 서버 진입점(index.ts), 도구 등록(mcp.ts), 문서 세션(session.ts: 문서 자리(연 파일 / 저장 전 새 문서)·마지막 파일·id 표·편집 기록·뷰어 요청과 편집 공용 경로, create = create_document),
                읽기 도구(read-tools.ts: 뷰어 요청 + id 붙이기, reading.ts: 개요·읽기 결과와 500블록·20,000자 자르기),
                하이라이트 도구(highlight-tools.ts: 대상 id → id 표 위치로 바꿔 뷰어에 요청),
-               편집 도구(edit-tools.ts: replace_text·insert_paragraph·insert_table·delete_blocks·move_blocks·undo → session.edit/undo 편집 공용 경로), 스타일 도구(style-tools.ts: list_styles·set_style, 스타일 목록 항목 styleItems), 옮기기 계획(move-plan.ts: id 표로 이어짐·기준 등 거부 판정과 옮길 문단 범위), 편집 기록(edit-log.ts: 되돌리기 20칸 id 표 사본·저장하지 않은 편집 수),
+               편집 도구(edit-tools.ts: replace_text·replace_all(서버가 일치를 구해 replace_text 여러 자리 편집으로)·insert_paragraph·insert_table·delete_blocks·move_blocks·undo → session.edit/undo 편집 공용 경로), 스타일 도구(style-tools.ts: list_styles·set_style, 스타일 목록 항목 styleItems), 옮기기 계획(move-plan.ts: id 표로 이어짐·기준 등 거부 판정과 옮길 문단 범위), 편집 기록(edit-log.ts: 되돌리기 20칸 id 표 사본·저장하지 않은 편집 수),
                저장(save-tool.ts: 뷰어 export_hwpx → 검증 실패면 블록 id → 쓰기 → 마지막 파일·기준 id 표,
                save-path.ts: 경로 규칙(새 문서 경로·새 문서 저장 포함)·배타적 만들기·임시 파일 → 이름 바꾸기),
                HTTP·WebSocket(bridge.ts: 토큰·포트·요청 전달), 포트 설정(port.ts), 브라우저 열기(browser.ts), stderr 로그
   shared/      서버 ↔ 뷰어 요청/응답 프로토콜(protocol.ts: 메서드별 입력·결과 스키마·요청 id·타임아웃·TextTarget), 오류 문구(errors.ts),
                파일 크기 상한(limits.ts: 열기·저장 50MB), base64(base64.ts: 뷰어·테스트 뷰어 공용)
   core/        rhwp 어댑터 — 블록 모양 zod 스키마(block-schema.ts), 블록 추출(blocks.ts), 블록 id 대응표(block-ids.ts),
-               글자 위치 단위(chars.ts: 유니코드 글자 = rhwp 글자 위치), 글자 찾기(find-text.ts),
+               글자 위치 단위(chars.ts: 유니코드 글자 = rhwp 글자 위치), 글자 찾기(find-text.ts: findReplaceable = replace_all 일치, 누름틀 값에 걸친 것 뺌), 누름틀 값 자리(field-spans.ts: 문단·칸 글자 안 누름틀 값 [start, end) 와 걸침 판정 — 서버 replace_all·뷰어 replace_text 공용),
                하이라이트 사각형(highlight-rects.ts: 줄 끝 보정), 하이라이트 대상 → 사각형(highlight-targets.ts: 요청당 한 번 도는 highlightTargets, 뷰어·테스트 뷰어 공용), note 자리(note-placement.ts: 위 → 쪽 바깥 여백 → 아래, 쪽 글자 사각형과 겹침 판정),
                편집 어댑터(edits.ts: 옮기기·첫 글자 모양 바꾸기·칸·누름틀·문단 넣기), 되돌리기(edit-history.ts: 스냅샷 20칸 + id 표 사본, 칸은 bounded-stack.ts — 서버 edit-log.ts 와 공용),
                편집 종류와 적용(edit-operations.ts: kind 판별 유니언 — 새 편집은 스키마 + applyEdit case 하나), 지우기(delete-blocks.ts: 문단째·표만·거부 판정),

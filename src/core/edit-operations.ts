@@ -5,9 +5,18 @@
 import type { HwpDocument } from '@rhwp/core';
 import { z } from 'zod';
 import { anchorsOf, blockIndexByAnchor, fieldOrdinal, tablePart } from './block-ids.ts';
-import { anchoredTargetSchema, blockAnchorSchema, type AnchoredTarget, type Block, type FieldBlock, type TableBlock } from './block-schema.ts';
+import {
+  anchoredTargetSchema,
+  blockAnchorSchema,
+  type AnchoredTarget,
+  type Block,
+  type FieldBlock,
+  type ParagraphBlock,
+  type TableBlock,
+} from './block-schema.ts';
 import { insertTableParagraph } from './create-document.ts';
 import { deleteBlocks } from './delete-blocks.ts';
+import { crossesField, fieldSpansIn, type CharRange, type TextPlace } from './field-spans.ts';
 import { isCellStep } from './fields.ts';
 import { insertParagraphNear, listFields, moveParagraphs, replaceCellText, replaceFieldText, replaceParagraphText } from './edits.ts';
 import { noParagraphChanges, positionKey, TEXT_PART, type ParagraphChanges, type ParagraphPosition } from './paragraph-changes.ts';
@@ -19,12 +28,15 @@ export type { ParagraphPosition } from './paragraph-changes.ts';
 /** 한 편집으로 바꾸는 자리 상한(SPEC-005) */
 export const MAX_REPLACE_TARGETS = 500;
 
-export const tooManyTargetsMessage = (count: number) =>
-  `바꿀 자리가 ${count} 곳이라 너무 많습니다(${MAX_REPLACE_TARGETS} 까지). 여러 번으로 나눠 주세요.`;
+/** 상한 문구 끝 문장: replace_text 는 여러 번으로, replace_all 은 ids 로 나눈다 */
+export const SPLIT_TARGETS = '여러 번으로 나눠 주세요.';
+
+export const tooManyTargetsMessage = (count: number, split = SPLIT_TARGETS) =>
+  `바꿀 자리가 ${count} 곳이라 너무 많습니다(${MAX_REPLACE_TARGETS} 까지). ${split}`;
 
 /** 바꿀 자리 수가 상한을 넘으면 던진다. 서버는 뷰어에 보내기 전에, 뷰어는 적용하기 전에 같은 것으로 거부한다 */
-export function assertTargetCount(count: number): void {
-  if (count > MAX_REPLACE_TARGETS) throw new Error(tooManyTargetsMessage(count));
+export function assertTargetCount(count: number, split = SPLIT_TARGETS): void {
+  if (count > MAX_REPLACE_TARGETS) throw new Error(tooManyTargetsMessage(count, split));
 }
 
 /**
@@ -153,7 +165,28 @@ interface ReplaceSpot {
 /** 블록 종류마다 정하는 범위와 적용 */
 type SpotRange = Pick<ReplaceSpot, 'start' | 'end' | 'apply'>;
 
-function tableSpot(block: TableBlock, target: AnchoredTarget): SpotRange & { cellIndex: number } {
+export const crossesFieldMessage = (target: AnchoredTarget, start: number, end: number) =>
+  `바꿀 자리가 누름틀 값에 걸칩니다: ${targetLabel(target)} ${start}~${end}. 누름틀 값은 누름틀 블록 id 로 바꾸세요.`;
+
+/**
+ * 문단·칸 글자 자리가 그 안 누름틀 값에 걸치면 던진다(PR #67 리뷰). 걸친 채 바꾸면 누름틀이 망가지고,
+ * 같은 편집의 누름틀 값 자리가 바뀐 값에 편집 전 위치로 적용된다. 걸치지 않으면 문단 글자를 먼저 바꿔도 값 안 위치는 그대로다
+ */
+function assertOutsideFields(blocks: Block[], place: TextPlace, target: AnchoredTarget, { start, end }: CharRange): void {
+  if (fieldSpansIn(blocks, place).some((field) => crossesField({ start, end }, field))) {
+    throw new Error(crossesFieldMessage(target, start, end));
+  }
+}
+
+function paragraphSpot(blocks: Block[], block: ParagraphBlock, target: AnchoredTarget): SpotRange {
+  if (target.cell !== undefined) throw new Error(`${target.id}: 표 블록이 아니라 cell 을 줄 수 없습니다.`);
+  const { section, paragraph } = block;
+  const { start, end } = spanIn(target, block.text, EDIT_SPAN);
+  assertOutsideFields(blocks, { section, paragraph }, target, { start, end });
+  return { start, end, apply: (current, text) => replaceParagraphText(current, section, paragraph, text, start, end) };
+}
+
+function tableSpot(blocks: Block[], block: TableBlock, target: AnchoredTarget): SpotRange & { cellIndex: number } {
   if (target.cell === undefined) throw new Error(`${target.id}: 표 블록은 cell 로 바꿀 칸을 고르세요.`);
   const { row, col } = target.cell;
   const cellIndex = block.cells.findIndex((cell) => cell.row === row && cell.col === col);
@@ -162,9 +195,11 @@ function tableSpot(block: TableBlock, target: AnchoredTarget): SpotRange & { cel
       `${target.id}: 표에 없는 칸입니다(row ${row}, col ${col}). 이 표는 ${block.rowCount}행 ${block.colCount}열이고, 합친 칸은 왼쪽 위 칸 좌표로 고릅니다(read_blocks 의 cells).`,
     );
   }
+  const { section, paragraph, controlIndex } = block;
   const { start, end } = spanIn(target, block.cells[cellIndex]?.text ?? '', EDIT_SPAN);
-  const address = { section: block.section, paragraph: block.paragraph, controlIndex: block.controlIndex, cellIndex };
-  return { cellIndex, start, end, apply: (doc, text) => replaceCellText(doc, address, text, start, end) };
+  assertOutsideFields(blocks, { section, paragraph, cell: { controlIndex, row, col } }, target, { start, end });
+  const address = { section, paragraph, controlIndex, cellIndex };
+  return { cellIndex, start, end, apply: (current, text) => replaceCellText(current, address, text, start, end) };
 }
 
 function fieldSpot(doc: HwpDocument, block: FieldBlock, target: AnchoredTarget): SpotRange {
@@ -181,7 +216,8 @@ function fieldSpot(doc: HwpDocument, block: FieldBlock, target: AnchoredTarget):
     throw new Error(`${target.id}: 표 안 표나 글상자에 든 누름틀은 아직 바꿀 수 없습니다.`);
   }
   const { start, end } = spanIn(target, block.value, EDIT_SPAN);
-  return { start, end, apply: (doc, text) => replaceFieldText(doc, field.fieldId, text, start, end) };
+  // 적용 때 누름틀 위치는 fieldId 로 다시 읽는다(같은 편집의 문단 글자 자리가 먼저 바뀌어 밀렸을 수 있다)
+  return { start, end, apply: (current, text) => replaceFieldText(current, field.fieldId, text, start, end) };
 }
 
 /** 대상 하나를 편집 전 블록으로 검사해 바꿀 자리로 만든다. 틀리면 던진다(문서는 아직 그대로) */
@@ -190,18 +226,10 @@ function replaceSpot(doc: HwpDocument, blocks: Block[], target: AnchoredTarget, 
   const blockKey = `${target.anchor.section}:${target.anchor.paragraph}:${target.anchor.part}`;
   const spot = (() => {
     switch (block.kind) {
-      case 'paragraph': {
-        if (target.cell !== undefined) throw new Error(`${target.id}: 표 블록이 아니라 cell 을 줄 수 없습니다.`);
-        const { start, end } = spanIn(target, block.text, EDIT_SPAN);
-        return {
-          group: blockKey,
-          start,
-          end,
-          apply: (doc: HwpDocument, text: string) => replaceParagraphText(doc, block.section, block.paragraph, text, start, end),
-        };
-      }
+      case 'paragraph':
+        return { group: blockKey, ...paragraphSpot(blocks, block, target) };
       case 'table': {
-        const { cellIndex, ...rest } = tableSpot(block, target);
+        const { cellIndex, ...rest } = tableSpot(blocks, block, target);
         return { group: `${blockKey}#${cellIndex}`, ...rest };
       }
       case 'field':

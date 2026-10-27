@@ -5,13 +5,15 @@ import { assertTableSpec, type TableSpec } from '../core/create-document.ts';
 import { assertDeletable } from '../core/delete-blocks.ts';
 import { UNDO_LIMIT } from '../core/edit-history.ts';
 import { assertTargetCount } from '../core/edit-operations.ts';
+import type { Block } from '../core/block-schema.ts';
+import { findReplaceable } from '../core/find-text.ts';
 import { targetLabel } from '../core/text-targets.ts';
 import type { TextTarget } from '../shared/protocol.ts';
 import { anchored, anchoredTarget } from './highlight-tools.ts';
 import { planMove, type MovePlan } from './move-plan.ts';
 import { labeledBlocks } from './read-tools.ts';
 import { outlineItem, preview } from './reading.ts';
-import type { DocumentSession, EditedBlock } from './session.ts';
+import { NO_DOCUMENT, type DocumentSession, type EditedBlock } from './session.ts';
 
 export const NOTHING_TO_UNDO = '되돌릴 편집이 없습니다.';
 
@@ -87,6 +89,54 @@ export async function replaceText(session: DocumentSession, input: TextTarget | 
   }));
   const cells = editedCells(targets);
   return {
+    changed: changed.flatMap((edited) => changedItem(edited, cells)),
+    ...(unmarked.length === 0 ? {} : { warnings: unmarked.map(unmarkedMessage) }),
+  };
+}
+
+export const notFoundMessage = (find: string) => `'${find}' 를 찾지 못했습니다.`;
+export const REPLACE_ALL_SPLIT = 'ids 로 범위를 나눠 주세요.';
+export const REPLACE_ALL_STALE = '일치를 찾은 뒤 문서가 바뀌어 바꾸지 않았습니다. replace_all 을 다시 불러 주세요.';
+
+export interface ReplaceAllResult extends EditResult {
+  /** 바꾼 자리 수 */
+  replaced: number;
+}
+
+/**
+ * replace_all(SPEC-005): 문단·표 칸에서 find 를 모두 찾아(ids 를 주면 그 블록 안만) text 로 바꾼다. 편집 하나(undo 한 번).
+ * 일치는 서버가 지금 블록으로 구해(누름틀 값에 걸친 일치는 뺀다, core/find-text.ts findReplaceable) replace_text 여러 자리 편집으로 보낸다.
+ * 일치 0개·상한 넘음·없는 id 는 뷰어에 편집을 보내기 전에 거부한다(undo 칸을 쓰지 않는다)
+ */
+export async function replaceAll(
+  session: DocumentSession,
+  { find, text, ids }: { find: string; text: string; ids?: string[] | undefined },
+): Promise<ReplaceAllResult> {
+  const blocks: Block[] = await session.requestViewer('get_blocks', {});
+  const document = session.document;
+  if (document === undefined) throw new Error(NO_DOCUMENT);
+  const state = document.edits.state;
+  // 없는 id 는 일치 0개보다 먼저 알린다
+  if (ids !== undefined) anchored(document.ids, ids.map((id) => ({ id })));
+  const scope = ids === undefined ? undefined : new Set(ids);
+  const targets = findReplaceable(blocks, find).flatMap(({ block, cell, start, end }): TextTarget[] => {
+    const id = document.ids.idOf(block);
+    if (id === undefined || (scope !== undefined && !scope.has(id))) return [];
+    return [{ id, ...(cell === undefined ? {} : { cell }), start, end }];
+  });
+  if (targets.length === 0) throw new Error(notFoundMessage(find));
+  assertTargetCount(targets.length, REPLACE_ALL_SPLIT);
+  const { changed, unmarked } = await session.edit((current) => {
+    // 블록을 읽은 뒤 다른 편집이 끼었으면 위치가 맞지 않는다(같은 상태 번호면 같은 문서)
+    if (current !== document || current.edits.state !== state) throw new Error(REPLACE_ALL_STALE);
+    return {
+      label: `replace_all "${find}" → "${text}" (${targets.length}곳)`,
+      operation: { kind: 'replace_text', targets: anchored(current.ids, targets), text },
+    };
+  });
+  const cells = editedCells(targets);
+  return {
+    replaced: targets.length,
     changed: changed.flatMap((edited) => changedItem(edited, cells)),
     ...(unmarked.length === 0 ? {} : { warnings: unmarked.map(unmarkedMessage) }),
   };

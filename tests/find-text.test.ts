@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Block } from '../src/core/block-schema.ts';
 import { extractBlocks } from '../src/core/blocks.ts';
-import { findInBlocks } from '../src/core/find-text.ts';
+import { findInBlocks, findReplaceable } from '../src/core/find-text.ts';
 import { openFixture } from './fixtures.ts';
 
 const paragraph = (paragraphIndex: number, text: string): Block => ({
@@ -90,5 +90,50 @@ describe('SPEC-001 글자 찾기 (find_text)', () => {
 
   it('일치가 없으면 빈 목록을 돌려준다', () => {
     expect(findInBlocks(extractBlocks(openFixture('notice.hwpx')), '없는 낱말')).toEqual([]);
+  });
+});
+
+describe('SPEC-005 바꿀 일치 찾기 (replace_all)', () => {
+  const field = (span: { start: number; end: number; cell?: { controlIndex: number; row: number; col: number } }): Block => ({
+    kind: 'field',
+    section: 0,
+    paragraph: 0,
+    page: 1,
+    name: '수신',
+    guide: '받는 곳',
+    value: '각 동 주민센터',
+    inTable: span.cell !== undefined,
+    span,
+  });
+  const table = (text: string): Block => ({
+    kind: 'table',
+    section: 0,
+    paragraph: 0,
+    controlIndex: 0,
+    page: 1,
+    rowCount: 1,
+    colCount: 2,
+    cells: [
+      { row: 0, col: 0, text, rowLabel: text },
+      { row: 0, col: 1, text, rowLabel: text },
+    ],
+  });
+
+  it('누름틀 값에 걸친 일치는 빼고 문단·칸 글자의 일치만 준다', () => {
+    // "주민센터 수신 각 동 주민센터" 의 뒤 "각 동 주민센터"(8~16)가 누름틀 값
+    const text = '주민센터 수신 각 동 주민센터';
+    const matches = findReplaceable([paragraph(0, text), field({ start: 8, end: 16 })], '주민센터');
+    expect(matches.map(({ start, end }) => [start, end])).toEqual([[0, 4]]);
+    // 값 앞에서 값 안으로 걸친 일치도 뺀다
+    expect(findReplaceable([paragraph(0, text), field({ start: 8, end: 16 })], '수신 각').map(({ start }) => start)).toEqual([]);
+  });
+
+  it('표 칸 안 누름틀은 그 칸의 일치만 뺀다', () => {
+    const blocks = [table('회신 회신'), field({ cell: { controlIndex: 0, row: 0, col: 1 }, start: 3, end: 5 })];
+    expect(findReplaceable(blocks, '회신').map(({ cell, start }) => [cell?.col, start])).toEqual([
+      [0, 0],
+      [0, 3],
+      [1, 0],
+    ]);
   });
 });
