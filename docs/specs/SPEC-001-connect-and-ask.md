@@ -1,11 +1,11 @@
 ---
 id: SPEC-001
 title: 연결과 묻기
-status: in-progress    # draft | approved | in-progress | done | dropped
+status: done           # draft | approved | in-progress | done | dropped
 milestone: v0.1
 issue: "#3"
 prototype:
-updated: 2026-10-26
+updated: 2026-10-27
 ---
 
 # SPEC-001 연결과 묻기
@@ -179,3 +179,4 @@ GO 기준: 5개 문서 모두 렌더링되고, 하이라이트가 글자 위에 
 | 2026-10-26 | 하이라이트(#7): `highlight` 결과·note 길이·대상별 칠하는 자리·대상 오류 문구, 하이라이트 색·note 모양 결정(열린 질문 닫음, design.md), 새 문서·새로고침 때 비움, 글자 위치 단위를 유니코드 글자로 통일(find_text·read_blocks·get_outline 포함), 빈 문단이 낀 범위 보정 |
 | 2026-10-26 | PR #14 리뷰: `highlight` 스크롤은 준 순서의 첫 대상으로, `pages` 는 걸친 모든 쪽, `warnings`(빈 누름틀 안내문 자리를 못 찾을 때), note 길이는 앞뒤 공백을 뗀 유니코드 글자, 글상자 안 누름틀 오류 |
 | 2026-10-27 | AC-11 수동 QA 확인 (사용자: Desktop·Cowork, 맥 한컴 뷰어) |
+| 2026-10-27 | v0.1.0 릴리스 (#49), status done |
