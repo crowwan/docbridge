@@ -15,7 +15,7 @@
 ## 현재 상태
 
 - 마일스톤: v0.2 (v0.1.0 릴리스 2026-10-27)
-- 진행 중 스펙: SPEC-001·002 done(v0.1.0), SPEC-003 새 문서 만들기 (in-progress, #34), SPEC-004 설치와 배포 (draft)
+- 진행 중 스펙: SPEC-001·002 done(v0.1.0), SPEC-003 새 문서 만들기 (in-progress, #34), SPEC-004 설치와 배포 (draft), SPEC-005 여러 자리 한 번에 바꾸기 (draft)
 - Projects 보드: #6 (https://github.com/users/crowwan/projects/6)
 
 ## 스택
