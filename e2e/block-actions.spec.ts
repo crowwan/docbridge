@@ -5,18 +5,18 @@ import { expect, test, type Page } from '@playwright/test';
 import { startBridge, type Bridge } from '../src/server/bridge.ts';
 import { clearHighlight, highlight } from '../src/server/highlight-tools.ts';
 import { getOutline } from '../src/server/read-tools.ts';
-import { DocumentSession } from '../src/server/session.ts';
+import { DocumentSessions } from '../src/server/documents.ts';
 
 const viewerDir = fileURLToPath(new URL('../dist/viewer/', import.meta.url));
 const fixturePath = (name: string) => fileURLToPath(new URL(`../fixtures/${name}`, import.meta.url));
 const SCREENS = 'test-results/screens';
 
 let bridge: Bridge;
-let session: DocumentSession;
+let sessions: DocumentSessions;
 
 test.beforeEach(async ({ page }) => {
   bridge = await startBridge({ port: 0, viewerDir });
-  session = new DocumentSession(bridge, { openBrowser: (url) => void page.goto(url) });
+  sessions = new DocumentSessions(bridge, { openBrowser: (url) => void page.goto(url) });
 });
 
 test.afterEach(async () => {
@@ -32,10 +32,10 @@ interface Box {
 
 /** 블록 자리(첫 사각형)의 화면 좌표 */
 async function boxOf(page: Page, id: string): Promise<Box> {
-  await highlight(session, [{ id }]);
+  await highlight(sessions.get(), [{ id }]);
   const box = await page.getByTestId('highlight-0').boundingBox();
   if (box === null) throw new Error(`${id} 자리가 없다`);
-  await clearHighlight(session);
+  await clearHighlight(sessions.get());
   return box;
 }
 
@@ -43,7 +43,7 @@ const center = ({ x, y, width, height }: Box) => ({ x: x + width / 2, y: y + hei
 
 /** 개요의 "id 번호" 차례 */
 async function outline(): Promise<string[]> {
-  return (await getOutline(session)).blocks.map(({ id, number }) => (number === undefined ? id : `${id} ${number}`));
+  return (await getOutline(sessions.get())).blocks.map(({ id, number }) => (number === undefined ? id : `${id} ${number}`));
 }
 
 const menu = (page: Page) => page.getByRole('menu', { name: '블록' });
@@ -58,7 +58,7 @@ async function rightClick(page: Page, id: string): Promise<void> {
 
 test.describe('SPEC-006 끌어 옮기기와 오른쪽 클릭 메뉴 (서버가 내주는 뷰어)', () => {
   test('AC-4 문단을 끌어 놓으면 옮겨지고 번호가 다시 매겨진다. 끄는 동안 놓일 자리에 가로선이 보인다', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
+    await sessions.open(fixturePath('notice.hwpx'));
     const from = center(await boxOf(page, 'b11'));
     const target = await boxOf(page, 'b6');
 
@@ -73,7 +73,7 @@ test.describe('SPEC-006 끌어 옮기기와 오른쪽 클릭 메뉴 (서버가 �
     await firstPage(page).screenshot({ path: `${SCREENS}/block-01-drag-line.png` });
     await page.mouse.up();
 
-    await expect.poll(() => session.editCount).toBe(1);
+    await expect.poll(() => sessions.editCount).toBe(1);
     await expect(page.getByTestId('drop-line')).toHaveCount(0);
     expect((await outline()).slice(5, 8)).toEqual(['b11 1.', 'b6 2.', 'b7 3.']);
     await expect(page.getByTestId('edit-mark-0')).toBeVisible();
@@ -81,7 +81,7 @@ test.describe('SPEC-006 끌어 옮기기와 오른쪽 클릭 메뉴 (서버가 �
   });
 
   test('끄는 동안 Esc 면 놓아도 바뀌지 않고, 제자리(바로 앞·뒤)에 놓으면 편집이 없다', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
+    await sessions.open(fixturePath('notice.hwpx'));
     const before = await outline();
     const from = center(await boxOf(page, 'b11'));
     const target = await boxOf(page, 'b6');
@@ -102,12 +102,12 @@ test.describe('SPEC-006 끌어 옮기기와 오른쪽 클릭 메뉴 (서버가 �
     await page.mouse.up();
 
     await page.getByRole('heading', { name: 'docbridge' }).click();
-    expect(session.editCount).toBe(0);
+    expect(sessions.editCount).toBe(0);
     expect(await outline()).toEqual(before);
   });
 
   test('AC-5 오른쪽 클릭 메뉴로 지우기', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
+    await sessions.open(fixturePath('notice.hwpx'));
 
     await rightClick(page, 'b8');
     await expect(item(page, '지우기')).toBeVisible();
@@ -115,7 +115,7 @@ test.describe('SPEC-006 끌어 옮기기와 오른쪽 클릭 메뉴 (서버가 �
     await item(page, '지우기').click();
 
     await expect(menu(page)).toHaveCount(0);
-    await expect.poll(() => session.editCount).toBe(1);
+    await expect.poll(() => sessions.editCount).toBe(1);
     const after = await outline();
     expect(after.some((entry) => entry.startsWith('b8'))).toBe(false);
     // "나. 교육 내용" 이 "가." 로 다시 매겨진다
@@ -123,21 +123,21 @@ test.describe('SPEC-006 끌어 옮기기와 오른쪽 클릭 메뉴 (서버가 �
   });
 
   test('AC-5 오른쪽 클릭 메뉴로 위로·아래로(앞·뒤 블록 기준 move_blocks)', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
+    await sessions.open(fixturePath('notice.hwpx'));
 
     await rightClick(page, 'b10');
     await item(page, '위로').click();
-    await expect.poll(() => session.editCount).toBe(1);
+    await expect.poll(() => sessions.editCount).toBe(1);
     expect((await outline()).slice(7, 10)).toEqual(['b8 가.', 'b10 나.', 'b9 다.']);
 
     await rightClick(page, 'b8');
     await item(page, '아래로').click();
-    await expect.poll(() => session.editCount).toBe(2);
+    await expect.poll(() => sessions.editCount).toBe(2);
     expect((await outline()).slice(7, 10)).toEqual(['b10 가.', 'b8 나.', 'b9 다.']);
   });
 
   test('AC-5 메뉴는 키보드로 연다(Shift+F10·메뉴 키) — 화살표로 고르고 Enter 로 하고 Esc 로 닫는다', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
+    await sessions.open(fixturePath('notice.hwpx'));
     const b9 = center(await boxOf(page, 'b9'));
     await page.mouse.move(b9.x, b9.y);
 
@@ -158,13 +158,13 @@ test.describe('SPEC-006 끌어 옮기기와 오른쪽 클릭 메뉴 (서버가 �
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('Enter');
 
-    await expect.poll(() => session.editCount).toBe(1);
+    await expect.poll(() => sessions.editCount).toBe(1);
     expect((await outline()).slice(7, 10)).toEqual(['b8 가.', 'b10 나.', 'b9 다.']);
   });
 
   test('AC-5 첫 블록은 위로가 꺼져 있고, 거부되는 블록(구역 첫 문단 지우기)은 문구만 3초 보이고 바뀌지 않는다', async ({ page }) => {
     await page.clock.install();
-    await session.open(fixturePath('notice.hwpx'));
+    await sessions.open(fixturePath('notice.hwpx'));
     const before = await outline();
 
     await rightClick(page, 'b1');
@@ -174,14 +174,14 @@ test.describe('SPEC-006 끌어 옮기기와 오른쪽 클릭 메뉴 (서버가 �
 
     await expect(page.getByRole('alert')).toContainText('구역 첫 문단은 지울 수 없습니다');
     await page.screenshot({ path: `${SCREENS}/block-04-rejected.png` });
-    expect(session.editCount).toBe(0);
+    expect(sessions.editCount).toBe(0);
     expect(await outline()).toEqual(before);
     await page.clock.runFor(3000);
     await expect(page.getByRole('alert')).toBeHidden();
   });
 
   test('표는 칸 위를 끌어도 표째 옮긴다', async ({ page }) => {
-    await session.open(fixturePath('notice.hwpx'));
+    await sessions.open(fixturePath('notice.hwpx'));
     const table = center(await boxOf(page, 'b12'));
     const target = await boxOf(page, 'b11');
 
@@ -190,7 +190,7 @@ test.describe('SPEC-006 끌어 옮기기와 오른쪽 클릭 메뉴 (서버가 �
     await page.mouse.move(target.x + 20, target.y + 2, { steps: 8 });
     await page.mouse.up();
 
-    await expect.poll(() => session.editCount).toBe(1);
+    await expect.poll(() => sessions.editCount).toBe(1);
     expect((await outline()).slice(10, 12)).toEqual(['b12', 'b11 3.']);
   });
 });
