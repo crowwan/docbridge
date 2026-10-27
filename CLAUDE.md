@@ -24,7 +24,7 @@
 - `any`·타입 단언(`as`) 금지(`as const` 는 허용). rhwp 가 돌려주는 JSON 문자열은 zod 스키마로 읽는다(`src/core/json.ts` parseJson). 오류 문구 꺼내기는 `src/shared/errors.ts` errorMessage
 - 상대 import 는 `.ts` 확장자까지 쓴다(Node 가 TS 를 바로 실행하고, 빌드 때 `.js` 로 바뀐다)
 - stdout 은 MCP 전용. 서버 로그는 `src/server/log.ts`(stderr)로만 쓴다
-- 포트 3000 금지: 서버 7790, 뷰어 개발 서버 7791, E2E 개발 서버 7792
+- 포트 3000 금지: 서버 7790, 뷰어 개발 서버 7791, E2E 개발 서버 7792, 데모 녹화 서버 7900
 - 조사 자료: `docs/research/`
 
 ## 실행
@@ -43,6 +43,7 @@ node scripts/make-fixtures.ts   # fixtures/ 의 생성 문서 다시 만들기
 node scripts/measure-edits.ts [문서…]   # 편집·되돌리기·HWPX 저장 검증 비용 측정 (ADR 002)
 node scripts/make-hwp-check.ts [폴더]   # 한글 프로그램 확인용 편집 HWPX (기본 ~/Downloads/docbridge-hwp-check, 레포에 넣지 않음)
 node scripts/make-create-check.ts [폴더] # 한글 프로그램 확인용 새로 만든 HWPX (기본 ~/Downloads/docbridge-create-check, ADR 003)
+npm run demo           # 빌드 후 데모 영상 녹화(scripts/demo/, 서버 포트 7900, 헤드리스 Chromium) → ~/Downloads/docbridge-demo (레포에 넣지 않음)
 ```
 
 - 처음 E2E 를 돌릴 때 `npx playwright install chromium`
@@ -79,6 +80,6 @@ src/
 tests/         Vitest (Node 에서 rhwp WASM 을 직접 띄움). outline/ = fixture 별 get_outline 기대 JSON
 e2e/           Playwright (렌더링·하이라이트·측정·서버가 내주는 뷰어·문서 열기·읽기 도구·하이라이트 도구·편집 표시·스타일 바꾸기 표시)
 fixtures/      테스트용 문서와 출처(README.md)
-scripts/       fixtures 생성, 편집 비용 측정(measure-edits.ts), 한글 확인 파일 생성(make-hwp-check.ts 편집, make-create-check.ts 새 문서)
+scripts/       fixtures 생성, 편집 비용 측정(measure-edits.ts), 한글 확인 파일 생성(make-hwp-check.ts 편집, make-create-check.ts 새 문서), 데모 영상 녹화(demo/: 채팅+뷰어 화면 demo.html, record-demo.ts)
 docs/          PRD, 스펙, ADR(decisions/), 조사 자료(research/), QA 체크리스트
 ```

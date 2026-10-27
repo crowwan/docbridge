@@ -124,6 +124,8 @@ Claude Desktop 에서는 `mcpServers.docbridge.env` 에 넣습니다.
 
 개발 명령과 폴더 구조는 [`CLAUDE.md`](CLAUDE.md), 기획과 스펙은 [`docs/`](docs/) 에 있습니다.
 
+데모 영상(열기 → 근거 표시 → 옮기기 → 바꾸기 → 저장)은 `npm run demo` 로 다시 녹화합니다. 실제 서버·뷰어를 헤드리스 Chromium 으로 녹화해 `~/Downloads/docbridge-demo/` 에 webm(ffmpeg 가 있으면 mp4 도)과 정지 화면을 남깁니다.
+
 ## 감사
 
 문서 파싱과 렌더링은 [rhwp](https://github.com/edwardkim/rhwp) (MIT) 의 `@rhwp/core` 를 씁니다.

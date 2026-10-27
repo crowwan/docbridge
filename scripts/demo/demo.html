@@ -1,0 +1,240 @@
+<!doctype html>
+<!-- 데모 영상용 화면: 왼쪽 채팅 패널(중립적인 가짜 채팅 UI) + 오른쪽 docbridge 뷰어 iframe. scripts/demo/record-demo.ts 가 연다 -->
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <title>docbridge 데모</title>
+    <!-- 뷰어 디자인 토큰을 그대로 쓴다 -->
+    <link rel="stylesheet" href="../../src/viewer/tokens.css" />
+    <style>
+      :root {
+        /* 채팅 패널 전용 값(뷰어 토큰에서 고름) */
+        --chat-width: 38%;
+        --chat-font-size: 19px;
+        --chat-small: 15px;
+        --bubble-bg: var(--bg);
+        --line: #dcdce0;
+        /* 뷰어 확대 배율. record-demo.ts 가 화면 크기에 맞춰 바꿀 수 있다 */
+        --viewer-zoom: 1.4;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+
+      body {
+        display: flex;
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--font-sans);
+        line-height: var(--text-line-height);
+      }
+
+      .chat {
+        display: flex;
+        flex-direction: column;
+        width: var(--chat-width);
+        background: var(--surface);
+        border-right: 1px solid var(--line);
+      }
+
+      .chat-header {
+        padding: var(--space-4) var(--space-8);
+        border-bottom: 1px solid var(--line);
+        font-size: var(--chat-small);
+        font-weight: 600;
+        color: var(--muted);
+      }
+
+      .messages {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-4);
+        padding: var(--space-8);
+        overflow: hidden;
+        font-size: var(--chat-font-size);
+      }
+
+      /* 오래된 말은 위로 밀려 사라진다 */
+      .messages > :first-child {
+        margin-top: auto;
+      }
+
+      .user {
+        align-self: flex-end;
+        max-width: 80%;
+        padding: var(--space-2) var(--space-4);
+        border-radius: var(--radius);
+        background: var(--bubble-bg);
+      }
+
+      .assistant {
+        align-self: stretch;
+      }
+
+      .assistant .who {
+        display: block;
+        margin-bottom: var(--space-1);
+        font-size: var(--chat-small);
+        font-weight: 600;
+        color: var(--muted);
+      }
+
+      .tool {
+        display: flex;
+        gap: var(--space-2);
+        align-items: baseline;
+        align-self: flex-start;
+        max-width: 100%;
+        padding: var(--space-1) var(--space-2);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-sm);
+        font-size: var(--chat-small);
+        color: var(--muted);
+      }
+
+      .tool > :not(.call) {
+        white-space: nowrap;
+      }
+
+      .tool .call {
+        font-family: ui-monospace, Menlo, monospace;
+        color: var(--text);
+        overflow-wrap: anywhere;
+      }
+
+      .tool .state::before {
+        content: '▸';
+      }
+
+      .tool.done .state::before {
+        content: '✓';
+        color: var(--edit-mark);
+      }
+
+      .tool .result {
+        color: var(--muted);
+      }
+
+      .composer {
+        margin: var(--space-4) var(--space-8) var(--space-8);
+        padding: var(--space-4);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        font-size: var(--chat-font-size);
+        color: var(--muted);
+      }
+
+      .viewer {
+        position: relative;
+        flex: 1;
+        overflow: hidden;
+      }
+
+      /* 뷰어를 통째로 확대한다(문서 글자·하이라이트·초록 테두리가 영상에서 잘 보이게) */
+      .viewer iframe {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: calc(100% / var(--viewer-zoom));
+        height: calc(100% / var(--viewer-zoom));
+        border: 0;
+        transform: scale(var(--viewer-zoom));
+        transform-origin: 0 0;
+      }
+    </style>
+  </head>
+  <body>
+    <section class="chat" aria-label="채팅">
+      <header class="chat-header">채팅 · docbridge 도구 연결됨</header>
+      <div class="messages" id="messages"></div>
+      <div class="composer" id="composer">메시지 입력…</div>
+    </section>
+    <section class="viewer" aria-label="문서 뷰어">
+      <iframe id="viewer" title="docbridge 뷰어"></iframe>
+    </section>
+    <script>
+      // record-demo.ts 가 page.evaluate 로 부르는 채팅 연출 API. 모든 연출은 끝나면 풀리는 Promise 를 돌려준다
+      const messages = document.getElementById('messages');
+      const composer = document.getElementById('composer');
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+      async function typeInto(element, text, msPerChar) {
+        for (const char of text) {
+          element.textContent += char;
+          await wait(msPerChar);
+        }
+      }
+
+      function add(element) {
+        messages.append(element);
+        // 넘치면 맨 위 말부터 지운다(스크롤 대신)
+        while (messages.scrollHeight > messages.clientHeight && messages.children.length > 1) messages.firstElementChild.remove();
+        return element;
+      }
+
+      window.demo = {
+        setViewer(url) {
+          document.getElementById('viewer').src = url;
+        },
+        /** 입력창에 타이핑한 뒤 보낸 말풍선으로 옮긴다 */
+        async user(text) {
+          composer.textContent = '';
+          composer.style.color = 'var(--text)';
+          await typeInto(composer, text, 80);
+          await wait(600);
+          composer.textContent = '메시지 입력…';
+          composer.style.color = '';
+          const bubble = document.createElement('div');
+          bubble.className = 'user';
+          bubble.textContent = text;
+          add(bubble);
+        },
+        /** 접힌 도구 호출 줄 */
+        toolStart(call) {
+          const row = document.createElement('div');
+          row.className = 'tool';
+          const state = document.createElement('span');
+          state.className = 'state';
+          const label = document.createElement('span');
+          label.textContent = '도구 호출';
+          const code = document.createElement('span');
+          code.className = 'call';
+          code.textContent = call;
+          row.append(state, label, code);
+          add(row);
+        },
+        toolDone(summary) {
+          const rows = messages.querySelectorAll('.tool');
+          const row = rows[rows.length - 1];
+          if (!row) return;
+          row.classList.add('done');
+          const result = document.createElement('span');
+          result.className = 'result';
+          result.textContent = `→ ${summary}`;
+          row.append(result);
+          add(row);
+        },
+        async assistant(text) {
+          const block = document.createElement('div');
+          block.className = 'assistant';
+          const who = document.createElement('span');
+          who.className = 'who';
+          who.textContent = 'Claude';
+          const body = document.createElement('span');
+          block.append(who, body);
+          add(block);
+          await typeInto(body, text, 40);
+          add(block);
+        },
+      };
+    </script>
+  </body>
+</html>
