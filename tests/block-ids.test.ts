@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BlockIdTable } from '../src/core/block-ids.ts';
+import { BlockIdTable, tablePart } from '../src/core/block-ids.ts';
 import { blockPositionSchema } from '../src/core/block-schema.ts';
 import { extractBlocks, type Block } from '../src/core/blocks.ts';
 import { openFixture } from './fixtures.ts';
@@ -127,6 +127,19 @@ describe('SPEC-001 블록 id (기술 검증)', () => {
     expect(ids.idOf({ kind: 'paragraph', section: 0, paragraph: 1 })).toBe('b1');
     expect(ids.idOf({ kind: 'table', section: 0, paragraph: 1, controlIndex: 0 })).toBe('b3');
     expect(ids.idOf({ kind: 'table', section: 0, paragraph: 2, controlIndex: 1 })).toBe('b4');
+  });
+
+  it('표를 담은 문단을 넣으면 새 id 를 그 표 블록에 주고 뒤 블록을 민다 (SPEC-003 AC-6)', () => {
+    const ids = BlockIdTable.assign([
+      { kind: 'paragraph', section: 0, paragraph: 0 },
+      { kind: 'paragraph', section: 0, paragraph: 1 },
+    ]);
+
+    const inserted = ids.paragraphInserted(0, 1, tablePart(0));
+
+    expect(ids.idOf({ kind: 'table', section: 0, paragraph: 1, controlIndex: 0 })).toBe(inserted);
+    expect(ids.idOf({ kind: 'paragraph', section: 0, paragraph: 1 })).toBeUndefined();
+    expect(ids.idOf({ kind: 'paragraph', section: 0, paragraph: 2 })).toBe('b2');
   });
 
   it('대응표를 고치지 않으면 문단을 넣은 뒤 id 가 다른 내용을 가리킨다', () => {

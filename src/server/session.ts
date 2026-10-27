@@ -82,7 +82,8 @@ function applyParagraphChanges(ids: BlockIdTable, changes: ParagraphChanges): { 
     .map(({ id }) => id);
   for (const table of [...changes.deletedTables].reverse()) ids.tableDeleted(table.section, table.paragraph, table.controlIndex);
   for (const position of [...changes.deletedParagraphs].reverse()) ids.paragraphDeleted(position.section, position.paragraph);
-  const inserted = changes.inserted.map(({ section, paragraph }) => ids.paragraphInserted(section, paragraph));
+  // 새 id 는 뷰어가 알려 준 블록에(insert_table 이 넣은 문단은 글자가 없어 표 블록에)
+  const inserted = changes.inserted.map(({ section, paragraph, part }) => ids.paragraphInserted(section, paragraph, part));
   return { inserted, deleted };
 }
 

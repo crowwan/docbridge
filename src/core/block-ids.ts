@@ -14,13 +14,16 @@ export interface BlockAnchor {
   part: string;
 }
 
+/** 표 블록 위치의 꼬리표(같은 문단 안 컨트롤 번호) */
+export const tablePart = (controlIndex: number) => `table:${controlIndex}`;
+
 function anchorOf(block: BlockPosition, partIndex: number): BlockAnchor {
   const { section, paragraph } = block;
   switch (block.kind) {
     case 'paragraph':
       return { section, paragraph, part: 'text' };
     case 'table':
-      return { section, paragraph, part: `table:${block.controlIndex}` };
+      return { section, paragraph, part: tablePart(block.controlIndex) };
     case 'field':
       return { section, paragraph, part: `field:${partIndex}` };
   }
@@ -113,13 +116,13 @@ export class BlockIdTable {
     });
   }
 
-  /** 문단을 index 자리에 넣은 뒤: 그 자리부터 뒤 문단들의 위치를 하나씩 민다. 새 문단에 새 id 를 준다 */
-  paragraphInserted(section: number, index: number): string {
+  /** 문단을 index 자리에 넣은 뒤: 그 자리부터 뒤 문단들의 위치를 하나씩 민다. 새 문단에 새 id 를 준다(part = 그 문단의 어느 블록인지 — 표를 담은 문단이면 tablePart) */
+  paragraphInserted(section: number, index: number, part = 'text'): string {
     this.shift(section, index, 1);
     this.idByKey = undefined;
     const id = `b${this.nextNumber}`;
     this.nextNumber += 1;
-    this.anchors.set(id, { section, paragraph: index, part: 'text' });
+    this.anchors.set(id, { section, paragraph: index, part });
     return id;
   }
 
@@ -145,7 +148,7 @@ export class BlockIdTable {
       if (anchor.section !== section || anchor.paragraph !== paragraph) continue;
       const control = tableControlIndex(anchor);
       if (control === controlIndex) this.anchors.delete(id);
-      else if (control !== undefined && control > controlIndex) anchor.part = `table:${control - 1}`;
+      else if (control !== undefined && control > controlIndex) anchor.part = tablePart(control - 1);
     }
     this.idByKey = undefined;
   }

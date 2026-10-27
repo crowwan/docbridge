@@ -3,7 +3,7 @@
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 import { startBridge, type Bridge } from '../src/server/bridge.ts';
-import { deleteBlocks, insertParagraph, moveBlocks, replaceText, undo } from '../src/server/edit-tools.ts';
+import { deleteBlocks, insertParagraph, insertTable, moveBlocks, replaceText, undo } from '../src/server/edit-tools.ts';
 import { highlight } from '../src/server/highlight-tools.ts';
 import { readBlockContents } from '../src/server/read-tools.ts';
 import { DocumentSession } from '../src/server/session.ts';
@@ -168,5 +168,42 @@ test.describe('SPEC-002 문단 넣기·지우기 화면 (서버가 내주는 뷰
     await expect(marks(page)).toHaveCount(0);
     expect(await paragraphText('b11')).toBe('회신 기한: 2026. 11. 14.(금)까지 참석 인원을 회신하여 주시기 바랍니다.');
     await firstPage.screenshot({ path: `${SCREENS}/move-03-after-undo.png` });
+  });
+});
+
+test.describe('SPEC-003 표 만들기 화면 (서버가 내주는 뷰어)', () => {
+  test('AC-6 insert_table 뒤 개요 문단 아래에 머리글·두 줄 칸 표가 그려지고 초록 테두리가 감싼다. 뒤 개요 번호는 그대로이고 undo 하면 사라진다', async ({
+    page,
+  }) => {
+    await session.open(fixturePath('outline-demo.hwpx'));
+    const firstPage = page.getByRole('region', { name: '1쪽' });
+    await firstPage.screenshot({ path: `${SCREENS}/table-01-before.png` });
+
+    const result = await insertTable(session, {
+      after: 'b1',
+      rows: 3,
+      cols: 2,
+      cells: [
+        ['항목', '내용'],
+        ['기간', '2026년 11월\n~ 12월'],
+        ['예산', '1억 원'],
+      ],
+      header: true,
+    });
+
+    // 바뀐 블록은 새 표 하나다(표가 바탕글 문단이라 뒤 개요 번호가 바뀌지 않는다)
+    expect(result).toEqual({ inserted: 'b47', cells: 6, changed: [{ id: 'b47', text: '항목 | 내용 | 기간 | 2026년 11월 ~ 12월 | 예산 | 1억…' }] });
+    await expect(marks(page)).toHaveCount(1);
+    const mark = await markOnFirstPage(page, 0);
+    expect(await inkBounds(page, 0, mark)).not.toBeNull();
+    const [heading] = (await readBlockContents(session, { ids: ['b4'] })).blocks;
+    expect(heading?.kind === 'paragraph' ? heading.number : undefined).toBe('가.');
+    await firstPage.screenshot({ path: `${SCREENS}/table-02-after-insert.png` });
+
+    expect(await undo(session, 1)).toEqual({ undone: 1, edits: ['insert_table after b1'] });
+
+    await expect(marks(page)).toHaveCount(0);
+    expect((await readBlockContents(session, { fromPage: 1 })).blocks.map(({ kind }) => kind)).not.toContain('table');
+    await firstPage.screenshot({ path: `${SCREENS}/table-03-after-undo.png` });
   });
 });
