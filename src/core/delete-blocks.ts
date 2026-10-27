@@ -5,8 +5,8 @@ import type { HwpDocument } from '@rhwp/core';
 import { z } from 'zod';
 import { anchorsOf, blockIndexByAnchor, fieldOrdinal, tableControlIndex, type BlockAnchor } from './block-ids.ts';
 import type { Block } from './block-schema.ts';
-import { BODY_LIST, bodyParagraphLocator } from './body-paragraphs.ts';
-import { listFields, type FieldInfo } from './edits.ts';
+import { bodyControlsAt, type BodyControl } from './body-paragraphs.ts';
+import { fieldTableIndex, listFields, type FieldInfo } from './fields.ts';
 import { parseJson } from './json.ts';
 import { noParagraphChanges, positionKey, type ParagraphChanges, type ParagraphPosition } from './paragraph-changes.ts';
 
@@ -40,33 +40,30 @@ const INLINE_CONTROLS = new Set(['bokm', 'nwno', 'atno', 'idxm']);
 const isInlineControl = (ctrlId: string) => ctrlId === '' || ctrlId.startsWith('%') || INLINE_CONTROLS.has(ctrlId);
 const TABLE_CONTROL = 'tbl';
 
-const controlListSchema = z.array(z.object({ ctrlId: z.string(), userDesc: z.string(), list: z.number(), para: z.number() }));
 const controlPositionsSchema = z.array(z.number());
-
-type ControlInfo = z.infer<typeof controlListSchema>[number];
+const SECTION_DEFINITION = 'secd';
 
 type ControlSource = Pick<HwpDocument, 'getControls' | 'getControlTextPositions' | 'getParagraphCount' | 'getSectionCount'>;
 
 /**
- * 본문 문단의 컨트롤 목록. getControls 의 본문(목록 0) para 는 문서 전체 문단 번호라 bodyParagraphLocator 로 (구역, 문단)으로 바꾼다(#41).
- * 맞춰 보지 못하면(문단 컨트롤 수가 getControlTextPositions 와 다르면) undefined
+ * 본문 문단의 컨트롤 목록. getControls 의 본문(목록 0) para 는 문서 전체 문단 번호라 bodyControlsAt 으로 (구역, 문단)에 맞춘다(#41).
+ * 맞춰 보지 못하면 undefined: 구역마다 첫 문단에 구역 정의가 없으면(문단 번호 맞추기가 어긋남) 모든 문단,
+ * 문단 컨트롤 수가 getControlTextPositions 와 다르면 그 문단
  */
-export function bodyControls(doc: ControlSource): (position: ParagraphPosition) => ControlInfo[] | undefined {
-  const locate = bodyParagraphLocator(doc);
-  const byParagraph = new Map<string, ControlInfo[]>();
-  for (const control of parseJson(controlListSchema, doc.getControls())) {
-    if (control.list !== BODY_LIST) continue;
-    const key = positionKey(locate(control.para));
-    byParagraph.set(key, [...(byParagraph.get(key) ?? []), control]);
-  }
+export function bodyControls(doc: ControlSource): (position: ParagraphPosition) => BodyControl[] | undefined {
+  const byParagraph = bodyControlsAt(doc);
+  const aligned = Array.from({ length: doc.getSectionCount() }, (_, section) =>
+    byParagraph.get(positionKey({ section, paragraph: FIRST_PARAGRAPH }))?.some(({ ctrlId }) => ctrlId === SECTION_DEFINITION),
+  ).every(Boolean);
   return (position) => {
+    if (!aligned) return undefined;
     const here = byParagraph.get(positionKey(position)) ?? [];
     const positions = parseJson(controlPositionsSchema, doc.getControlTextPositions(position.section, position.paragraph));
     return here.length === positions.length ? here : undefined;
   };
 }
 
-/** 누름틀 블록 위치 → 그 누름틀이 든 표의 컨트롤 번호(문단 직속이면 undefined). 블록 추출이 getFieldList 순서를 따른다 */
+/** 누름틀 블록 위치 → 그 누름틀이 든 표의 컨트롤 번호(문단 직속·글상자 안이면 undefined). 블록 추출이 getFieldList 순서를 따른다 */
 function fieldTableOf(fields: FieldInfo[]): (anchor: BlockAnchor) => number | undefined {
   return (anchor) => {
     const ordinal = fieldOrdinal(anchor);
@@ -74,9 +71,7 @@ function fieldTableOf(fields: FieldInfo[]): (anchor: BlockAnchor) => number | un
     const field = fields.filter(
       ({ location }) => location.sectionIndex === anchor.section && location.paraIndex === anchor.paragraph,
     )[ordinal];
-    const step = field?.location.path?.[0];
-    // 표 칸 안만 표에 든 누름틀이다(글상자 안은 칸 번호가 없다, #42)
-    return step !== undefined && 'cellIndex' in step ? step.controlIndex : undefined;
+    return fieldTableIndex(field?.location.path);
   };
 }
 
@@ -144,7 +139,7 @@ export function deleteBlocks(doc: HwpDocument, blocks: Block[], targets: DeleteT
   return changes;
 }
 
-function assertNoHiddenObjects(controls: ControlInfo[] | undefined, id: string): void {
+function assertNoHiddenObjects(controls: BodyControl[] | undefined, id: string): void {
   if (controls === undefined) throw new Error(`${id}: 문단에 든 개체를 확인하지 못해 지울 수 없습니다.`);
   const hidden = controls.filter(({ ctrlId }) => ctrlId !== TABLE_CONTROL && !isInlineControl(ctrlId));
   if (hidden.length > 0) {

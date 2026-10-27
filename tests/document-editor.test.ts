@@ -7,7 +7,7 @@ import type { Block } from '../src/core/block-schema.ts';
 import { DocumentEditor } from '../src/core/document-editor.ts';
 import { UNDO_LIMIT } from '../src/core/edit-history.ts';
 import type { EditOperation } from '../src/core/edit-operations.ts';
-import { charLook, listFields, paraShapeIdOf } from '../src/core/edits.ts';
+import { charLook, listFields, paraShapeIdOf, replaceFieldText } from '../src/core/edits.ts';
 import { blockBoxes } from '../src/core/highlight-targets.ts';
 import { createBlankDocument } from '../src/core/rhwp-node.ts';
 import { planMove, type MoveWhere } from '../src/server/move-plan.ts';
@@ -639,6 +639,33 @@ describe('SPEC-002 delete_blocks (편집 공용 경로)', () => {
     expect(() => editor.edit(remove(editor, 'b2'), editor.depth)).toThrow(
       'b2: 문단에 블록이 아닌 개체(사각형)가 있어 같이 사라지므로 지울 수 없습니다.',
     );
+  });
+
+  it('표와 글상자 안 누름틀이 든 문단: 누름틀은 표 안이 아니라 표만 지울 수 없다고 알리고, 값도 바꾸지 않는다 (#42)', () => {
+    const doc = createBlankDocument();
+    doc.insertText(S, 0, 0, '첫 문단');
+    doc.splitParagraph(S, 0, 4);
+    doc.createTable(S, 1, 0, 1, 1); // 표 = 컨트롤 0
+    doc.createShapeControl(
+      JSON.stringify({ sectionIdx: S, paraIdx: 1, charOffset: 1, width: 20000, height: 4000, horzOffset: 0, vertOffset: 0, treatAsChar: true, textWrap: 'Square' }),
+    ); // 글상자 = 컨트롤 1
+    doc.setTextBoxAt(1, 1, true);
+    doc.insertClickHereFieldInCell(S, 1, 1, 0, 0, 0, true, '입력', '', '상자 누름틀', true);
+    const editor = new DocumentEditor(doc);
+    expect(editor.blocks.filter((block) => block.paragraph === 1).map((block) => (block.kind === 'field' ? `field:${block.inTable}` : block.kind))).toEqual([
+      'table',
+      'field:false',
+    ]);
+    const table = tableId(editor);
+
+    expect(() => editor.edit(remove(editor, table), editor.depth)).toThrow(
+      `${table}: 누름틀이 든 문단에서는 표만 지울 수 없습니다(표만 지우면 누름틀이 망가집니다). 표 밖에 누름틀이 있는 문단이라 문단째 지울 수도 없으므로 이 표는 지울 수 없습니다.`,
+    );
+    const [field] = listFields(doc);
+    if (field === undefined) throw new Error('누름틀이 없다');
+    // 값이 빈 누름틀도(setFieldValue 로 넣는 길) 거부한다
+    expect(() => replaceFieldText(doc, field.fieldId, '값')).toThrow('글상자 안 누름틀 상자 누름틀 은 아직 바꿀 수 없습니다.');
+    expect(listFields(doc)[0]?.value).toBe('');
   });
 
   it('지운 뒤에도 편집으로 비운 문단은 새 위치에서 빈 블록으로 남는다', () => {

@@ -10,6 +10,12 @@ import { z } from 'zod';
 import { parseJson } from './json.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { charLength, sliceChars } from './chars.ts';
+import { isCellStep, listFields } from './fields.ts';
+
+export { listFields, type FieldInfo } from './fields.ts';
+
+// 누름틀 경로 단계 종류 → 사람이 읽는 이름(거부 문구)
+const STEP_NAMES: Record<string, string> = { textbox: '글상자' };
 
 /** 문단 하나(본문 또는 칸 안)의 글자를 넣고 지우는 손잡이 */
 interface TextSpot {
@@ -153,36 +159,6 @@ function cellOffset(lengths: number[], position: number): { paragraph: number; o
   return { paragraph: Math.max(0, lengths.length - 1), offset: lengths.at(-1) ?? 0 };
 }
 
-// getFieldList 의 location.path 한 칸. 표 칸은 칸 번호가 있고, 글상자 등 칸이 아닌 자리는 칸 번호가 없다
-// ({type:"textbox", controlIndex, paraIndex}, #42). 칸이 아닌 자리는 종류와 컨트롤 번호만 읽는다
-const cellPathStepSchema = z.object({ type: z.literal('cell'), controlIndex: z.number(), cellIndex: z.number(), paraIndex: z.number() });
-const otherPathStepSchema = z.object({ type: z.string(), controlIndex: z.number() });
-// 하이퍼링크 등 누름틀이 아닌 필드는 모양이 달라도 던지지 않게 종류만 먼저 읽고 거른다(#42)
-const fieldKindListSchema = z.array(z.looseObject({ fieldType: z.string() }));
-const clickHereListSchema = z.array(
-  z.object({
-    fieldId: z.number(),
-    fieldType: z.string(),
-    name: z.string(),
-    value: z.string(),
-    startCharIdx: z.number(),
-    endCharIdx: z.number(),
-    location: z.object({
-      sectionIndex: z.number(),
-      paraIndex: z.number(),
-      path: z.array(z.union([cellPathStepSchema, otherPathStepSchema])).optional(),
-    }),
-  }),
-);
-
-export type FieldInfo = z.infer<typeof clickHereListSchema>[number];
-
-/** 누름틀만. 표 칸 안 누름틀은 path 가 칸 번호(cellIndex)를 가진다 */
-export function listFields(doc: HwpDocument): FieldInfo[] {
-  const clickHeres = parseJson(fieldKindListSchema, doc.getFieldList()).filter((field) => field.fieldType === 'clickhere');
-  return clickHereListSchema.parse(clickHeres);
-}
-
 /**
  * 누름틀 값을 바꾼다. 값이 있으면 값 첫 글자 모양을 따른다(setFieldValue 는 값의 글자 모양을 버려서 쓰지 않는다).
  * 값이 비어 있으면 따를 글자가 없으므로 setFieldValue 로 넣는다(누름틀 앞 글자 모양).
@@ -192,6 +168,12 @@ export function replaceFieldText(doc: HwpDocument, fieldId: number, text: string
   assertSingleLine(text);
   const field = listFields(doc).find((candidate) => candidate.fieldId === fieldId);
   if (field === undefined) throw new Error(`없는 누름틀입니다(fieldId ${fieldId}).`);
+  const { sectionIndex, paraIndex, path = [] } = field.location;
+  const outside = path.find((step) => !isCellStep(step));
+  if (outside !== undefined) {
+    throw new Error(`${STEP_NAMES[outside.type] ?? outside.type} 안 누름틀 ${field.name} 은 아직 바꿀 수 없습니다.`);
+  }
+  const cells = path.filter(isCellStep).map(({ controlIndex, cellIndex, paraIndex: cellParaIndex }) => ({ controlIndex, cellIndex, cellParaIndex }));
   const length = charLength(field.value);
   const to = end ?? length;
   assertRange(start, to, length, `누름틀 ${field.name}`);
@@ -199,11 +181,6 @@ export function replaceFieldText(doc: HwpDocument, fieldId: number, text: string
     doc.setFieldValue(fieldId, text);
     return;
   }
-  const { sectionIndex, paraIndex, path = [] } = field.location;
-  const cells = path.flatMap((step) =>
-    'cellIndex' in step ? [{ controlIndex: step.controlIndex, cellIndex: step.cellIndex, cellParaIndex: step.paraIndex }] : [],
-  );
-  if (cells.length !== path.length) throw new Error(`글상자 안 누름틀 ${field.name} 은 아직 바꿀 수 없습니다.`);
   const spot = cells.length === 0 ? bodySpot(doc, sectionIndex, paraIndex) : cellSpot(doc, sectionIndex, paraIndex, cells);
   const at = field.startCharIdx;
   const appending = start === to && start === length;

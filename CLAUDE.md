@@ -70,7 +70,8 @@ src/
                문단 위치를 바꾼 편집이 실제로 한 일(paragraph-changes.ts: 넣기·지우기·옮기기(moved), 뷰어 → 서버 id 표 옮기기, relocate = 편집 전 → 뒤 문단 위치),
                편집 공용 경로(document-editor.ts: 스냅샷 → 편집 → 블록 다시 뽑기 → 바뀐 블록, 실패하면 되돌림 — 뷰어·테스트 뷰어 공용),
                HWPX 저장 검증(hwpx-export.ts: 내보내 다시 열어 블록 비교·손실 보고, exportForSave = 뷰어 export_hwpx 결과) — ADR 002,
-               본문 문단 위치(body-paragraphs.ts: getControls 등의 문서 전체 문단 번호 → 구역·문단),
+               본문 문단 위치(body-paragraphs.ts: getControls 등의 문서 전체 문단 번호 → 구역·문단, bodyControlsAt = 문단마다 본문 컨트롤),
+               누름틀 목록(fields.ts: getFieldList 스키마·표 칸 경로 판정 fieldTableIndex — 블록 추출·편집·지우기 공용),
                새 문서 만들기(create-document.ts: 문단 스타일 목록·스타일 적용·제목 스타일·표 넣기·양식 본문 비우기, #35 기술 검증) — ADR 003,
                Node 용 초기화(rhwp-node.ts)
   viewer/      브라우저 뷰어(Vite root). Canvas 렌더링 + 하이라이트·note·바뀐 블록 표시 오버레이. 디자인 토큰은 tokens.css (의도는 docs/design.md)
