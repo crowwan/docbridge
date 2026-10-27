@@ -3,6 +3,7 @@
 // 보고서(exportHwpxWithReport().contentLoss())에 손실이 있으면 경고로 돌려준다.
 import { HwpDocument } from '@rhwp/core';
 import { z } from 'zod';
+import { errorMessage } from '../shared/errors.ts';
 import type { Block } from './block-schema.ts';
 import { extractBlocks } from './blocks.ts';
 
@@ -51,20 +52,48 @@ export function differentBlocks(expected: Block[], actual: Block[]): number[] {
 export interface VerifiedExport {
   bytes: Uint8Array;
   losses: ContentLoss[];
-  /** 지금 문서 블록 순서 기준으로 다시 연 문서와 달라진 블록 자리. 비었으면 같다 */
+  /** 지금 문서 블록 순서 기준으로 다시 연 문서와 달라진 블록 자리. 비었으면 같다. 다시 열지 못하면 모든 자리 */
   different: number[];
+  /** 내보낸 바이트를 rhwp 가 다시 열지 못한 이유(AC-10: 검증 실패로 보고 파일을 쓰지 않는다) */
+  reopenError?: string;
   timings: { exportMs: number; reopenMs: number; compareMs: number };
 }
 
+/** 내보낸 바이트를 다시 여는 방법(테스트에서 실패를 흉내낼 때 바꾼다) */
+export type Reopen = (bytes: Uint8Array) => HwpDocument;
+
+const reopenWithRhwp: Reopen = (bytes) => new HwpDocument(bytes);
+
 /** 지금 문서를 HWPX 로 내보내고 다시 열어 비교한다. current 를 주면 지금 문서 블록을 다시 뽑지 않는다 */
-export function exportVerifiedHwpx(doc: HwpDocument, current: Block[] = extractBlocks(doc)): VerifiedExport {
+export function exportVerifiedHwpx(
+  doc: HwpDocument,
+  current: Block[] = extractBlocks(doc),
+  reopen: Reopen = reopenWithRhwp,
+): VerifiedExport {
   const t0 = performance.now();
   const exported = doc.exportHwpxWithReport();
-  const losses = contentLossSchema.parse(JSON.parse(exported.contentLoss())).losses;
-  const bytes = exported.takeBytes();
-  exported.free();
+  let bytes: Uint8Array;
+  let losses: ContentLoss[];
+  try {
+    losses = contentLossSchema.parse(JSON.parse(exported.contentLoss())).losses;
+    bytes = exported.takeBytes();
+  } finally {
+    exported.free();
+  }
   const t1 = performance.now();
-  const reopened = new HwpDocument(bytes);
+  let reopened: HwpDocument;
+  try {
+    reopened = reopen(bytes);
+  } catch (error) {
+    const t2 = performance.now();
+    return {
+      bytes,
+      losses,
+      different: current.map((_, i) => i),
+      reopenError: errorMessage(error),
+      timings: { exportMs: t1 - t0, reopenMs: t2 - t1, compareMs: 0 },
+    };
+  }
   const t2 = performance.now();
   try {
     const different = differentBlocks(current, extractBlocks(reopened));

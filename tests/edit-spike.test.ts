@@ -549,6 +549,16 @@ describe('SPEC-002 HWPX 저장 검증 (기술 검증)', () => {
     }
   });
 
+  it('내보낸 파일을 다시 열지 못하면 예외가 아니라 검증 실패로 돌려준다 (PR #24 리뷰)', () => {
+    const doc = openFixture('notice.hwpx');
+    const blockCount = extractBlocks(doc).length;
+    const result = exportVerifiedHwpx(doc, undefined, () => {
+      throw new Error('열 수 없음');
+    });
+    expect(result.reopenError).toBe('열 수 없음');
+    expect(result.different).toHaveLength(blockCount);
+  });
+
   it('다시 연 문서와 블록이 다르면 달라진 블록 자리를 돌려준다', () => {
     const original = extractBlocks(openFixture('notice.hwpx'));
     const edited = openFixture('notice.hwpx');
