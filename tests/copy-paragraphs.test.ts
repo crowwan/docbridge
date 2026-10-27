@@ -102,4 +102,33 @@ describe('SPEC-007 copy_blocks — 대상 문서 보정 (copyParagraphs, PR #70 
       copyParagraphs(target, sourceDoc.exportHwpx(), { section: S, start: SRC.table, end: SRC.table + 1 }, { section: S, before: 2 }),
     ).toThrow('복제 스타일 "바탕글" 의 이름을 바꾸지 못했습니다');
   });
+
+  it('도형(글상자)이 든 문단은 거부하지 않고 도형째 복사한다', () => {
+    const source = openFixture('report.hwpx');
+    const at = appendParagraph(source, '글상자 문단');
+    const created = z
+      .object({ ok: z.literal(true), paraIdx: z.number() })
+      .parse(
+        JSON.parse(
+          source.createShapeControl(
+            JSON.stringify({ sectionIdx: S, paraIdx: at, charOffset: 0, width: 8000, height: 4000, horzOffset: 0, vertOffset: 0, treatAsChar: true, textWrap: 'Square' }),
+          ),
+        ),
+      );
+    const target = openFixture('notice.hwpx');
+    // 문단의 본문 컨트롤 종류(구역 하나라 getControls 의 para = 문단 번호)
+    const controlsAt = (doc: HwpDocument, p: number) =>
+      parseJson(z.array(z.object({ ctrlId: z.string(), list: z.number(), para: z.number() })), doc.getControls()).flatMap(({ ctrlId, list, para }) =>
+        list === 0 && para === p ? [ctrlId] : [],
+      );
+    const shape = controlsAt(source, created.paraIdx);
+    expect(shape).toHaveLength(1);
+
+    const { inserted } = copied(
+      copyParagraphs(target, source.exportHwpx(), { section: S, start: created.paraIdx, end: created.paraIdx + 1 }, { section: S, before: 2 }),
+    );
+
+    expect(target.getTextRange(S, inserted.start, 0, target.getParagraphLength(S, inserted.start))).toContain('글상자 문단');
+    expect(controlsAt(target, inserted.start)).toEqual(shape);
+  });
 });
