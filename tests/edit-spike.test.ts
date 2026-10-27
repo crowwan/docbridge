@@ -371,6 +371,41 @@ describe('SPEC-002 글자 바꾸기 (기술 검증)', () => {
     expect(charShapeIdAt(doc, p, applicant.startCharIdx + 5)).toBe(boldId);
   });
 
+  it('누름틀 값 앞·뒤·가운데에 글자를 붙인다 (PR #24 리뷰)', () => {
+    const doc = openFixture('application.hwpx');
+    const applicant = listFields(doc).find((f) => f.name === '신청인');
+    if (applicant === undefined) throw new Error('신청인 누름틀이 없다');
+    replaceFieldText(doc, applicant.fieldId, '홍길동');
+    const value = () => listFields(doc).find((f) => f.fieldId === applicant.fieldId)?.value;
+
+    replaceFieldText(doc, applicant.fieldId, ' 님', 3, 3);
+    expect(value()).toBe('홍길동 님');
+    replaceFieldText(doc, applicant.fieldId, '신청인 ', 0, 0);
+    expect(value()).toBe('신청인 홍길동 님');
+    replaceFieldText(doc, applicant.fieldId, '·', 6, 6);
+    expect(value()).toBe('신청인 홍길·동 님');
+  });
+
+  it('한 글자 누름틀 값 앞·뒤에 붙여도 그 글자 모양을 따른다 (PR #24 리뷰)', () => {
+    const doc = openFixture('application.hwpx');
+    const applicant = listFields(doc).find((f) => f.name === '신청인');
+    if (applicant === undefined) throw new Error('신청인 누름틀이 없다');
+    const p = applicant.location.paraIndex;
+    replaceFieldText(doc, applicant.fieldId, '홍');
+    doc.applyCharFormat(S, p, applicant.startCharIdx, applicant.startCharIdx + 1, JSON.stringify({ bold: true }));
+    const look = charLook(doc, S, p, applicant.startCharIdx);
+    const value = () => listFields(doc).find((f) => f.fieldId === applicant.fieldId)?.value;
+
+    replaceFieldText(doc, applicant.fieldId, '길동', 1, 1);
+    expect(value()).toBe('홍길동');
+    expect(charLook(doc, S, p, applicant.startCharIdx + 2)).toBe(look);
+
+    const single = openFixture('application.hwpx');
+    replaceFieldText(single, applicant.fieldId, '동');
+    replaceFieldText(single, applicant.fieldId, '홍길', 0, 0);
+    expect(listFields(single).find((f) => f.fieldId === applicant.fieldId)?.value).toBe('홍길동');
+  });
+
   it('rhwp setFieldValue 는 값의 글자 모양을 버려서 값이 있을 때 쓰지 않는다 (근거)', () => {
     const doc = openFixture('application.hwpx');
     const applicant = listFields(doc).find((f) => f.name === '신청인');

@@ -19,6 +19,10 @@ interface TextSpot {
   length(): number;
   insert(offset: number, text: string): void;
   remove(offset: number, count: number): void;
+  /** offset 글자의 글자 속성 JSON */
+  look(offset: number): string;
+  /** [start, end) 에 글자 속성을 건다(같은 속성의 새 글자 모양 id 가 생길 수 있다) */
+  applyLook(start: number, end: number, look: string): void;
 }
 
 function bodySpot(doc: HwpDocument, section: number, paragraph: number): TextSpot {
@@ -26,6 +30,8 @@ function bodySpot(doc: HwpDocument, section: number, paragraph: number): TextSpo
     length: () => doc.getParagraphLength(section, paragraph),
     insert: (offset, text) => void doc.insertText(section, paragraph, offset, text),
     remove: (offset, count) => void doc.deleteText(section, paragraph, offset, count),
+    look: (offset) => doc.getCharPropertiesAt(section, paragraph, offset),
+    applyLook: (start, end, look) => void doc.applyCharFormat(section, paragraph, start, end, look),
   };
 }
 
@@ -42,6 +48,8 @@ function cellSpot(doc: HwpDocument, section: number, paragraph: number, path: Ce
     length: () => doc.getCellParagraphLengthByPath(section, paragraph, pathJson),
     insert: (offset, text) => void doc.insertTextInCellByPath(section, paragraph, pathJson, offset, text),
     remove: (offset, count) => void doc.deleteTextInCellByPath(section, paragraph, pathJson, offset, count),
+    look: (offset) => doc.getCellCharPropertiesAtByPath(section, paragraph, pathJson, offset),
+    applyLook: (start, end, look) => void doc.applyCharFormatInCellByPath(section, paragraph, pathJson, start, end, look),
   };
 }
 
@@ -197,7 +205,23 @@ export function replaceFieldText(doc: HwpDocument, fieldId: number, text: string
           paraIndex,
           path.map(({ controlIndex, cellIndex, paraIndex: cellParaIndex }) => ({ controlIndex, cellIndex, cellParaIndex })),
         );
-  replaceInSpot(spot, field.startCharIdx + start, field.startCharIdx + to, text);
+  const at = field.startCharIdx;
+  const appending = start === to && start === length;
+  const prepending = start === to && start === 0;
+  if ((appending || prepending) && length === 1) {
+    // 한 글자 값 앞·뒤에는 누름틀 안쪽 넣을 자리가 없다 → 값을 통째로 넣고 그 글자 모양을 속성으로 다시 건다
+    const look = spot.look(at);
+    doc.setFieldValue(fieldId, appending ? field.value + text : text + field.value);
+    spot.applyLook(at, at + length + charLength(text), look);
+  } else if (appending) {
+    // 값 끝 위치에 넣으면 누름틀 밖으로 나간다 → 마지막 두 글자를 "두 글자 + 글자" 로 바꾼다(넣는 자리가 값 안쪽)
+    replaceInSpot(spot, at + length - 2, at + length, sliceChars(field.value, length - 2) + text);
+  } else if (prepending) {
+    // 값 첫 자리도 누름틀 밖이다 → 첫 글자를 "글자 + 첫 글자" 로 바꾼다(붙인 글자는 값 첫 글자 모양)
+    replaceInSpot(spot, at, at + 1, text + sliceChars(field.value, 0, 1));
+  } else {
+    replaceInSpot(spot, at + start, at + to, text);
+  }
   const after = listFields(doc).find((candidate) => candidate.fieldId === fieldId);
   const expected = sliceChars(field.value, 0, start) + text + sliceChars(field.value, to);
   if (after?.value !== expected) {
