@@ -11,17 +11,11 @@ import { fileURLToPath } from 'node:url';
 import { HwpDocument } from '@rhwp/core';
 import { BlockIdTable } from '../src/core/block-ids.ts';
 import { extractBlocks } from '../src/core/blocks.ts';
-import {
-  applyParagraphStyle,
-  clearTemplateBody,
-  ensureTitleStyle,
-  insertTableParagraph,
-  styleIdByName,
-  type ClearedBody,
-} from '../src/core/create-document.ts';
+import { clearTemplateBody, insertTableParagraph, type ClearedBody } from '../src/core/create-document.ts';
 import { insertParagraphNear, replaceParagraphText } from '../src/core/edits.ts';
 import { exportVerifiedHwpx } from '../src/core/hwpx-export.ts';
 import { createBlankDocument, openDocumentFile } from '../src/core/rhwp-node.ts';
+import { applyParagraphStyle, ensureTitleStyle, styleIdByName } from '../src/core/styles.ts';
 import { outline } from '../src/server/reading.ts';
 
 const S = 0;
