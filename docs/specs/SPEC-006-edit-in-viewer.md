@@ -1,9 +1,9 @@
 ---
 id: SPEC-006
 title: 뷰어에서 직접 고치기
-status: draft          # draft | approved | in-progress | done | dropped
+status: in-progress        # draft | approved | in-progress | done | dropped
 milestone: v0.2
-issue:
+issue: "#57"
 prototype:
 updated: 2026-10-27
 ---
@@ -97,3 +97,5 @@ updated: 2026-10-27
 | 날짜 | 내용 |
 |---|---|
 | 2026-10-27 | 초안 (PRD 열린 질문 "직접 편집" — 문단 단위 고치기 + 옮기기·지우기로 결정) |
+| 2026-10-27 | 스펙 리뷰함에서 승인 |
+| 2026-10-27 | 이슈 분해 (#57) |
