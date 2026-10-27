@@ -6,19 +6,21 @@ import { assertDeletable } from '../core/delete-blocks.ts';
 import type { EditOperation } from '../core/edit-operations.ts';
 import { targetLabel } from '../core/text-targets.ts';
 import { USER_REQUEST_DEADLINE_MS, type UserEdit, type UserRequestMessage, type UserResult } from '../shared/protocol.ts';
+import { EditRejection, USER_REJECTION_MESSAGES } from '../shared/rejections.ts';
 import { NOTHING_TO_UNDO } from './edit-tools.ts';
 import { planMove } from './move-plan.ts';
 import type { DocumentSession, OpenedDocument } from './session.ts';
 
-export const STALE_USER_EDIT = '그사이 문서가 바뀌어 적용하지 못했습니다. 다시 고쳐 주세요.';
-export const LATE_USER_REQUEST = 'docbridge 가 앞선 작업을 처리하느라 늦어져 적용하지 않았습니다. 다시 고쳐 주세요.';
-export const UNKNOWN_VIEWER_BLOCK = '뷰어 화면의 블록을 찾지 못했습니다. 뷰어 탭을 새로고침하세요.';
+// 사람 편집 요청 자체의 거부는 Claude 에게 가지 않아 사람용 문구 그대로다
+export const STALE_USER_EDIT = USER_REJECTION_MESSAGES.stale_document(undefined);
+export const LATE_USER_REQUEST = USER_REJECTION_MESSAGES.late_request(undefined);
+export const UNKNOWN_VIEWER_BLOCK = USER_REJECTION_MESSAGES.unknown_block(undefined);
 /** 편집 기록 이름 뒤에 붙는 출처. Claude 의 undo 결과에서 사람 편집을 가린다 */
 export const USER_EDIT_MARK = ' (사용자 화면 편집)';
 
 function idAt(ids: BlockIdTable, anchor: BlockAnchor): string {
   const id = ids.idAt(anchor);
-  if (id === undefined) throw new Error(UNKNOWN_VIEWER_BLOCK);
+  if (id === undefined) throw new EditRejection('unknown_block', UNKNOWN_VIEWER_BLOCK);
   return id;
 }
 
@@ -69,8 +71,8 @@ export interface Receipt {
  * 그 뒤에 적용되면 화면 문구와 문서가 어긋난다(PR #71 리뷰)
  */
 function assertReceipt(current: OpenedDocument, received: Receipt): void {
-  if (current !== received.document) throw new Error(STALE_USER_EDIT);
-  if (Date.now() - received.at >= USER_REQUEST_DEADLINE_MS) throw new Error(LATE_USER_REQUEST);
+  if (current !== received.document) throw new EditRejection('stale_document', STALE_USER_EDIT);
+  if (Date.now() - received.at >= USER_REQUEST_DEADLINE_MS) throw new EditRejection('late_request', LATE_USER_REQUEST);
 }
 
 /**
@@ -89,7 +91,7 @@ export async function applyUserEdit(
 ): Promise<void> {
   await session.edit((document) => {
     assertReceipt(document, received);
-    if (document.edits.state !== state) throw new Error(STALE_USER_EDIT);
+    if (document.edits.state !== state) throw new EditRejection('stale_document', STALE_USER_EDIT);
     const { label, operation, notice } = prepareUserEdit(document.ids, edit);
     return { label: `${label}${USER_EDIT_MARK}`, operation, notice };
   });
@@ -101,7 +103,7 @@ export async function applyUserEdit(
  */
 export async function undoFromViewer(session: DocumentSession, received: Receipt): Promise<UserResult<'user_undo'>> {
   const undone = await session.undo(1, 'user', (document) => assertReceipt(document, received));
-  if (undone.length === 0) throw new Error(NOTHING_TO_UNDO);
+  if (undone.length === 0) throw new EditRejection('nothing_to_undo', NOTHING_TO_UNDO);
   return { undone };
 }
 

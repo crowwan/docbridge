@@ -12,10 +12,12 @@ import { blockBoxes, tableCellBoxes } from './highlight-targets.ts';
 import { parseJson } from './json.ts';
 import { relocate, TEXT_PART, type ParagraphChanges } from './paragraph-changes.ts';
 import type { UserEdit } from '../shared/protocol.ts';
+import { USER_REJECTION_MESSAGES } from '../shared/rejections.ts';
 
 // 바꾼 쪽은 대개 Claude 지만, 방금 적용한 내 편집이 응답 전에 돌아온 것일 수도 있어 주체를 적지 않는다
 export const BLOCK_CHANGED_WHILE_EDITING = '그사이 이 문단이 바뀌어 적용하지 못했습니다. 다시 고쳐 주세요.';
-export const CROSSES_FIELD_IN_VIEWER = '누름틀 값과 그 바깥 글자를 한 번에 고칠 수 없습니다. 누름틀 값은 값 위를 더블클릭해 따로 고치세요.';
+/** 서버 거부(crosses_field)의 사람용 문구와 같다 */
+export const CROSSES_FIELD_IN_VIEWER = USER_REJECTION_MESSAGES.crosses_field(undefined);
 
 /** 점이 블록 사각형 밖이어도 이만큼(쪽 px)은 그 블록으로 본다 — 바뀐 블록 테두리(--edit-mark-offset)만큼 */
 const HIT_SLOP = 2;

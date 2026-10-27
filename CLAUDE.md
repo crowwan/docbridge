@@ -65,7 +65,7 @@ src/
                저장(save-tool.ts: 뷰어 export_hwpx → 검증 실패면 블록 id → 쓰기 → 마지막 파일·기준 id 표,
                save-path.ts: 경로 규칙(새 문서 경로·새 문서 저장 포함)·배타적 만들기·임시 파일 → 이름 바꾸기),
                HTTP·WebSocket(bridge.ts: 토큰·포트, 연결마다 문서 이름(주소 &doc=, 없으면 빈 탭)·요청 추적, 요청은 그 문서의 마지막 연결로, 빈 탭 쓰기 claimViewer·빈 탭으로 돌리기 releaseViewer, 뷰어 요청 받기 serveUserRequests — 그 문서의 마지막 탭만), 포트 설정(port.ts), 브라우저 열기(browser.ts), stderr 로그
-  shared/      서버 ↔ 뷰어 요청/응답 프로토콜(protocol.ts: 메서드별 입력·결과 스키마·요청 id·타임아웃·TextTarget, 뷰어 → 서버 user_request(user_edit·user_undo)/user_response, 사람 편집 서버 마감 USER_REQUEST_DEADLINE_MS·뷰어 타임아웃 문구 userRequestTimeoutMessage), 오류 문구(errors.ts),
+  shared/      서버 ↔ 뷰어 요청/응답 프로토콜(protocol.ts: 메서드별 입력·결과 스키마·요청 id·타임아웃·TextTarget, 뷰어 → 서버 user_request(user_edit·user_undo)/user_response, 사람 편집 서버 마감 USER_REQUEST_DEADLINE_MS·뷰어 타임아웃 문구 userRequestTimeoutMessage), 오류 문구(errors.ts), 거부 코드와 사람용 문구(rejections.ts: EditRejection = Claude 용 message + code, 거부 코드 → 사람용 문구 표 — 사람 편집 거부 알림, 뷰어 응답에도 code 를 실음, #77),
                파일 크기 상한(limits.ts: 열기·저장 50MB), base64(base64.ts: 뷰어·테스트 뷰어 공용)
   core/        rhwp 어댑터 — 블록 모양 zod 스키마(block-schema.ts), 블록 추출(blocks.ts), 블록 id 대응표(block-ids.ts),
                글자 위치 단위(chars.ts: 유니코드 글자 = rhwp 글자 위치, changedRange = 입력 전후의 바뀐 범위만, 입력칸 커서로 같은 글자 이어짐 가르기),

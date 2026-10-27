@@ -7,6 +7,7 @@ import { anchorsOf, blockIndexByAnchor, fieldOrdinal, tableControlIndex, type Bl
 import type { Block } from './block-schema.ts';
 import { bodyControlsAt, type BodyControl } from './body-paragraphs.ts';
 import { fieldTableIndex, listFields, type FieldInfo } from './fields.ts';
+import { EditRejection } from '../shared/rejections.ts';
 import { parseJson } from './json.ts';
 import { noParagraphChanges, positionKey, type ParagraphChanges, type ParagraphPosition } from './paragraph-changes.ts';
 
@@ -24,13 +25,17 @@ const FIRST_PARAGRAPH = 0;
 export function assertDeletable(targets: DeleteTarget[]): void {
   const fields = targets.filter(({ anchor }) => fieldOrdinal(anchor) !== undefined).map(({ id }) => id);
   if (fields.length > 0) {
-    throw new Error(
+    throw new EditRejection(
+      'field_block',
       `누름틀 블록은 지울 수 없습니다: ${fields.join(', ')}. 값을 비우려면 replace_text 를, 문단째 지우려면 그 문단 블록 id 를 주세요.`,
     );
   }
   const firsts = targets.filter(({ anchor }) => anchor.part === 'text' && anchor.paragraph === FIRST_PARAGRAPH).map(({ id }) => id);
   if (firsts.length > 0) {
-    throw new Error(`구역 첫 문단은 지울 수 없습니다(구역·단 정의가 든 문단): ${firsts.join(', ')}. 글자를 지우려면 replace_text 를 쓰세요.`);
+    throw new EditRejection(
+      'section_first_paragraph',
+      `구역 첫 문단은 지울 수 없습니다(구역·단 정의가 든 문단): ${firsts.join(', ')}. 글자를 지우려면 replace_text 를 쓰세요.`,
+    );
   }
 }
 
@@ -125,7 +130,7 @@ export function deleteBlocks(doc: HwpDocument, blocks: Block[], targets: DeleteT
       if (controlIndex === undefined) continue;
       // rhwp deleteTableControl 은 같은 문단의 누름틀을 누름틀 목록에서 잃는다(다시 열어도 없다, PR #29 리뷰에서 확인)
       const withField = (anchorsByParagraph.get(key) ?? []).some((anchor) => fieldOrdinal(anchor) !== undefined);
-      if (withField) throw new Error(tableWithFieldMessage(target.id, position, others));
+      if (withField) throw new EditRejection('table_with_field', tableWithFieldMessage(target.id, position, others));
       changes.deletedTables.push({ ...position, controlIndex });
     }
   }
@@ -140,11 +145,12 @@ export function deleteBlocks(doc: HwpDocument, blocks: Block[], targets: DeleteT
 }
 
 function assertNoHiddenObjects(controls: BodyControl[] | undefined, id: string): void {
-  if (controls === undefined) throw new Error(`${id}: 문단에 든 개체를 확인하지 못해 지울 수 없습니다.`);
+  if (controls === undefined) throw new EditRejection('controls_unknown', `${id}: 문단에 든 개체를 확인하지 못해 지울 수 없습니다.`);
   const hidden = controls.filter(({ ctrlId }) => ctrlId !== TABLE_CONTROL && !isInlineControl(ctrlId));
   if (hidden.length > 0) {
     const names = [...new Set(hidden.map(({ userDesc, ctrlId }) => userDesc || ctrlId))];
-    throw new Error(`${id}: 문단에 블록이 아닌 개체(${names.join(', ')})가 있어 같이 사라지므로 지울 수 없습니다.`);
+    const objects = names.join(', ');
+    throw new EditRejection('hidden_objects', `${id}: 문단에 블록이 아닌 개체(${objects})가 있어 같이 사라지므로 지울 수 없습니다.`, objects);
   }
 }
 

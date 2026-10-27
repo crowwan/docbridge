@@ -17,6 +17,7 @@ import { paragraphChangesSchema } from '../core/paragraph-changes.ts';
 import { saveExportSchema } from '../core/hwpx-export.ts';
 import { paragraphStyleSchema } from '../core/styles.ts';
 import { errorMessage } from './errors.ts';
+import { EditRejection, rejectionCodeSchema, rejectionFields, type RejectionCode } from './rejections.ts';
 
 // 하이라이트·찾기·편집 공용 대상(TextTarget)과 서버가 위치를 붙인 대상은 core/block-schema.ts 에 있다(뷰어 편집 코드가 같이 쓴다)
 export { anchoredTargetSchema, blockAnchorSchema, textTargetSchema, type AnchoredTarget, type TextTarget };
@@ -265,16 +266,33 @@ export const parseUserResult: { [M in UserMethod]: (result: unknown) => UserResu
   user_undo: (result) => userMethodSchemas.user_undo.result.parse(result),
 };
 
-/** 서버 → 뷰어 응답(뷰어 요청에 대한). 서버 요청에 대한 뷰어 응답(response)과 type 으로 가른다 */
+/**
+ * 서버 → 뷰어 응답(뷰어 요청에 대한). 서버 요청에 대한 뷰어 응답(response)과 type 으로 가른다.
+ * 실패의 error 는 사람에게 보일 문구다(거부 코드 → 사람용 문구 표, shared/rejections.ts — Claude 용 문구가 아니다, #77). code 는 거부 종류
+ */
 export const userResponseMessageSchema = z.union([
   z.object({ type: z.literal('user_response'), id: z.number(), ok: z.literal(true), result: z.unknown() }),
-  z.object({ type: z.literal('user_response'), id: z.number(), ok: z.literal(false), error: z.string() }),
+  z.object({
+    type: z.literal('user_response'),
+    id: z.number(),
+    ok: z.literal(false),
+    error: z.string(),
+    code: rejectionCodeSchema.optional(),
+  }),
 ]);
 export type UserResponseMessage = z.infer<typeof userResponseMessageSchema>;
 
+/** 뷰어 → 서버 응답. 뷰어가 규칙대로 거부했으면(EditRejection) 거부 코드·detail 을 같이 싣는다 — 서버가 사람 편집 문구를 고른다(#77) */
 export const responseMessageSchema = z.union([
   z.object({ type: z.literal('response'), id: z.number(), ok: z.literal(true), result: z.unknown() }),
-  z.object({ type: z.literal('response'), id: z.number(), ok: z.literal(false), error: z.string() }),
+  z.object({
+    type: z.literal('response'),
+    id: z.number(),
+    ok: z.literal(false),
+    error: z.string(),
+    code: rejectionCodeSchema.optional(),
+    detail: z.string().optional(),
+  }),
 ]);
 export type ResponseMessage = z.infer<typeof responseMessageSchema>;
 
@@ -303,7 +321,7 @@ export function answerRequest(raw: string, handle: (request: RequestMessage) => 
   try {
     return { type: 'response', id, ok: true, result: handle(parsed.data) };
   } catch (error) {
-    return { type: 'response', id, ok: false, error: errorMessage(error) };
+    return { type: 'response', id, ok: false, error: errorMessage(error), ...rejectionFields(error) };
   }
 }
 
@@ -318,7 +336,10 @@ export const userRequestTimeoutMessage = (_method: string, timeoutMs: number) =>
   `docbridge 가 ${timeoutMs / 1000}초 안에 답하지 않았습니다. 화면이 바뀌지 않았으면 다시 해 주세요.`;
 
 /** 요청 하나의 끝(응답 메시지 종류와 상관없이 id·성공 여부·결과) */
-export type Settlement = { type?: string; id: number } & ({ ok: true; result: unknown } | { ok: false; error: string });
+export type Settlement = { type?: string; id: number } & (
+  | { ok: true; result: unknown }
+  | { ok: false; error: string; code?: RejectionCode; detail?: string }
+);
 
 interface Pending {
   settle(response: Settlement): void;
@@ -355,7 +376,8 @@ export class RequestTracker {
         settle: (response) => {
           finish();
           if (!response.ok) {
-            reject(new Error(response.error));
+            // 거부 코드가 오면 거부 오류로 되살린다(서버가 사람 편집 문구를 고를 수 있게)
+            reject(response.code === undefined ? new Error(response.error) : new EditRejection(response.code, response.error, response.detail));
             return;
           }
           try {

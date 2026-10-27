@@ -23,6 +23,7 @@ import { noParagraphChanges, positionKey, TEXT_PART, type ParagraphChanges, type
 import { applyParagraphStyle, findStyle, resetToStyle } from './styles.ts';
 import { copyParagraphs } from './copy-paragraphs.ts';
 import { base64ToBytes } from '../shared/base64.ts';
+import { EditRejection } from '../shared/rejections.ts';
 import { spanIn, targetLabel } from './text-targets.ts';
 
 export type { ParagraphPosition } from './paragraph-changes.ts';
@@ -198,7 +199,7 @@ export const crossesFieldMessage = (target: AnchoredTarget, { start, end }: Char
  */
 function assertOutsideFields(blocks: Block[], place: TextPlace, target: AnchoredTarget, { start, end }: CharRange): void {
   const crossed = fieldSpansIn(blocks, place).find((field) => crossesField({ start, end }, field));
-  if (crossed !== undefined) throw new Error(crossesFieldMessage(target, { start, end }, crossed));
+  if (crossed !== undefined) throw new EditRejection('crosses_field', crossesFieldMessage(target, { start, end }, crossed));
 }
 
 function paragraphSpot(blocks: Block[], block: ParagraphBlock, target: AnchoredTarget): SpotRange {
@@ -358,7 +359,9 @@ function moveBlocks(doc: HwpDocument, blocks: Block[], { section, start, end, be
   }
   const result = moveParagraphs(doc, section, start, end, before);
   if (!result.ok) {
-    throw new Error(result.rejected.map(({ paragraph, reason }) => moveRejectedMessage(reason, rangeLabel(moving, paragraph))).join('\n'));
+    const message = result.rejected.map(({ paragraph, reason }) => moveRejectedMessage(reason, rangeLabel(moving, paragraph))).join('\n');
+    const reasons = [...new Set(result.rejected.map(({ reason }) => reason))].join(', ');
+    throw new EditRejection('unmovable_paragraph', message, reasons);
   }
   return {
     paragraphs: Array.from({ length: end - start }, (_, i) => ({ section, paragraph: result.moved.start + i })),

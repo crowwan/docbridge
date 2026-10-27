@@ -1,5 +1,5 @@
 import { once } from 'node:events';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
@@ -20,8 +20,9 @@ import {
   type UserEdit,
   type UserResponseMessage,
 } from '../src/shared/protocol.ts';
+import { USER_EDIT_FAILED, userRejectionMessage, type RejectionCode } from '../src/shared/rejections.ts';
 import { FakeViewer, NO_RESPONSE } from './fake-viewer.ts';
-import { fixturePath } from './fixtures.ts';
+import { fixturePath, openFixture } from './fixtures.ts';
 import { withoutDoc } from './tool-result.ts';
 import { rhwpViewer } from './rhwp-viewer.ts';
 
@@ -345,7 +346,7 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
   it('거부 규칙은 Claude 편집과 같다: 구역 첫 문단은 지우지 않고 기록·알림도 남기지 않는다', async () => {
     const error = failure(await userEdit({ kind: 'delete_blocks', targets: [anchorOf('b1')] }));
 
-    expect(error).toContain('구역 첫 문단은 지울 수 없습니다');
+    expect(error).toBe(userRejectionMessage('section_first_paragraph'));
     expect(requests('edit')).toEqual([]);
     expect(sessions.editCount).toBe(0);
     expect((await outline()).notices).toEqual([]);
@@ -361,7 +362,7 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
     // 지금 뷰어 탭을 대신하는 새 연결(요청을 받는 뷰어)로 보낸다
     const ws = new WebSocket(bridge.viewerUrl.replace('http://', 'ws://'));
     await once(ws, 'open');
-    const responseSchema = z.object({ type: z.literal('user_response'), id: z.number(), ok: z.boolean(), error: z.string() });
+    const responseSchema = z.object({ type: z.literal('user_response'), id: z.number(), ok: z.boolean(), error: z.string(), code: z.string() });
     // 새로고침으로 오는 load_document 요청은 건너뛰고 응답만 기다린다
     const reply = new Promise<z.infer<typeof responseSchema>>((resolve) => {
       ws.on('message', (data) => {
@@ -374,8 +375,7 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
     const response = await reply;
     ws.close();
 
-    expect(response).toMatchObject({ id: 7, ok: false });
-    expect(response.error).toContain('서버가 읽을 수 없는 뷰어 요청입니다');
+    expect(response).toMatchObject({ id: 7, ok: false, code: 'unreadable_request', error: userRejectionMessage('unreadable_request') });
   });
 
   it('받은 뒤 줄 차례가 USER_REQUEST_DEADLINE_MS 넘게 늦으면 적용하지 않고 거부한다(뷰어 타임아웃 뒤 늦게 적용되지 않게)', async () => {
@@ -434,5 +434,122 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
 
     expect(failure(await userEdit(replaceB11()))).toBe(INACTIVE_VIEWER);
     expect(sessions.editCount).toBe(0);
+  });
+
+  describe('SPEC-006 사람 편집 거부 문구 (#77)', () => {
+    /** 사람에게 보이면 안 되는 것: 블록 id(b12)·Claude 도구 이름 */
+    const CLAUDE_ONLY = /\bb\d+\b|replace_text|replace_all|insert_paragraph|insert_table|delete_blocks|move_blocks|copy_blocks|get_outline|read_blocks|open_document|find_text/;
+
+    /** 거부 응답: 사람용 문구(거부 코드 표)와 코드, 그리고 Claude 용 문구가 아니다 */
+    const expectRejected = (response: UserResponseMessage, code: RejectionCode, detail?: string) => {
+      expect(response).toEqual({ type: 'user_response', id: response.id, ok: false, error: userRejectionMessage(code, detail), code });
+      expect(failure(response)).not.toMatch(CLAUDE_ONLY);
+      expect(sessions.editCount).toBe(0);
+    };
+
+    /**
+     * fixture 를 고쳐 이 탭에서 다시 연다(블록 id 는 열린 순서로 새로). 다른 파일은 새 탭이라(SPEC-007) 지금 문서를 닫고 연다
+     */
+    const openChanged = async (change: (doc: ReturnType<typeof openFixture>) => void, fixture = 'notice.hwpx') => {
+      const doc = openFixture(fixture);
+      change(doc);
+      const path = join(await mkdtemp(join(tmpdir(), 'docbridge-reject-')), `고친 ${fixture}`);
+      await writeFile(path, doc.exportHwpx());
+      doc.free();
+      await json('close_document', { discard: true });
+      await json('open_document', { path });
+    };
+    const move = (ids: string[], where: 'before' | 'after', reference: string): UserEdit => ({
+      kind: 'move_blocks',
+      blocks: ids.map(anchorOf),
+      where,
+      reference: anchorOf(reference),
+    });
+    const remove = (...ids: string[]): UserEdit => ({ kind: 'delete_blocks', targets: ids.map(anchorOf) });
+
+    it('지우기: 구역 첫 문단', async () => {
+      expectRejected(await userEdit(remove('b1')), 'section_first_paragraph');
+    });
+
+    it('지우기: 누름틀 블록', async () => {
+      expectRejected(await userEdit(remove('b3')), 'field_block');
+    });
+
+    it('지우기: 블록이 아닌 개체(각주·감추기)가 든 문단 — 뷰어가 거부해도 개체 종류만 사람 문구에 넣는다', async () => {
+      await openChanged((doc) => {
+        doc.insertFootnote(0, 5, 1); // b6
+        doc.setPageHide(0, 6, true, true, true, true, true, true); // b7
+      });
+
+      expectRejected(await userEdit(remove('b6')), 'hidden_objects', '각주');
+      expectRejected(await userEdit(remove('b7')), 'hidden_objects', '감추기');
+    });
+
+    it('지우기: 누름틀이 든 문단의 표만', async () => {
+      await openChanged((doc) => {
+        doc.insertClickHereFieldInCell(0, 11, 0, 0, 0, 0, false, '입력', '', '칸 누름틀', true);
+        doc.insertText(0, 11, doc.getParagraphLength(0, 11), '표 아래 설명');
+      });
+      const table = (await outline()).ids.find((id) => sessions.document?.ids.anchor(id)?.part.startsWith('table:'));
+      if (table === undefined) throw new Error('표가 없다');
+
+      expectRejected(await userEdit(remove(table)), 'table_with_field');
+    });
+
+    it('옮기기: 구역 첫 문단 앞(뷰어 rhwp 편집에서 거부)', async () => {
+      expectRejected(await userEdit(move(['b4'], 'before', 'b1')), 'before_section_first');
+    });
+
+    it('옮기기: 옮길 수 없는 문단(각주) — 이유만 사람 문구에 넣는다', async () => {
+      await openChanged((doc) => doc.insertFootnote(0, 5, 1)); // b6
+
+      expectRejected(await userEdit(move(['b6'], 'after', 'b7')), 'unmovable_paragraph', '각주');
+    });
+
+    it('옮기기: 이어진 범위가 아님', async () => {
+      expectRejected(await userEdit(move(['b4', 'b6'], 'after', 'b11')), 'not_contiguous');
+    });
+
+    it('옮기기: 누름틀만', async () => {
+      expectRejected(await userEdit(move(['b3'], 'after', 'b11')), 'field_only');
+    });
+
+    it('옮기기: 기준이 옮길 블록 안', async () => {
+      expectRejected(await userEdit(move(['b4', 'b5'], 'after', 'b5')), 'reference_inside');
+    });
+
+    it('옮기기: 한 문단 안 블록 사이', async () => {
+      expectRejected(await userEdit(move(['b11'], 'before', 'b3')), 'middle_of_paragraph');
+    });
+
+    it('옮기기: 이미 그 자리', async () => {
+      expectRejected(await userEdit(move(['b5'], 'after', 'b4')), 'already_there');
+    });
+
+    it('글자 고치기: 문단 범위가 누름틀 값에 걸침', async () => {
+      // application.hwpx b6 = "신청인  홍길동"(누름틀 b7 값 5~8)
+      await openChanged((doc) => {
+        const applicant = z.array(z.object({ fieldId: z.number(), name: z.string() })).parse(JSON.parse(doc.getFieldList())).find(({ name }) => name === '신청인');
+        if (applicant === undefined) throw new Error('신청인 누름틀이 없다');
+        doc.setFieldValue(applicant.fieldId, '홍길동');
+      }, 'application.hwpx');
+
+      expectRejected(await userEdit({ kind: 'replace_text', target: { anchor: anchorOf('b6'), start: 4, end: 7 }, text: '새 글자' }), 'crosses_field');
+    });
+
+    it('⌘Z: 되돌릴 편집 없음', async () => {
+      expectRejected(await viewer.userRequest('user_undo', {}), 'nothing_to_undo');
+    });
+
+    it('거부 코드가 없는 실패(예상하지 못한 오류)는 Claude 용 문구 대신 일반 문구를 보인다', async () => {
+      viewer.serve((request) => {
+        if (request.method === 'edit') throw new Error('b11: 뷰어 문서에 이 블록이 없습니다. get_outline 을 다시 부르세요.');
+        return rhwpViewer().handle(request);
+      });
+
+      const response = await userEdit(replaceB11());
+
+      expect(response).toEqual({ type: 'user_response', id: response.id, ok: false, error: USER_EDIT_FAILED });
+    });
   });
 });

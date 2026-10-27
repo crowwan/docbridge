@@ -6,6 +6,7 @@ import { startBridge, type Bridge } from '../src/server/bridge.ts';
 import { clearHighlight, highlight } from '../src/server/highlight-tools.ts';
 import { getOutline } from '../src/server/read-tools.ts';
 import { DocumentSessions } from '../src/server/documents.ts';
+import { userRejectionMessage } from '../src/shared/rejections.ts';
 
 const viewerDir = fileURLToPath(new URL('../dist/viewer/', import.meta.url));
 const fixturePath = (name: string) => fileURLToPath(new URL(`../fixtures/${name}`, import.meta.url));
@@ -208,12 +209,28 @@ test.describe('SPEC-006 끌어 옮기기와 오른쪽 클릭 메뉴 (서버가 �
     await expect(item(page, '아래로')).toBeFocused();
     await item(page, '지우기').click();
 
-    await expect(page.getByRole('alert')).toContainText('구역 첫 문단은 지울 수 없습니다');
+    // 사람용 문구(거부 코드 표, #77) — Claude 용 문구의 블록 id·도구 이름은 보이지 않는다
+    await expect(page.getByRole('alert')).toHaveText(userRejectionMessage('section_first_paragraph'));
     await page.screenshot({ path: `${SCREENS}/block-04-rejected.png` });
     expect(sessions.editCount).toBe(0);
     expect(await outline()).toEqual(before);
     await page.clock.runFor(3000);
     await expect(page.getByRole('alert')).toBeHidden();
+  });
+
+  test('#77 뷰어 rhwp 편집에서 거부된 옮기기(첫 문단 앞으로 위로)도 알림에 사람용 문구만 보인다 — 블록 id·도구 이름 없음', async ({ page }) => {
+    await sessions.open(fixturePath('notice.hwpx'));
+    const before = await outline();
+
+    await rightClick(page, 'b2');
+    await item(page, '위로').click();
+
+    const alert = page.getByRole('alert');
+    await expect(alert).toHaveText(userRejectionMessage('before_section_first'));
+    await expect(alert).not.toHaveText(/\bb\d+\b|move_blocks|insert_paragraph|delete_blocks/);
+    await page.screenshot({ path: `${SCREENS}/block-07-rejected-human.png` });
+    expect(sessions.editCount).toBe(0);
+    expect(await outline()).toEqual(before);
   });
 
   test('표는 칸 위를 끌어도 표째 옮긴다', async ({ page }) => {
