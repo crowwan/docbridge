@@ -1,9 +1,9 @@
 ---
 id: SPEC-003
 title: 새 문서 만들기
-status: approved       # draft | approved | in-progress | done | dropped
+status: in-progress    # draft | approved | in-progress | done | dropped
 milestone: v0.2
-issue:
+issue: "#34"
 prototype:
 updated: 2026-10-27
 ---
@@ -118,3 +118,4 @@ GO 기준: 빈 문서와 양식 문서 각각으로 제목·개요·본문·표�
 |---|---|
 | 2026-10-27 | 초안 (Cowork 에서 python-hwpx 로 만들고 docbridge 로 확인한 사례에서 출발) |
 | 2026-10-27 | 승인 (대화로 바로 진행) |
+| 2026-10-27 | 이슈 분해: #34 (하위 #35 기술 검증, #36 create_document·저장, #37 스타일, #38 insert_table, #39 한글 확인) |
