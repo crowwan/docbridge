@@ -1,0 +1,367 @@
+// rhwp 편집 어댑터 — SPEC-002 기술 검증(#18)에서 확인한 절차를 함수로 둔다.
+// 서식은 rhwp 에 맡기되, rhwp 기본 동작이 스펙과 다른 곳만 여기서 바로잡는다(ADR 002).
+// - replaceText 는 지우고 넣는데, 넣은 글자가 **앞 글자** 모양을 따른다 → 첫 글자 뒤에 넣고 첫 글자를 지운다
+// - setFieldValue 도 값의 글자 모양을 버린다 → 값이 있으면 같은 방법으로 바꾼다
+// - insertParagraph 는 **앞 문단** 모양을 물려준다 → 기준 문단 모양으로 다시 맞춘다
+// - importParagraphBlock 은 다른 핸들에서 가져오면서 번호 정의를 새로 만든다(번호가 1부터 다시 시작) → 원래 문단 모양 번호로 되돌린다
+// 글자 위치는 모두 유니코드 글자 단위(rhwp 와 같다, chars.ts).
+import { HwpDocument } from '@rhwp/core';
+import { z } from 'zod';
+import { charLength, sliceChars } from './chars.ts';
+
+function parse<T>(schema: z.ZodType<T>, json: string): T {
+  return schema.parse(JSON.parse(json));
+}
+
+/** 문단 하나(본문 또는 칸 안)의 글자를 넣고 지우는 손잡이 */
+interface TextSpot {
+  length(): number;
+  insert(offset: number, text: string): void;
+  remove(offset: number, count: number): void;
+}
+
+function bodySpot(doc: HwpDocument, section: number, paragraph: number): TextSpot {
+  return {
+    length: () => doc.getParagraphLength(section, paragraph),
+    insert: (offset, text) => void doc.insertText(section, paragraph, offset, text),
+    remove: (offset, count) => void doc.deleteText(section, paragraph, offset, count),
+  };
+}
+
+/** 칸 경로: 바깥 표부터 [표 컨트롤 번호, 칸 번호, 칸 안 문단 번호] */
+export interface CellStep {
+  controlIndex: number;
+  cellIndex: number;
+  cellParaIndex: number;
+}
+
+function cellSpot(doc: HwpDocument, section: number, paragraph: number, path: CellStep[]): TextSpot {
+  const pathJson = JSON.stringify(path);
+  return {
+    length: () => doc.getCellParagraphLengthByPath(section, paragraph, pathJson),
+    insert: (offset, text) => void doc.insertTextInCellByPath(section, paragraph, pathJson, offset, text),
+    remove: (offset, count) => void doc.deleteTextInCellByPath(section, paragraph, pathJson, offset, count),
+  };
+}
+
+/**
+ * 문단 하나 안에서 [start, end) 를 text 로 바꾼다. 바뀐 글자는 바뀌는 자리 **첫 글자** 모양을 따른다.
+ * rhwp 의 넣기는 앞 글자 모양을 물려주므로, 첫 글자 바로 뒤에 넣고 나머지와 첫 글자를 지운다.
+ * 빈 범위(start === end)는 그 자리 앞 글자 모양으로 넣는다(따를 첫 글자가 없다).
+ */
+function replaceInSpot(spot: TextSpot, start: number, end: number, text: string): void {
+  if (start === end) {
+    if (text.length > 0) spot.insert(start, text);
+    return;
+  }
+  const newLength = charLength(text);
+  if (newLength > 0) spot.insert(start + 1, text);
+  // [첫 글자][새 글자][나머지 옛 글자] → 나머지 옛 글자, 첫 글자 순서로 지운다
+  const restStart = start + 1 + newLength;
+  const restCount = end - start - 1;
+  if (restCount > 0) spot.remove(restStart, restCount);
+  spot.remove(start, 1);
+}
+
+function assertRange(start: number, end: number, length: number, where: string): void {
+  if (!(Number.isInteger(start) && Number.isInteger(end) && 0 <= start && start <= end && end <= length)) {
+    throw new Error(`${where}: 글자 범위가 맞지 않습니다(start ${start}, end ${end}, 글자 수 ${length}).`);
+  }
+}
+
+function assertSingleLine(text: string): void {
+  if (/[\r\n]/.test(text)) {
+    throw new Error('바꿀 글자에 줄바꿈이 있습니다. 새 문단은 insert_paragraph 로 넣으세요.');
+  }
+}
+
+/** 본문 문단의 [start, end) 를 바꾼다. end 를 빼면 문단 끝까지 */
+export function replaceParagraphText(
+  doc: HwpDocument,
+  section: number,
+  paragraph: number,
+  text: string,
+  start = 0,
+  end?: number,
+): void {
+  assertSingleLine(text);
+  const spot = bodySpot(doc, section, paragraph);
+  const to = end ?? spot.length();
+  assertRange(start, to, spot.length(), `문단 ${section}:${paragraph}`);
+  replaceInSpot(spot, start, to, text);
+}
+
+export interface CellAddress {
+  section: number;
+  /** 표를 품은 본문 문단 */
+  paragraph: number;
+  controlIndex: number;
+  cellIndex: number;
+}
+
+/**
+ * 표 칸의 [start, end) 를 바꾼다. 위치는 칸 text(칸 안 문단을 \n 으로 이은 것) 기준이고, end 를 빼면 칸 끝까지.
+ * 범위가 칸 안 여러 문단에 걸치면 그 문단들을 합친다(사이 \n 이 지워진다).
+ */
+export function replaceCellText(doc: HwpDocument, cell: CellAddress, text: string, start = 0, end?: number): void {
+  assertSingleLine(text);
+  const { section, paragraph, controlIndex, cellIndex } = cell;
+  const lengths = Array.from({ length: doc.getCellParagraphCount(section, paragraph, controlIndex, cellIndex) }, (_, p) =>
+    doc.getCellParagraphLength(section, paragraph, controlIndex, cellIndex, p),
+  );
+  const total = lengths.reduce((sum, length) => sum + length, 0) + Math.max(0, lengths.length - 1);
+  const to = end ?? total;
+  assertRange(start, to, total, `칸 ${cellIndex}`);
+  const from = cellOffset(lengths, start);
+  const until = cellOffset(lengths, to);
+  const spot = cellSpot(doc, section, paragraph, [{ controlIndex, cellIndex, cellParaIndex: from.paragraph }]);
+  if (from.paragraph === until.paragraph) {
+    replaceInSpot(spot, from.offset, until.offset, text);
+    return;
+  }
+  // 여러 문단: 첫 문단 안에서 첫 글자 뒤에 넣고, 넣은 글자 뒤부터 끝 위치까지 지운 뒤(문단이 합쳐진다) 첫 글자를 지운다
+  const firstIsChar = from.offset < (lengths[from.paragraph] ?? 0);
+  const insertAt = firstIsChar ? from.offset + 1 : from.offset;
+  if (text.length > 0) spot.insert(insertAt, text);
+  doc.deleteRangeInCell(
+    section,
+    paragraph,
+    controlIndex,
+    cellIndex,
+    from.paragraph,
+    insertAt + charLength(text),
+    until.paragraph,
+    until.offset,
+  );
+  if (firstIsChar) spot.remove(from.offset, 1);
+}
+
+/** 칸 text 의 글자 위치 → (칸 안 문단, 문단 안 위치). 문단 사이 \n 위치는 앞 문단 끝으로 본다 */
+function cellOffset(lengths: number[], position: number): { paragraph: number; offset: number } {
+  let rest = position;
+  for (const [paragraph, length] of lengths.entries()) {
+    if (rest <= length) return { paragraph, offset: rest };
+    rest -= length + 1;
+  }
+  return { paragraph: Math.max(0, lengths.length - 1), offset: lengths.at(-1) ?? 0 };
+}
+
+const fieldListSchema = z.array(
+  z.object({
+    fieldId: z.number(),
+    fieldType: z.string(),
+    name: z.string(),
+    value: z.string(),
+    startCharIdx: z.number(),
+    endCharIdx: z.number(),
+    location: z.object({
+      sectionIndex: z.number(),
+      paraIndex: z.number(),
+      path: z
+        .array(z.object({ type: z.string(), controlIndex: z.number(), cellIndex: z.number(), paraIndex: z.number() }))
+        .optional(),
+    }),
+  }),
+);
+
+export type FieldInfo = z.infer<typeof fieldListSchema>[number];
+
+export function listFields(doc: HwpDocument): FieldInfo[] {
+  return parse(fieldListSchema, doc.getFieldList()).filter((field) => field.fieldType === 'clickhere');
+}
+
+/**
+ * 누름틀 값을 바꾼다. 값이 있으면 값 첫 글자 모양을 따른다(setFieldValue 는 값의 글자 모양을 버려서 쓰지 않는다).
+ * 값이 비어 있으면 따를 글자가 없으므로 setFieldValue 로 넣는다(누름틀 앞 글자 모양).
+ * start·end 는 값 안 위치. 없으면 값 전체.
+ */
+export function replaceFieldText(doc: HwpDocument, fieldId: number, text: string, start = 0, end?: number): void {
+  assertSingleLine(text);
+  const field = listFields(doc).find((candidate) => candidate.fieldId === fieldId);
+  if (field === undefined) throw new Error(`없는 누름틀입니다(fieldId ${fieldId}).`);
+  const length = charLength(field.value);
+  const to = end ?? length;
+  assertRange(start, to, length, `누름틀 ${field.name}`);
+  if (length === 0) {
+    doc.setFieldValue(fieldId, text);
+    return;
+  }
+  const { sectionIndex, paraIndex, path } = field.location;
+  const spot =
+    path === undefined || path.length === 0
+      ? bodySpot(doc, sectionIndex, paraIndex)
+      : cellSpot(
+          doc,
+          sectionIndex,
+          paraIndex,
+          path.map(({ controlIndex, cellIndex, paraIndex: cellParaIndex }) => ({ controlIndex, cellIndex, cellParaIndex })),
+        );
+  replaceInSpot(spot, field.startCharIdx + start, field.startCharIdx + to, text);
+  const after = listFields(doc).find((candidate) => candidate.fieldId === fieldId);
+  const expected = sliceChars(field.value, 0, start) + text + sliceChars(field.value, to);
+  if (after?.value !== expected) {
+    throw new Error(`누름틀 ${field.name} 값이 기대와 다릅니다(기대 "${expected}", 실제 "${after?.value ?? '(없음)'}").`);
+  }
+}
+
+const paraShapeSchema = z.object({ paraShapeId: z.number() });
+const charPropsSchema = z.looseObject({ charShapeId: z.number() });
+
+const paraShapeIdOf = (doc: HwpDocument, section: number, paragraph: number) =>
+  parse(paraShapeSchema, doc.getParaPropertiesAt(section, paragraph)).paraShapeId;
+
+/**
+ * 글자 모양 비교용: 보이는 속성 JSON. 글자 모양 id 와 테두리·배경 id 는 뺀다(테두리·배경은 값으로 들어 있다).
+ * 문단을 옮기면 rhwp 가 글자 모양·테두리를 같은 값의 새 id 로 다시 매기기 때문이다(ADR 002)
+ */
+export function charLook(doc: HwpDocument, section: number, paragraph: number, offset: number): string {
+  const { charShapeId: _id, borderFillId: _border, ...look } = parse(charPropsSchema, doc.getCharPropertiesAt(section, paragraph, offset));
+  return JSON.stringify(look);
+}
+
+/**
+ * 기준 문단 앞(before)·뒤(after)에 새 문단을 넣고 text 를 채운다. 새 문단 번호를 돌려준다.
+ * 문단 모양은 기준 문단을 따른다. 글자 모양은 앞에 넣으면 기준 문단 첫 글자, 뒤에 넣으면 마지막 글자를 따른다
+ * (한글에서 문단 처음·끝에서 Enter 를 친 것과 같다).
+ */
+export function insertParagraphNear(
+  doc: HwpDocument,
+  section: number,
+  reference: number,
+  where: 'before' | 'after',
+  text: string,
+): number {
+  assertSingleLine(text);
+  const at = where === 'before' ? reference : reference + 1;
+  const referenceShape = paraShapeIdOf(doc, section, reference);
+  const referenceLength = doc.getParagraphLength(section, reference);
+  const lookOffset = where === 'before' ? 0 : Math.max(0, referenceLength - 1);
+  const referenceLook = referenceLength > 0 ? doc.getCharPropertiesAt(section, reference, lookOffset) : undefined;
+  // insertParagraph(at) 은 at-1 문단 모양과 끝 글자 모양을 물려준다. 뒤에 넣을 때는 기준 문단이 at-1 이라 그대로 맞다
+  doc.insertParagraph(section, at);
+  const shiftedReference = where === 'before' ? reference + 1 : reference;
+  if (paraShapeIdOf(doc, section, at) !== referenceShape) doc.setParaShapeId(section, at, referenceShape);
+  if (text.length === 0) return at;
+  doc.insertText(section, at, 0, text);
+  if (referenceLook !== undefined && charLook(doc, section, at, 0) !== charLook(doc, section, shiftedReference, lookOffset)) {
+    // 글자 모양 id 를 직접 정하는 API 가 없어 속성으로 건다(같은 속성의 새 id 가 생길 수 있다)
+    doc.applyCharFormat(section, at, 0, charLength(text), referenceLook);
+  }
+  return at;
+}
+
+/** 블록 복제가 거부한 문단과 이유 */
+export interface MoveRejection {
+  /** 구역 안 문단 번호 */
+  paragraph: number;
+  reason: string;
+}
+
+export type MoveResult =
+  | { ok: true; /** 옮긴 뒤 문단 범위 [start, end) */ moved: { start: number; end: number } }
+  | { ok: false; rejected: MoveRejection[] };
+
+// rhwp 오류 "paragraph block unsupported at [Paragraph(0), Control(0)]: Footnote" 의 이유 → 사람이 읽는 이름
+const REJECT_REASONS: Record<string, string> = {
+  Footnote: '각주',
+  Endnote: '미주',
+  Bookmark: '책갈피',
+  'uninterpreted CTRL_DATA payload': '책갈피 등 해석하지 못한 컨트롤 데이터',
+  NewNumber: '새 번호로 시작',
+  AutoNumber: '자동 번호(쪽 번호 등)',
+  Hyperlink: '하이퍼링크',
+  Chart: '차트',
+  Ole: 'OLE 개체',
+  Form: '양식 개체',
+  HiddenComment: '숨은 설명',
+  Ruby: '덧말',
+  Header: '머리말',
+  Footer: '꼬리말',
+  SectionDef: '구역 정의',
+  ColumnDef: '단 정의',
+  'section/multicolumn paragraph boundary': '구역·단 시작 문단',
+  PageNumberPos: '쪽 번호 위치',
+  PageNumCtrl: '쪽 번호 제어',
+  PageHide: '감추기',
+  IndexMark: '찾아보기 표시',
+  CharOverlap: '글자 겹치기',
+};
+
+/** rhwp 블록 복제 오류 문구 → 이유. 모르는 이유는 rhwp 문구 그대로 */
+export function moveRejectReason(message: string): string {
+  const reason = /unsupported at \[[^\]]*\]: (.+)$/.exec(message)?.[1] ?? /paragraph block: (.+)$/.exec(message)?.[1] ?? message;
+  return REJECT_REASONS[reason.trim()] ?? reason.trim();
+}
+
+const importRequest = (section: number, start: number, end: number, before: number, dryRun: boolean) =>
+  JSON.stringify({
+    request: { sourceSection: section, sourceStart: start, sourceEnd: end, targetSection: section, insertBefore: before, count: 1 },
+    dryRun,
+  });
+
+const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+/**
+ * 같은 구역 안 이어진 문단 [start, end) 를 before 문단 앞으로 옮긴다(before 는 0..문단 수, 문단 수면 맨 끝).
+ * 절차(rhwp-code-analysis 5-3): 사본(exportHwp → new HwpDocument) → dryRun → 실행 → 원본 지우기(인덱스 보정)
+ * → 문단 모양 되돌리기. 거부되면 아무것도 바꾸지 않고 거부된 문단과 이유를 모두 돌려준다.
+ * 실행 중 예외는 그대로 던진다 — 되돌리기는 부르는 쪽 스냅샷(EditHistory.apply)이 맡는다.
+ */
+export function moveParagraphs(doc: HwpDocument, section: number, start: number, end: number, before: number): MoveResult {
+  const count = doc.getParagraphCount(section);
+  if (!(0 <= start && start < end && end <= count && 0 <= before && before <= count)) {
+    throw new Error(`옮길 문단 범위가 맞지 않습니다(start ${start}, end ${end}, before ${before}, 문단 수 ${count}).`);
+  }
+  if (start <= before && before <= end) throw new Error('기준 문단이 옮길 문단 안이나 바로 옆에 있습니다.');
+  // HWPX 사본은 한컴 HWPX 의 번호 정의(paraHead)를 가져오지 못해 거부될 수 있어 HWP 로 사본을 만든다(ADR 002)
+  const source = new HwpDocument(doc.exportHwp());
+  try {
+    const rejected = dryRunRejections(doc, source, section, start, end, before);
+    if (rejected.length > 0) return { ok: false, rejected };
+    const shapes = Array.from({ length: end - start }, (_, i) => paraShapeIdOf(source, section, start + i));
+    doc.importParagraphBlock(source, importRequest(section, start, end, before, false));
+    const size = end - start;
+    const originalStart = before <= start ? start + size : start;
+    for (let p = originalStart + size - 1; p >= originalStart; p -= 1) doc.deleteParagraph(section, p);
+    const movedStart = before <= start ? before : before - size;
+    shapes.forEach((shape, i) => {
+      if (paraShapeIdOf(doc, section, movedStart + i) !== shape) doc.setParaShapeId(section, movedStart + i, shape);
+    });
+    return { ok: true, moved: { start: movedStart, end: movedStart + size } };
+  } finally {
+    source.free();
+  }
+}
+
+function dryRunRejections(
+  doc: HwpDocument,
+  source: HwpDocument,
+  section: number,
+  start: number,
+  end: number,
+  before: number,
+): MoveRejection[] {
+  try {
+    doc.importParagraphBlock(source, importRequest(section, start, end, before, true));
+    return [];
+  } catch {
+    // 범위 전체 dryRun 은 첫 거부만 알려준다. 문단마다 다시 물어 모두 모은다
+    const rejected: MoveRejection[] = [];
+    for (let p = start; p < end; p += 1) {
+      try {
+        doc.importParagraphBlock(source, importRequest(section, p, p + 1, before, true));
+      } catch (error) {
+        rejected.push({ paragraph: p, reason: moveRejectReason(errorText(error)) });
+      }
+    }
+    // 문단 하나씩은 되는데 묶음이 안 되면(문단 경계를 넘는 누름틀 등) 범위 첫 문단에 이유를 붙인다
+    if (rejected.length === 0) {
+      try {
+        doc.importParagraphBlock(source, importRequest(section, start, end, before, true));
+      } catch (error) {
+        rejected.push({ paragraph: start, reason: moveRejectReason(errorText(error)) });
+      }
+    }
+    return rejected;
+  }
+}
