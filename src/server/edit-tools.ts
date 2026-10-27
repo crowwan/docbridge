@@ -1,10 +1,11 @@
 // 편집 도구(SPEC-002): 대상 id 를 id 표 위치로 바꿔 편집 공용 경로(session.edit)로 뷰어에 보내고, 바뀐 블록에 id 를 붙여 돌려준다.
-// 새 편집 도구(#20 insert_paragraph·delete_blocks, #21 move_blocks)는 core/edit-operations.ts 에 편집 종류를 더하고
-// 여기서 session.edit(이름, 문서 → 편집, id 표 옮기기) 를 부른다.
+// 새 편집 도구(#21 move_blocks 등)는 core/edit-operations.ts 에 편집 종류를 더하고
+// 여기서 session.edit(이름, 문서 → 편집) 를 부른다. 문단을 넣고 지운 만큼 id 표를 옮기는 일은 뷰어가 돌려준 결과로 session 이 한다.
+import { assertDeletable } from '../core/delete-blocks.ts';
 import { UNDO_LIMIT } from '../core/edit-history.ts';
 import { targetLabel } from '../core/text-targets.ts';
 import type { TextTarget } from '../shared/protocol.ts';
-import { anchoredTarget } from './highlight-tools.ts';
+import { anchored, anchoredTarget } from './highlight-tools.ts';
 import { outlineItem, preview } from './reading.ts';
 import type { DocumentSession, EditedBlock } from './session.ts';
 
@@ -43,10 +44,55 @@ export async function replaceText(session: DocumentSession, target: TextTarget, 
     target: anchoredTarget(document.ids, target),
     text,
   }));
+  return editResult(changed, unmarked, target.cell);
+}
+
+function editResult(changed: EditedBlock[], unmarked: string[], cell?: TextTarget['cell']): EditResult {
   return {
-    changed: changed.flatMap((edited) => changedItem(edited, target.cell)),
+    changed: changed.flatMap((edited) => changedItem(edited, cell)),
     ...(unmarked.length === 0 ? {} : { warnings: unmarked.map(unmarkedMessage) }),
   };
+}
+
+export interface InsertParagraphResult extends EditResult {
+  /** 새 문단 블록 id */
+  inserted: string;
+}
+
+/** 기준 블록(before 또는 after 하나) 앞·뒤에 새 문단을 넣는다. 서식은 기준 문단을 따른다 */
+export async function insertParagraph(
+  session: DocumentSession,
+  { before, after, text }: { before?: string; after?: string; text: string },
+): Promise<InsertParagraphResult> {
+  if ((before === undefined) === (after === undefined)) throw new Error('before 와 after 중 하나만 주세요.');
+  const where = before === undefined ? 'after' : 'before';
+  const referenceId = before ?? after ?? '';
+  const { changed, unmarked, inserted } = await session.edit(`insert_paragraph ${where} ${referenceId}`, (document) => {
+    const { anchor } = anchoredTarget(document.ids, { id: referenceId });
+    return { kind: 'insert_paragraph', reference: { id: referenceId, anchor }, where, text };
+  });
+  const [id] = inserted;
+  if (id === undefined) throw new Error(`${referenceId}: 뷰어가 넣은 문단을 알려 주지 않아 새 id 를 붙이지 못했습니다.`);
+  return { inserted: id, ...editResult(changed, unmarked) };
+}
+
+export interface DeleteBlocksResult {
+  /** 지운 블록 id(같이 지워진 표·누름틀 포함, 문서 순서) */
+  deleted: string[];
+}
+
+/**
+ * 블록(문단·표)을 지운다. 여러 id 도 편집 하나(undo 한 번). 누름틀 블록·구역 첫 문단은 뷰어에 보내기 전에 거부한다.
+ * 무엇을 지울지(문단째·표만)는 뷰어가 지금 문서로 정하고, 결과의 지운 id 는 뷰어가 실제로 지운 문단·표에서 나온다(session.edit)
+ */
+export async function deleteBlocks(session: DocumentSession, ids: string[]): Promise<DeleteBlocksResult> {
+  const unique = [...new Set(ids)];
+  const { deleted } = await session.edit(`delete_blocks ${unique.join(', ')}`, (document) => {
+    const targets = anchored(document.ids, unique.map((id) => ({ id }))).map(({ id, anchor }) => ({ id, anchor }));
+    assertDeletable(targets);
+    return { kind: 'delete_blocks', targets };
+  });
+  return { deleted };
 }
 
 export interface UndoResult {

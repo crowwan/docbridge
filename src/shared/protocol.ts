@@ -13,6 +13,7 @@ import {
 } from '../core/block-schema.ts';
 import { editOperationSchema } from '../core/edit-operations.ts';
 import { textMatchSchema } from '../core/find-text.ts';
+import { paragraphChangesSchema } from '../core/paragraph-changes.ts';
 import { saveExportSchema } from '../core/hwpx-export.ts';
 import { errorMessage } from './errors.ts';
 
@@ -43,11 +44,15 @@ export const loadDocumentResultSchema = z.object({
   blocks: z.array(blockPositionSchema),
 });
 
-/** 편집 결과: 바뀐 블록(편집 뒤 위치와 내용), 화면에 표시하지 못한 블록, 다시 그린 쪽 수 */
+/**
+ * 편집 결과: 바뀐 블록(편집 뒤 위치와 내용), 화면에 표시하지 못한 블록, 다시 그린 쪽 수,
+ * 문단 수를 바꾼 편집이면 실제로 넣고 지운 문단·표(서버는 이것으로 id 표를 옮긴다 — core/paragraph-changes.ts)
+ */
 export const editResultSchema = z.object({
   changed: z.array(z.object({ anchor: blockAnchorSchema, block: blockSchema })),
   unmarked: z.array(blockAnchorSchema),
   pageCount: z.number(),
+  changes: paragraphChangesSchema.optional(),
 });
 
 /** 서버가 아는 편집 순번(연 뒤 적용한 편집 수 − 되돌린 수). 뷰어 순번과 다르면 뷰어는 아무것도 하지 않고 거부한다 */

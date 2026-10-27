@@ -60,11 +60,11 @@ export function rhwpViewer(options: RhwpViewerOptions = {}): RhwpViewer {
         // 그리지는 않고, 뷰어와 같은 함수로 표시 자리를 구해 표시하지 못한 블록을 돌려준다
         let unmarked: BlockAnchor[] = [];
         const editor = opened();
-        const changed = editor.edit(request.params.operation, request.params.depth, (changedBlocks, blocks) => {
+        const { changed, changes } = editor.edit(request.params.operation, request.params.depth, (changedBlocks, blocks) => {
           unmarked = blockBoxes(editor.doc, blocks, changedBlocks.map(({ anchor }) => anchor)).unmarked;
         });
         unsaved = request.params.unsavedEdits;
-        return { changed, unmarked, pageCount: editor.doc.pageCount() };
+        return { changed, unmarked, pageCount: editor.doc.pageCount(), ...(changes === undefined ? {} : { changes }) };
       }
       case 'undo': {
         const undone = opened().undo(request.params.steps, request.params.depth);

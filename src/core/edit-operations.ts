@@ -1,13 +1,17 @@
 // 편집 종류(SPEC-002 편집 도구)와 rhwp 문서에 적용하기. 뷰어와 테스트 뷰어가 같이 쓴다(document-editor.ts 가 부른다).
-// 편집은 kind 로 가르는 판별 유니언이다. 새 편집(#20 넣기·지우기, #21 옮기기)은
+// 편집은 kind 로 가르는 판별 유니언이다. 새 편집(#21 옮기기 등)은
 // 1) editOperationSchema 에 스키마 하나 2) applyEdit 의 switch 에 case 하나를 더한다(case 를 빠뜨리면 컴파일 오류).
 // 대상 블록은 서버가 붙인 위치(anchor)로 지금 블록 목록에서 찾고, 범위·칸 검사는 블록 글자를 가진 여기서 한다.
 import type { HwpDocument } from '@rhwp/core';
 import { z } from 'zod';
 import { blockIndexByAnchor, fieldOrdinal } from './block-ids.ts';
 import { anchoredTargetSchema, type AnchoredTarget, type Block, type FieldBlock, type TableBlock } from './block-schema.ts';
+import { deleteBlocks } from './delete-blocks.ts';
+import { insertParagraphNear, listFields, replaceCellText, replaceFieldText, replaceParagraphText } from './edits.ts';
+import { noParagraphChanges, type ParagraphChanges, type ParagraphPosition } from './paragraph-changes.ts';
 import { spanIn, targetLabel } from './text-targets.ts';
-import { listFields, replaceCellText, replaceFieldText, replaceParagraphText } from './edits.ts';
+
+export type { ParagraphPosition } from './paragraph-changes.ts';
 
 export const replaceTextOperationSchema = z.object({
   kind: z.literal('replace_text'),
@@ -15,29 +19,48 @@ export const replaceTextOperationSchema = z.object({
   text: z.string(),
 });
 
+/** 서버가 id 를 id 표 위치로 바꿔 붙인 블록(글자 범위 없이 블록 하나) */
+const anchoredBlockSchema = anchoredTargetSchema.pick({ id: true, anchor: true });
+export type AnchoredBlock = z.infer<typeof anchoredBlockSchema>;
+
+export const insertParagraphOperationSchema = z.object({
+  kind: z.literal('insert_paragraph'),
+  /** 기준 블록. 표·누름틀이면 그것이 든 문단이 기준이다 */
+  reference: anchoredBlockSchema,
+  where: z.enum(['before', 'after']),
+  text: z.string(),
+});
+
+export const deleteBlocksOperationSchema = z.object({
+  kind: z.literal('delete_blocks'),
+  targets: z.array(anchoredBlockSchema).min(1),
+});
+
 /** 뷰어가 적용하는 편집. kind 마다 입력이 다르다 */
-export const editOperationSchema = z.discriminatedUnion('kind', [replaceTextOperationSchema]);
+export const editOperationSchema = z.discriminatedUnion('kind', [
+  replaceTextOperationSchema,
+  insertParagraphOperationSchema,
+  deleteBlocksOperationSchema,
+]);
 export type EditOperation = z.infer<typeof editOperationSchema>;
 export type ReplaceTextOperation = z.infer<typeof replaceTextOperationSchema>;
-
-/** 본문 문단 위치 */
-export interface ParagraphPosition {
-  section: number;
-  paragraph: number;
-}
+export type InsertParagraphOperation = z.infer<typeof insertParagraphOperationSchema>;
+export type DeleteBlocksOperation = z.infer<typeof deleteBlocksOperationSchema>;
 
 /**
  * 편집이 바꾼 본문 문단(편집 뒤 위치). 그 문단에 걸린 블록(문단 글자·표·누름틀)을 모두 바뀐 블록으로 본다 —
- * 누름틀 값을 바꾸면 같은 문단 글자도, 문단 글자를 바꾸면 그 안 누름틀도 바뀌기 때문이다(PR #26 리뷰)
+ * 누름틀 값을 바꾸면 같은 문단 글자도, 문단 글자를 바꾸면 그 안 누름틀도 바뀌기 때문이다(PR #26 리뷰).
+ * changes 는 문단 수를 바꾼 편집이 실제로 한 일(넣은 문단·지운 문단·표, paragraph-changes.ts) — 뷰어가 서버에 돌려준다
  */
 export interface EditApplied {
   paragraphs: ParagraphPosition[];
+  changes?: ParagraphChanges;
 }
 
 /** 편집은 빈 범위(start = end)를 그 자리에 넣기로 받는다 */
 const EDIT_SPAN = { allowEmpty: true };
 
-function blockAt(blocks: Block[], target: AnchoredTarget): Block {
+function blockAt(blocks: Block[], target: AnchoredBlock): Block {
   const index = blockIndexByAnchor(blocks)(target.anchor);
   const block = index === undefined ? undefined : blocks[index];
   if (block === undefined) throw new Error(`${target.id}: 뷰어 문서에 이 블록이 없습니다. get_outline 을 다시 부르세요.`);
@@ -105,15 +128,27 @@ function replaceText(doc: HwpDocument, blocks: Block[], { target, text }: Replac
   return { paragraphs: [{ section: block.section, paragraph: block.paragraph }] };
 }
 
+/** insert_paragraph: 기준 블록이 든 문단 앞·뒤에 새 문단을 넣는다. 서식은 기준 문단을 따른다(edits.ts insertParagraphNear) */
+function insertParagraph(doc: HwpDocument, blocks: Block[], { reference, where, text }: InsertParagraphOperation): EditApplied {
+  // 표 칸 안 문단은 블록이 아니므로 기준은 언제나 본문 문단이다(표·누름틀 블록이면 그것을 품은 문단). 줄바꿈 거부는 edits.ts
+  const { section, paragraph } = blockAt(blocks, reference);
+  const position = { section, paragraph: insertParagraphNear(doc, section, paragraph, where, text) };
+  return { paragraphs: [position], changes: { ...noParagraphChanges(), inserted: [position] } };
+}
+
 /** 편집 하나를 문서에 적용한다. 던지면 문서가 반쯤 바뀌었을 수 있다 — 되돌리기는 부르는 쪽 스냅샷이 맡는다 */
 export function applyEdit(doc: HwpDocument, blocks: Block[], operation: EditOperation): EditApplied {
   switch (operation.kind) {
     case 'replace_text':
       return replaceText(doc, blocks, operation);
+    case 'insert_paragraph':
+      return insertParagraph(doc, blocks, operation);
+    case 'delete_blocks':
+      return { paragraphs: [], changes: deleteBlocks(doc, blocks, operation.targets) };
     default: {
       // 편집 종류를 더하고 여기 처리를 빠뜨리면 컴파일 오류가 난다
-      const unhandled: never = operation.kind;
-      throw new Error(`처리하지 않는 편집입니다: ${String(unhandled)}`);
+      const unhandled: never = operation;
+      throw new Error(`처리하지 않는 편집입니다: ${JSON.stringify(unhandled)}`);
     }
   }
 }

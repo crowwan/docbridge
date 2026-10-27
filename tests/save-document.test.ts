@@ -95,16 +95,11 @@ const replaceFirst = async (text: string): Promise<string> => {
   return id;
 };
 
-/**
- * 블록 id 표를 바꾸는 편집을 서버 쪽에서만 흉내낸다(문단 넣기 #20 이 아직 없다): 첫 문단 뒤에 새 id 를 끼우고 편집 기록에 남긴다.
- * 뷰어 문서·편집 순번은 그대로라 곧바로 새로고침할 때만 쓴다
- */
-const simulateIdChange = (): string => {
-  const document = opened();
-  const before = document.ids.clone();
-  const id = document.ids.paragraphInserted(0, 1);
-  document.edits.record('insert_paragraph(흉내)', before);
-  return id;
+/** 도구 하나를 부르고 결과 JSON 을 돌려준다(오류면 던진다) */
+const json = async (name: string, args: Record<string, unknown>): Promise<unknown> => {
+  const result = await call(name, args);
+  if (result.isError) throw new Error(result.content[0]?.text);
+  return JSON.parse(result.content[0]?.text ?? '');
 };
 
 /** 뷰어 탭 새로고침: 연결이 끊기고 같은 주소로 새 (빈) 뷰어가 붙는다 */
@@ -400,20 +395,22 @@ describe('SPEC-002 새로고침과 저장하지 않은 편집', () => {
     expect(after.notices).toEqual(['뷰어를 새로고침해서 저장하지 않은 편집 1개가 사라졌습니다.']);
   });
 
-  it('편집으로 블록 id 표가 바뀌었어도 새로고침하면 저장 때의 id 표로 돌아간다', async () => {
-    // AC-14 — 넣기(#20)처럼 id 표를 옮기는 편집 뒤
+  it('넣기·지우기로 블록 id 표가 바뀌었어도 새로고침하면 저장 때의 id 표로 돌아가 id 가 저장한 파일 블록을 가리킨다', async () => {
+    // AC-14 — 넣기·지우기(#20) 뒤
     await connectRhwp();
     await openCopy('notice.hwpx', '공문.hwpx');
     await replaceFirst('저장한 글자');
     await save();
     const atSave = await outline();
-    const added = simulateIdChange();
+    const { inserted } = z.object({ inserted: z.string() }).parse(await json('insert_paragraph', { after: 'b5', text: '저장 안 한 문단' }));
+    await json('delete_blocks', { ids: ['b8', 'b12'] });
 
     await refresh();
 
     const after = await outline();
     expect(after.blocks).toEqual(atSave.blocks);
-    expect(after.blocks.map((b) => b.id)).not.toContain(added);
+    expect(after.blocks.map((b) => b.id)).not.toContain(inserted);
+    expect(after.notices).toEqual(['뷰어를 새로고침해서 저장하지 않은 편집 2개가 사라졌습니다.']);
   });
 
   it('새로고침 뒤에는 서버·뷰어 편집 순번이 둘 다 0 에서 다시 시작해 다음 편집·되돌리기가 된다', async () => {

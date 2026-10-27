@@ -75,10 +75,11 @@ function assertRange(start: number, end: number, length: number, where: string):
   }
 }
 
-function assertSingleLine(text: string): void {
-  if (/[\r\n]/.test(text)) {
-    throw new Error('바꿀 글자에 줄바꿈이 있습니다. 새 문단은 insert_paragraph 로 넣으세요.');
-  }
+const REPLACE_NEWLINE = '바꿀 글자에 줄바꿈이 있습니다. 새 문단은 insert_paragraph 로 넣으세요.';
+const INSERT_NEWLINE = '넣을 글자에 줄바꿈이 있습니다. 문단을 여럿 넣으려면 insert_paragraph 를 문단마다 부르세요.';
+
+function assertSingleLine(text: string, message = REPLACE_NEWLINE): void {
+  if (/[\r\n]/.test(text)) throw new Error(message);
 }
 
 /** 본문 문단의 [start, end) 를 바꾼다. end 를 빼면 문단 끝까지 */
@@ -253,7 +254,7 @@ export function insertParagraphNear(
   where: 'before' | 'after',
   text: string,
 ): number {
-  assertSingleLine(text);
+  assertSingleLine(text, INSERT_NEWLINE);
   // 구역 첫 문단 앞에 넣으면 구역·단 정의가 둘째 문단에 남고, HWPX 로 저장해 다시 열면 구역 정의가 둘이 된다(ADR 002)
   if (where === 'before' && reference === 0) throw new Error('구역 첫 문단 앞에는 문단을 넣을 수 없습니다. 첫 문단 뒤에 넣으세요.');
   const at = where === 'before' ? reference : reference + 1;

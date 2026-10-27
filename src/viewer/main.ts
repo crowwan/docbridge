@@ -317,7 +317,7 @@ function applyEdit(operation: EditOperation, depth: number, unsaved: number): Vi
   let unmarked: BlockAnchor[] = [];
   let drawn = false;
   try {
-    const changed = editor.edit(operation, depth, (changedBlocks, blocks) => {
+    const { changed, changes } = editor.edit(operation, depth, (changedBlocks, blocks) => {
       drawn = true;
       redraw(editor.doc, 'keep');
       const marks = blockBoxes(editor.doc, blocks, changedBlocks.map(({ anchor }) => anchor));
@@ -325,7 +325,7 @@ function applyEdit(operation: EditOperation, depth: number, unsaved: number): Vi
       unmarked = marks.unmarked;
     });
     unsavedEdits = unsaved;
-    return { changed, unmarked, pageCount: editor.doc.pageCount() };
+    return { changed, unmarked, pageCount: editor.doc.pageCount(), ...(changes === undefined ? {} : { changes }) };
   } catch (error) {
     if (drawn) redrawAfterFailure(editor.doc);
     throw error;

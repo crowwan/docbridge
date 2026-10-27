@@ -4,7 +4,8 @@
 // 저장하면 저장 경로가 마지막 파일이 되고, 그때 id 표를 기준 표로 떠 둔다. 새로고침하면 마지막 파일과 기준 표로 돌아간다(SPEC-002, ADR 002).
 import { readFile, stat } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
-import { BlockIdTable, type BlockPosition } from '../core/block-ids.ts';
+import { BlockIdTable, tableControlIndex, type BlockPosition } from '../core/block-ids.ts';
+import type { ParagraphChanges } from '../core/paragraph-changes.ts';
 import type { Block } from '../core/block-schema.ts';
 import type { EditOperation } from '../core/edit-operations.ts';
 import type { LoadDocumentResult, ViewerMethod, ViewerParams, ViewerResult } from '../shared/protocol.ts';
@@ -52,6 +53,31 @@ export interface EditOutcome {
   changed: EditedBlock[];
   /** 바뀌었지만 화면에 표시하지 못한 블록 id(빈 문단 등) */
   unmarked: string[];
+  /** 뷰어가 넣은 문단에 새로 준 id(문서 순서) */
+  inserted: string[];
+  /** 뷰어가 실제로 지운 블록 id(같이 지워진 표·누름틀 포함, 문서 순서) */
+  deleted: string[];
+}
+
+/**
+ * 뷰어가 실제로 넣고 지운 문단·표(ParagraphChanges)대로 id 표를 옮긴다. 서버가 따로 계획하지 않으므로 뷰어 문서와 어긋나지 않는다.
+ * 순서는 relocate(core/paragraph-changes.ts)와 같다: 표만 지운 것(컨트롤 번호 큰 것부터) → 지운 문단(뒤에서부터) → 넣은 문단(앞에서부터)
+ */
+function applyParagraphChanges(ids: BlockIdTable, changes: ParagraphChanges): { inserted: string[]; deleted: string[] } {
+  const removed = [
+    ...changes.deletedParagraphs.flatMap(({ section, paragraph }) => ids.anchorsAt(section, paragraph)),
+    ...changes.deletedTables.flatMap(({ section, paragraph, controlIndex }) =>
+      ids.anchorsAt(section, paragraph).filter(({ anchor }) => tableControlIndex(anchor) === controlIndex),
+    ),
+  ];
+  const idNumber = (id: string) => Number(id.slice(1));
+  const deleted = removed
+    .sort((a, b) => a.anchor.section - b.anchor.section || a.anchor.paragraph - b.anchor.paragraph || idNumber(a.id) - idNumber(b.id))
+    .map(({ id }) => id);
+  for (const table of [...changes.deletedTables].reverse()) ids.tableDeleted(table.section, table.paragraph, table.controlIndex);
+  for (const position of [...changes.deletedParagraphs].reverse()) ids.paragraphDeleted(position.section, position.paragraph);
+  const inserted = changes.inserted.map(({ section, paragraph }) => ids.paragraphInserted(section, paragraph));
+  return { inserted, deleted };
 }
 
 const samePositions = (a: BlockPosition[], b: BlockPosition[]) => JSON.stringify(a) === JSON.stringify(b);
@@ -242,8 +268,8 @@ export class DocumentSession {
   /**
    * 편집 공용 경로(SPEC-002). 편집은 줄에 세워 하나씩 한다(편집 전 id 표 사본과 뷰어 스냅샷이 같은 순서로 쌓여야 한다).
    * 뷰어가 스냅샷 → 편집 → 다시 그리기 → 블록 다시 뽑기 → 바뀐 블록 표시를 하고, 성공하면 서버는
-   * updateIds 로 id 표를 편집에 맞춰 옮기고(넣기·지우기·옮기기, #20·#21) 편집 전 id 표를 되돌리기 칸에 쌓는다.
-   * 뷰어가 실패하면(스냅샷으로 되돌림) id 표·기록은 그대로다. 결과는 바뀐 블록과 그 id(새 블록은 updateIds 가 준 id).
+   * 뷰어가 돌려준 "실제로 넣고 지운 문단·표"(changes)대로 id 표를 옮기고(넣기·지우기, #20), updateIds 를 부른 뒤 편집 전 id 표를 되돌리기 칸에 쌓는다.
+   * 뷰어가 실패하면(스냅샷으로 되돌림) id 표·기록은 그대로다. 결과는 바뀐 블록과 그 id(새 블록은 새 id), 넣고 지운 id.
    * 요청에 서버 편집 순번을 실어 보낸다: 앞 편집 결과를 못 받았으면(타임아웃 등 — 뷰어는 적용했을 수 있다) 뷰어가 어긋남으로 거부한다
    */
   async edit(
@@ -255,11 +281,12 @@ export class DocumentSession {
       const document = this.openedDocument();
       const operation = operationFor(document);
       const before = document.ids.clone();
-      const { changed, unmarked, pageCount } = await this.send('edit', {
+      const { changed, unmarked, pageCount, changes } = await this.send('edit', {
         operation,
         depth: document.edits.depth,
         unsavedEdits: document.edits.unsavedAfterRecord(),
       });
+      const { inserted, deleted } = changes === undefined ? { inserted: [], deleted: [] } : applyParagraphChanges(document.ids, changes);
       updateIds(document.ids);
       document.edits.record(label, before);
       document.pageCount = pageCount;
@@ -267,6 +294,8 @@ export class DocumentSession {
       return {
         changed: changed.map(({ anchor, block }) => ({ id: ids.idAt(anchor), block })),
         unmarked: unmarked.flatMap((anchor) => ids.idAt(anchor) ?? []),
+        inserted,
+        deleted,
       };
     });
   }
