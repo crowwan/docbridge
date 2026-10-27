@@ -3,13 +3,15 @@
 // - ?token=<세션 토큰>: 서버가 연 탭. WebSocket 으로 붙어 서버 요청(load_document 등)을 처리한다
 // - ?fixture=<이름>: 개발 서버의 fixtures/ 에서 문서를 연다(개발·E2E 전용)
 // - 둘 다 없거나 토큰이 거부되면 "docbridge 가 연 탭이 아닙니다" 화면
+// 편집(SPEC-002)은 core/document-editor.ts 공용 경로로 하고, 여기서는 다시 그리고 바뀐 블록에 초록 테두리를 남긴다.
 import init, { HwpDocument } from '@rhwp/core';
 import wasmUrl from '@rhwp/core/rhwp_bg.wasm?url';
 import { blockPositionSchema, type Block } from '../core/block-schema.ts';
-import { extractBlocks } from '../core/blocks.ts';
+import { DocumentEditor } from '../core/document-editor.ts';
+import type { EditOperation } from '../core/edit-operations.ts';
 import { findInBlocks } from '../core/find-text.ts';
 import { selectionRects, type SelectionRect } from '../core/highlight-rects.ts';
-import { highlightTargets } from '../core/highlight-targets.ts';
+import { blockBoxes, highlightTargets } from '../core/highlight-targets.ts';
 import { errorMessage } from '../shared/errors.ts';
 import {
   answerRequest,
@@ -86,6 +88,30 @@ function renderPages(doc: HwpDocument): { pageRenderMs: number[]; pageEls: HTMLE
   return { pageRenderMs, pageEls };
 }
 
+/** 바뀐 블록 표시를 지운다 */
+function clearEditMarks(): void {
+  for (const old of document.querySelectorAll('.edit-mark')) old.remove();
+}
+
+/** 바뀐 블록마다(쪽마다) 블록을 감싸는 초록 테두리를 그리고, 첫 표시가 안 보이면 보이게 스크롤한다 */
+function paintEditMarks(rects: SelectionRect[]): void {
+  clearEditMarks();
+  let first: HTMLElement | undefined;
+  rects.forEach((rect, index) => {
+    const mark = document.createElement('div');
+    mark.className = 'edit-mark';
+    mark.dataset['testid'] = `edit-mark-${index}`;
+    mark.style.left = `${rect.x * ZOOM}px`;
+    mark.style.top = `${rect.y * ZOOM}px`;
+    mark.style.width = `${rect.width * ZOOM}px`;
+    mark.style.height = `${rect.height * ZOOM}px`;
+    currentPageEls[rect.pageIndex]?.append(mark);
+    first ??= mark;
+  });
+  // 바로 옮긴다(움직임 없음). 이미 보이면 그대로 둔다 — 편집한 자리를 보고 있던 화면이 튀지 않게
+  first?.scrollIntoView({ block: 'nearest' });
+}
+
 /** 하이라이트·note 를 모두 지운다 */
 function clearHighlights(): void {
   for (const old of document.querySelectorAll('.highlight, .highlight-note')) old.remove();
@@ -137,10 +163,10 @@ function paintHighlights(pageEls: HTMLElement[], targets: SelectionRect[][], not
 
 /** 대상을 모두 사각형으로 바꾼 뒤에 그린다. 하나라도 틀리면 이전 하이라이트를 그대로 두고 던진다 */
 function paintTargets(params: ViewerParams<'highlight'>): ViewerResult<'highlight'> {
-  const doc = currentDoc;
-  const blocks = openedBlocks();
-  if (doc === undefined) throw new Error(NO_VIEWER_DOCUMENT);
+  const { doc, blocks } = openedEditor();
   const { rects, pages, warnings } = highlightTargets(doc, blocks, params.targets);
+  // 하이라이트를 그리면 바뀐 블록 표시는 지운다(SPEC-002)
+  clearEditMarks();
   paintHighlights(currentPageEls, rects, params.note);
   return { pages, ...(warnings.length === 0 ? {} : { warnings }) };
 }
@@ -155,27 +181,44 @@ window.docbridge = api;
 
 let currentDoc: HwpDocument | undefined;
 let currentPageEls: HTMLElement[] = [];
-/** 서버가 연 문서에서 뽑은 블록. 읽기 전용(v0.1)이라 열 때 한 번 뽑아 둔다 */
-let currentBlocks: Block[] | undefined;
+let currentFileName = '';
+/** 서버가 연 문서의 편집 공용 경로(블록·되돌리기 스냅샷). 편집할 때마다 블록을 다시 뽑는다 */
+let currentEditor: DocumentEditor | undefined;
 
 /** 문서를 열어 그린다. 이전 문서는 닫는다. rhwp 가 읽지 못하면 던진다 */
 function showDocument(bytes: Uint8Array, fileName: string): { doc: HwpDocument; parseMs: number; pageRenderMs: number[] } {
   const parseStarted = performance.now();
   const doc = new HwpDocument(bytes);
   const parseMs = performance.now() - parseStarted;
+  closeEditor();
   currentDoc?.free();
   currentDoc = doc;
+  currentFileName = fileName;
   hideNotice();
   // 쪽을 새로 그리면 이전 문서의 하이라이트·note 도 같이 사라진다
-  const { pageRenderMs, pageEls } = renderPages(doc);
-  currentPageEls = pageEls;
+  const { pageRenderMs } = redraw(doc);
   api.highlight = (range) => {
     const rects = selectionRects(doc, range);
-    paintHighlights(pageEls, [rects]);
+    paintHighlights(currentPageEls, [rects]);
     return rects;
   };
-  setStatus(`${fileName} — ${doc.pageCount()}쪽`);
   return { doc, parseMs, pageRenderMs };
+}
+
+/** 쪽을 모두 다시 그린다(하이라이트·바뀐 블록 표시도 지워진다). 보던 자리는 그대로 둔다 */
+function redraw(doc: HwpDocument): { pageRenderMs: number[] } {
+  const scrollY = window.scrollY;
+  const { pageRenderMs, pageEls } = renderPages(doc);
+  currentPageEls = pageEls;
+  window.scrollTo(0, scrollY);
+  setStatus(`${currentFileName} — ${doc.pageCount()}쪽`);
+  return { pageRenderMs };
+}
+
+/** 이전 문서의 되돌리기 스냅샷을 버린다(서버가 버린 편집 수를 알린다, AC-12) */
+function closeEditor(): void {
+  currentEditor?.dispose();
+  currentEditor = undefined;
 }
 
 function base64ToBytes(data: string): Uint8Array {
@@ -188,12 +231,12 @@ function base64ToBytes(data: string): Uint8Array {
 function loadDocument(fileName: string, data: string): LoadDocumentResult {
   try {
     const { doc } = showDocument(base64ToBytes(data), fileName);
-    currentBlocks = extractBlocks(doc);
-    return { pageCount: doc.pageCount(), blocks: currentBlocks.map((block) => blockPositionSchema.parse(block)) };
+    currentEditor = new DocumentEditor(doc);
+    return { pageCount: doc.pageCount(), blocks: currentEditor.blocks.map((block) => blockPositionSchema.parse(block)) };
   } catch (error) {
+    closeEditor();
     currentDoc?.free();
     currentDoc = undefined;
-    currentBlocks = undefined;
     currentPageEls = [];
     api.highlight = () => {
       throw new Error('문서가 열려 있지 않습니다');
@@ -217,6 +260,10 @@ function handleRequest(request: RequestMessage): unknown {
     case 'clear_highlight':
       clearHighlights();
       return {};
+    case 'edit':
+      return applyEdit(request.params.operation);
+    case 'undo':
+      return undoEdits(request.params.steps);
     default: {
       // 메서드를 더하고 여기 처리를 빠뜨리면 컴파일 오류가 난다
       const unhandled: never = request;
@@ -227,9 +274,29 @@ function handleRequest(request: RequestMessage): unknown {
 
 const NO_VIEWER_DOCUMENT = '뷰어에 열린 문서가 없습니다. open_document 로 문서를 여세요.';
 
+function openedEditor(): DocumentEditor {
+  if (currentEditor === undefined) throw new Error(NO_VIEWER_DOCUMENT);
+  return currentEditor;
+}
+
 function openedBlocks(): Block[] {
-  if (currentBlocks === undefined) throw new Error(NO_VIEWER_DOCUMENT);
-  return currentBlocks;
+  return openedEditor().blocks;
+}
+
+/** 편집하고 다시 그린 뒤 바뀐 블록에 표시를 남긴다. 편집이 실패하면 문서·화면은 그대로다 */
+function applyEdit(operation: EditOperation): ViewerResult<'edit'> {
+  const editor = openedEditor();
+  const changed = editor.edit(operation);
+  redraw(editor.doc);
+  paintEditMarks(blockBoxes(editor.doc, editor.blocks, changed.map(({ anchor }) => anchor)));
+  return { changed, pageCount: editor.doc.pageCount() };
+}
+
+function undoEdits(steps: number): ViewerResult<'undo'> {
+  const editor = openedEditor();
+  const undone = editor.undo(steps);
+  if (undone > 0) redraw(editor.doc);
+  return { undone, pageCount: editor.doc.pageCount() };
 }
 
 const NOT_DOCBRIDGE_TAB = 'docbridge 가 연 탭이 아닙니다';

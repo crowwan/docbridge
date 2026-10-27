@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { charLength } from '../core/chars.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { NOTE_MAX_CHARS, textTargetSchema } from '../shared/protocol.ts';
+import { UNDO_LIMIT } from '../core/edit-history.ts';
+import { NOTHING_TO_UNDO, replaceText, undo } from './edit-tools.ts';
 import { clearHighlight, highlight } from './highlight-tools.ts';
 import { findText, getOutline, readBlockContents } from './read-tools.ts';
 import { OUTLINE_LIMIT, READ_CHAR_LIMIT } from './reading.ts';
@@ -89,6 +91,30 @@ export function createMcpServer(session: DocumentSession): McpServer {
     'clear_highlight',
     { description: '뷰어의 하이라이트와 note 를 모두 지운다', inputSchema: {} },
     () => toolResult(() => clearHighlight(session)),
+  );
+
+  server.registerTool(
+    'replace_text',
+    {
+      description:
+        '열린 문서의 글자를 바꾼다(바로 적용, undo 로 되돌림). target 은 find_text 일치나 { id, cell?: { row, col }, start?, end? } — start·end 가 없으면 블록 글자 전체(표는 cell 로 칸을 골라야 하고 칸 글자 전체, 누름틀은 값 전체이고 start·end 는 값 안 위치). 위치는 read_blocks 의 text(표는 칸 text) 안 유니코드 글자 위치(0부터, end 미포함). text 가 비면 범위를 지우고, start = end 면 그 자리에 넣는다. 줄바꿈이 든 text 는 받지 않는다. 바뀐 글자는 바뀌는 자리 첫 글자의 글자 모양을 따른다. 칸 범위가 칸 안 여러 문단에 걸치면 그 문단들이 합쳐진다. 뷰어는 다시 그려지고 바뀐 블록에 초록 테두리가 남는다. 결과 { changed: [{ id, cell?, text }] } — text 는 바뀐 뒤 블록(칸) 앞 40자',
+      inputSchema: {
+        target: textTargetSchema.describe('바꿀 자리. 블록 하나(또는 칸 하나) 안이어야 한다'),
+        text: z.string().describe('새 글자(빈 글자면 지우기, 줄바꿈 없이)'),
+      },
+    },
+    ({ target, text }) => toolResult(() => replaceText(session, target, text)),
+  );
+
+  server.registerTool(
+    'undo',
+    {
+      description: `편집(replace_text 등)을 최근 것부터 되돌린다. 최대 ${UNDO_LIMIT}단계이고 그보다 옛 편집은 되돌릴 수 없다. 뷰어가 다시 그려진다. 결과 { undone, edits(되돌린 편집, 최근 것부터), warnings? }. 되돌릴 것이 없으면 "${NOTHING_TO_UNDO}"`,
+      inputSchema: {
+        steps: z.number().int().min(1).max(UNDO_LIMIT).default(1).describe(`되돌릴 편집 수(기본 1, 최대 ${UNDO_LIMIT})`),
+      },
+    },
+    ({ steps }) => toolResult(() => undo(session, steps)),
   );
 
   return server;

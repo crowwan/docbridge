@@ -78,6 +78,11 @@ export class BlockIdTable {
     return this.idsByKey().get(anchorKey(anchorOf(position, 0)));
   }
 
+  /** 위치(누름틀 포함)의 id */
+  idAt(anchor: BlockAnchor): string | undefined {
+    return this.idsByKey().get(anchorKey(anchor));
+  }
+
   private idsByKey(): Map<string, string> {
     this.idByKey ??= new Map([...this.anchors].map(([id, anchor]) => [anchorKey(anchor), id]));
     return this.idByKey;

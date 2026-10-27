@@ -305,3 +305,18 @@ export function highlightTargets(doc: HwpDocument, blocks: Block[], targets: Hig
   const pages = [...new Set(rects.flat().map((rect) => rect.pageIndex + 1))].sort((a, b) => a - b);
   return { rects, pages, warnings: context.warnings };
 }
+
+/**
+ * 바뀐 블록 표시(SPEC-002): 블록마다 쪽별로 블록 전체(문단 줄·표·누름틀 값)를 감싸는 사각형.
+ * 화면에 자리가 없는 블록(글자를 모두 지운 빈 문단 등)은 표시하지 않는다(편집은 이미 끝났다)
+ */
+export function blockBoxes(doc: HwpDocument, blocks: Block[], anchors: BlockAnchor[]): SelectionRect[] {
+  const context = new HighlightContext(doc, blocks);
+  return anchors.flatMap((anchor) => {
+    try {
+      return unionByPage(context.rects({ id: '', anchor }));
+    } catch {
+      return [];
+    }
+  });
+}

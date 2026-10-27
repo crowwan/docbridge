@@ -59,6 +59,13 @@ body {
   pointer-events: none;
 }
 
+.edit-mark {
+  position: absolute;
+  outline: var(--edit-mark-width) solid var(--edit-mark);
+  outline-offset: var(--edit-mark-offset);
+  pointer-events: none;
+}
+
 .highlight-note {
   position: absolute;
   z-index: 1;

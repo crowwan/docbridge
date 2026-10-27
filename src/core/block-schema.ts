@@ -69,3 +69,27 @@ export type BlockPosition = z.infer<typeof blockPositionSchema>;
 /** 글자를 찾을 수 있는 블록(문단·표)의 위치 */
 export const textBlockPositionSchema = z.discriminatedUnion('kind', [paragraphPositionSchema, tablePositionSchema]);
 export type TextBlockPosition = z.infer<typeof textBlockPositionSchema>;
+
+/** 서버 id 표가 기억하는 블록 위치(block-ids.ts BlockAnchor). 뷰어가 이것으로 자기 블록을 찾는다 */
+export const blockAnchorSchema = z.object({ section: z.number(), paragraph: z.number(), part: z.string() });
+
+/**
+ * 하이라이트·찾기 공용 대상(#6 find_text 결과, #7 highlight 입력).
+ * 글자 위치는 read_blocks 가 돌려주는 블록 text(표는 칸 안 문단을 \n 으로 이은 칸 text) 안 유니코드 글자 위치다
+ * (JS 문자열 위치가 아니다. 이모지·확장 한자도 한 글자 — core/chars.ts).
+ */
+export const textTargetSchema = z.object({
+  /** 블록 id */
+  id: z.string(),
+  /** 표 블록일 때 칸(0부터). 표 블록인데 없으면 표 전체 */
+  cell: z.object({ row: z.number().int().min(0), col: z.number().int().min(0) }).optional(),
+  /** 블록(또는 칸) 텍스트 안 시작 글자 위치. 0부터, 포함 */
+  start: z.number().int().min(0).optional(),
+  /** 끝 글자 위치, 미포함. start·end 둘 다 없으면 블록(칸) 전체 */
+  end: z.number().int().min(0).optional(),
+});
+export type TextTarget = z.infer<typeof textTargetSchema>;
+
+/** 서버가 id 를 id 표의 위치로 바꿔 붙인 대상(뷰어로 보내는 하이라이트·편집 대상) */
+export const anchoredTargetSchema = textTargetSchema.extend({ anchor: blockAnchorSchema });
+export type AnchoredTarget = z.infer<typeof anchoredTargetSchema>;

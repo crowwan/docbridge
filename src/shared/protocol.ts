@@ -2,39 +2,30 @@
 // 서버가 요청(request)을 보내고 뷰어가 같은 id 로 응답(response)한다. 메시지는 JSON 문자열이고,
 // 받는 쪽은 아래 zod 스키마로 읽는다(타입 단언 없이).
 import { z } from 'zod';
-import { blockPositionSchema, blockSchema } from '../core/block-schema.ts';
+import {
+  anchoredTargetSchema,
+  blockPositionSchema,
+  blockAnchorSchema,
+  blockSchema,
+  textTargetSchema,
+  type AnchoredTarget,
+  type TextTarget,
+} from '../core/block-schema.ts';
+import { editOperationSchema } from '../core/edit-operations.ts';
 import { textMatchSchema } from '../core/find-text.ts';
 import { errorMessage } from './errors.ts';
 
-/**
- * 하이라이트·찾기 공용 대상(#6 find_text 결과, #7 highlight 입력).
- * 글자 위치는 read_blocks 가 돌려주는 블록 text(표는 칸 안 문단을 \n 으로 이은 칸 text) 안 유니코드 글자 위치다
- * (JS 문자열 위치가 아니다. 이모지·확장 한자도 한 글자 — core/chars.ts).
- */
-export const textTargetSchema = z.object({
-  /** 블록 id */
-  id: z.string(),
-  /** 표 블록일 때 칸(0부터). 표 블록인데 없으면 표 전체 */
-  cell: z.object({ row: z.number().int().min(0), col: z.number().int().min(0) }).optional(),
-  /** 블록(또는 칸) 텍스트 안 시작 글자 위치. 0부터, 포함 */
-  start: z.number().int().min(0).optional(),
-  /** 끝 글자 위치, 미포함. start·end 둘 다 없으면 블록(칸) 전체 */
-  end: z.number().int().min(0).optional(),
-});
-export type TextTarget = z.infer<typeof textTargetSchema>;
+// 하이라이트·찾기·편집 공용 대상(TextTarget)과 서버가 위치를 붙인 대상은 core/block-schema.ts 에 있다(뷰어 편집 코드가 같이 쓴다)
+export { anchoredTargetSchema, blockAnchorSchema, textTargetSchema, type AnchoredTarget, type TextTarget };
 
 /** highlight note 의 최대 글자 수. 하이라이트 옆에 짧게 붙는 말이다 */
 export const NOTE_MAX_CHARS = 100;
 
-/** 서버 id 표가 기억하는 블록 위치(core/block-ids.ts BlockAnchor). 뷰어가 이것으로 자기 블록을 찾는다 */
-export const blockAnchorSchema = z.object({ section: z.number(), paragraph: z.number(), part: z.string() });
-
 export const highlightParamsSchema = z.object({
   /** 서버가 id 를 위치로 바꿔 붙인 대상. 첫 대상으로 스크롤한다 */
-  targets: z.array(textTargetSchema.extend({ anchor: blockAnchorSchema })).min(1),
+  targets: z.array(anchoredTargetSchema).min(1),
   note: z.string().optional(),
 });
-export type AnchoredTarget = z.infer<typeof highlightParamsSchema>['targets'][number];
 
 /** 뷰어가 이 시간 안에 응답하지 않으면 요청을 실패로 끝낸다 */
 export const REQUEST_TIMEOUT_MS = 30_000;
@@ -51,6 +42,12 @@ export const loadDocumentResultSchema = z.object({
   blocks: z.array(blockPositionSchema),
 });
 
+/** 편집 결과: 바뀐 블록(편집 뒤 위치와 내용)과 다시 그린 쪽 수 */
+export const editResultSchema = z.object({
+  changed: z.array(z.object({ anchor: blockAnchorSchema, block: blockSchema })),
+  pageCount: z.number(),
+});
+
 /** 서버가 뷰어에 부르는 메서드와 입력·결과 스키마 */
 export const viewerMethodSchemas = {
   /** 문서를 열어 렌더링하고 블록을 추출한다. 이전 문서는 닫는다 */
@@ -63,6 +60,16 @@ export const viewerMethodSchemas = {
   highlight: { params: highlightParamsSchema, result: z.object({ pages: z.array(z.number()), warnings: z.array(z.string()).optional() }) },
   /** 하이라이트를 모두 지운다 */
   clear_highlight: { params: z.object({}), result: z.object({}) },
+  /**
+   * 편집 공용 경로(SPEC-002): 스냅샷 → 편집 → 다시 그리기 → 블록 다시 뽑기 → 바뀐 블록 표시(이전 표시·하이라이트는 지워진다).
+   * 실패하면 스냅샷으로 되돌려 문서는 그대로다. 편집 종류는 operation.kind(core/edit-operations.ts)
+   */
+  edit: { params: z.object({ operation: editOperationSchema }), result: editResultSchema },
+  /** 스냅샷으로 steps 만큼(있는 만큼만) 되돌리고 다시 그린다. 결과는 되돌린 수(없으면 0) */
+  undo: {
+    params: z.object({ steps: z.number().int().min(1) }),
+    result: z.object({ undone: z.number(), pageCount: z.number() }),
+  },
 } as const;
 
 type MethodSchemas = typeof viewerMethodSchemas;
@@ -79,6 +86,8 @@ export const parseViewerResult: { [M in ViewerMethod]: (result: unknown) => View
   find_text: (result) => viewerMethodSchemas.find_text.result.parse(result),
   highlight: (result) => viewerMethodSchemas.highlight.result.parse(result),
   clear_highlight: (result) => viewerMethodSchemas.clear_highlight.result.parse(result),
+  edit: (result) => viewerMethodSchemas.edit.result.parse(result),
+  undo: (result) => viewerMethodSchemas.undo.result.parse(result),
 };
 
 const requestSchema = <M extends ViewerMethod, P extends z.ZodType>(method: M, params: P) =>
@@ -91,6 +100,8 @@ const requestSchemas = {
   find_text: requestSchema('find_text', viewerMethodSchemas.find_text.params),
   highlight: requestSchema('highlight', viewerMethodSchemas.highlight.params),
   clear_highlight: requestSchema('clear_highlight', viewerMethodSchemas.clear_highlight.params),
+  edit: requestSchema('edit', viewerMethodSchemas.edit.params),
+  undo: requestSchema('undo', viewerMethodSchemas.undo.params),
 } satisfies { [M in ViewerMethod]: z.ZodObject };
 
 /** 뷰어가 요청을 읽는 스키마. 메서드마다 입력 모양이 다르다 */
@@ -100,6 +111,8 @@ export const requestMessageSchema = z.discriminatedUnion('method', [
   requestSchemas.find_text,
   requestSchemas.highlight,
   requestSchemas.clear_highlight,
+  requestSchemas.edit,
+  requestSchemas.undo,
 ]);
 export type RequestMessage = z.infer<typeof requestMessageSchema>;
 

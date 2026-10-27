@@ -14,7 +14,8 @@ export interface HighlightResult {
   warnings?: string[];
 }
 
-function anchored(ids: BlockIdTable, targets: TextTarget[]): AnchoredTarget[] {
+/** 대상의 블록 id 를 id 표의 위치로 바꾼다. 없는 id 가 있으면 모두 모아 던진다(뷰어에 보내기 전에) */
+export function anchored(ids: BlockIdTable, targets: TextTarget[]): AnchoredTarget[] {
   const unknown = targets.filter((target) => ids.anchor(target.id) === undefined).map((target) => target.id);
   if (unknown.length > 0) throw new Error(unknownIdsMessage([...new Set(unknown)]));
   return targets.flatMap((target) => {
