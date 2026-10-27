@@ -342,12 +342,6 @@ export function createNewDocument(template: Uint8Array | undefined, keepContent:
   }
 }
 
-/**
- * 새 문서의 첫 블록: 첫 구역 첫 문단(구역·단 정의가 든 빈 문단)은 비어 있어도 문단 블록으로 남긴다(ADR 003 결정 10).
- * 빈 문서·비운 양식은 블록이 0개라 insert_paragraph 의 기준이 없다
- */
-export const isFirstParagraph = (section: number, paragraph: number): boolean => section === 0 && paragraph === 0;
-
 /** create_document 결과에 싣는 스타일 목록(이름·영문 이름·개요 수준). 스타일 id 는 문서 안 번호라 싣지 않는다 */
 export const styleSummaries = (doc: HwpDocument): Omit<ParagraphStyle, 'id'>[] =>
   paragraphStyles(doc).map(({ name, englishName, outlineLevel }) =>

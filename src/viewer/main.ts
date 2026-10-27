@@ -14,7 +14,7 @@ import { findInBlocks } from '../core/find-text.ts';
 import { selectionRects, type SelectionRect } from '../core/highlight-rects.ts';
 import { blockBoxes, highlightTargets } from '../core/highlight-targets.ts';
 import { exportForSave } from '../core/hwpx-export.ts';
-import { createNewDocument, isFirstParagraph, styleSummaries } from '../core/create-document.ts';
+import { createNewDocument, styleSummaries } from '../core/create-document.ts';
 import { base64ToBytes } from '../shared/base64.ts';
 import { errorMessage } from '../shared/errors.ts';
 import {
@@ -275,7 +275,8 @@ function createDocument(params: ViewerParams<'create_document'>): CreateDocument
     const { template } = params;
     const { doc, cleared } = createNewDocument(template === undefined ? undefined : base64ToBytes(template.data), template?.keepContent ?? false);
     showDocument(doc, params.fileName);
-    currentEditor = new DocumentEditor(doc, isFirstParagraph);
+    // 블록이 없는 문서는 첫 문단이 빈 문단 블록이 된다(DocumentEditor)
+    currentEditor = new DocumentEditor(doc);
     return {
       pageCount: doc.pageCount(),
       blocks: currentEditor.blocks.map((block) => blockPositionSchema.parse(block)),

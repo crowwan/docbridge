@@ -4,7 +4,7 @@
 // 저장하면 저장 경로가 마지막 파일이 되고, 그때 id 표를 기준 표로 떠 둔다. 새로고침하면 마지막 파일과 기준 표로 돌아간다(SPEC-002, ADR 002).
 import { readFile, stat } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
-import { BlockIdTable, tableControlIndex, type BlockPosition } from '../core/block-ids.ts';
+import { anchorsOf, BlockIdTable, tableControlIndex, type BlockPosition } from '../core/block-ids.ts';
 import type { ParagraphChanges } from '../core/paragraph-changes.ts';
 import type { Block } from '../core/block-schema.ts';
 import type { EditOperation } from '../core/edit-operations.ts';
@@ -322,7 +322,9 @@ export class DocumentSession {
         discarded,
       );
       const ids = BlockIdTable.assign(created.blocks);
-      const firstBlock = ids.idAt({ section: 0, paragraph: 0, part: 'text' });
+      // 블록이 없는 문서는 뷰어가 첫 문단을 빈 문단 블록으로 남기므로 늘 하나는 있다(keep_content 면 양식의 첫 블록)
+      const [first] = anchorsOf(created.blocks);
+      const firstBlock = first === undefined ? undefined : ids.idAt(first);
       if (firstBlock === undefined) throw new Error('새 문서의 첫 블록을 찾지 못했습니다.');
       this.current = {
         location: { kind: 'new', savePath },

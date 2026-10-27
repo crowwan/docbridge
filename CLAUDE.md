@@ -36,9 +36,9 @@ npm run build          # 서버(tsc → dist/server) + 뷰어(vite → dist/view
 npm start              # 빌드 결과 실행: MCP 서버(stdio) + 뷰어 서버(7790, 사용 중이면 7799 까지 다음 포트).
                        # = node dist/server/index.js. DOCBRIDGE_PORT 로 시작 포트 변경
 npm run typecheck
-npm test               # Vitest: 블록 추출·블록 id·글자 단위·하이라이트 계산·요청/응답·open_document·읽기·하이라이트 도구(가짜/rhwp 테스트 뷰어)·편집 기술 검증·편집 공용 경로·replace_text·insert_paragraph·delete_blocks·move_blocks·undo·저장(경로 규칙·검증·새로고침)·새 문서 만들기 기술 검증(빈 문서 스타일·스타일 적용·표·양식 비우기)·
+npm test               # Vitest: 블록 추출·블록 id·글자 단위·하이라이트 계산·요청/응답·open_document·읽기·하이라이트 도구(가짜/rhwp 테스트 뷰어)·편집 기술 검증·편집 공용 경로·replace_text·insert_paragraph·delete_blocks·move_blocks·undo·저장(경로 규칙·검증·새로고침)·새 문서 만들기(create_document·새 문서 저장·새로고침)·새 문서 만들기 기술 검증(빈 문서 스타일·스타일 적용·표·양식 비우기)·
                        # fixture 별 get_outline 기대 JSON(tests/outline/, rhwp 회귀 — 바꿀 때 -u)·서버 통합 (CI)
-npm run e2e            # 빌드 후 Playwright: 렌더링·하이라이트·측정·문서 열기·토큰 거부·읽기 도구·하이라이트 도구·편집 표시·저장과 새로고침 확인 창 (로컬 전용, CI 에 없음)
+npm run e2e            # 빌드 후 Playwright: 렌더링·하이라이트·측정·문서 열기·토큰 거부·읽기 도구·하이라이트 도구·편집 표시·저장과 새로고침 확인 창·새 문서 만들기(빈 문서·양식·확인 창) (로컬 전용, CI 에 없음)
 node scripts/make-fixtures.ts   # fixtures/ 의 생성 문서 다시 만들기
 node scripts/measure-edits.ts [문서…]   # 편집·되돌리기·HWPX 저장 검증 비용 측정 (ADR 002)
 node scripts/make-hwp-check.ts [폴더]   # 한글 프로그램 확인용 편집 HWPX (기본 ~/Downloads/docbridge-hwp-check, 레포에 넣지 않음)
@@ -53,12 +53,12 @@ node scripts/make-create-check.ts [폴더] # 한글 프로그램 확인용 새�
 
 ```
 src/
-  server/      MCP 서버 진입점(index.ts), 도구 등록(mcp.ts), 문서 세션(session.ts: 마지막 파일·id 표·편집 기록·뷰어 요청과 편집 공용 경로),
+  server/      MCP 서버 진입점(index.ts), 도구 등록(mcp.ts), 문서 세션(session.ts: 문서 자리(연 파일 / 저장 전 새 문서)·마지막 파일·id 표·편집 기록·뷰어 요청과 편집 공용 경로, create = create_document),
                읽기 도구(read-tools.ts: 뷰어 요청 + id 붙이기, reading.ts: 개요·읽기 결과와 500블록·20,000자 자르기),
                하이라이트 도구(highlight-tools.ts: 대상 id → id 표 위치로 바꿔 뷰어에 요청),
                편집 도구(edit-tools.ts: replace_text·insert_paragraph·delete_blocks·move_blocks·undo → session.edit/undo 편집 공용 경로), 옮기기 계획(move-plan.ts: id 표로 이어짐·기준 등 거부 판정과 옮길 문단 범위), 편집 기록(edit-log.ts: 되돌리기 20칸 id 표 사본·저장하지 않은 편집 수),
                저장(save-tool.ts: 뷰어 export_hwpx → 검증 실패면 블록 id → 쓰기 → 마지막 파일·기준 id 표,
-               save-path.ts: 경로 규칙·배타적 만들기·임시 파일 → 이름 바꾸기),
+               save-path.ts: 경로 규칙(새 문서 경로·새 문서 저장 포함)·배타적 만들기·임시 파일 → 이름 바꾸기),
                HTTP·WebSocket(bridge.ts: 토큰·포트·요청 전달), 포트 설정(port.ts), 브라우저 열기(browser.ts), stderr 로그
   shared/      서버 ↔ 뷰어 요청/응답 프로토콜(protocol.ts: 메서드별 입력·결과 스키마·요청 id·타임아웃·TextTarget), 오류 문구(errors.ts),
                파일 크기 상한(limits.ts: 열기·저장 50MB), base64(base64.ts: 뷰어·테스트 뷰어 공용)
@@ -71,7 +71,7 @@ src/
                편집 공용 경로(document-editor.ts: 스냅샷 → 편집 → 블록 다시 뽑기 → 바뀐 블록, 실패하면 되돌림 — 뷰어·테스트 뷰어 공용),
                HWPX 저장 검증(hwpx-export.ts: 내보내 다시 열어 블록 비교·손실 보고, exportForSave = 뷰어 export_hwpx 결과) — ADR 002,
                본문 문단 위치(body-paragraphs.ts: getControls 등의 문서 전체 문단 번호 → 구역·문단),
-               새 문서 만들기(create-document.ts: 문단 스타일 목록·스타일 적용·제목 스타일·표 넣기·양식 본문 비우기, #35 기술 검증) — ADR 003,
+               새 문서 만들기(create-document.ts: 문단 스타일 목록·스타일 적용·제목 스타일·표 넣기·양식 본문 비우기, #35 기술 검증, createNewDocument = 뷰어가 새 문서 만들기(#36)) — ADR 003,
                Node 용 초기화(rhwp-node.ts)
   viewer/      브라우저 뷰어(Vite root). Canvas 렌더링 + 하이라이트·note·바뀐 블록 표시 오버레이. 디자인 토큰은 tokens.css (의도는 docs/design.md)
 tests/         Vitest (Node 에서 rhwp WASM 을 직접 띄움). outline/ = fixture 별 get_outline 기대 JSON

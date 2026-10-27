@@ -358,6 +358,23 @@ describe('SPEC-003 새 문서와 새로고침', () => {
   });
 });
 
+describe('SPEC-003 블록이 없는 문서의 첫 블록', () => {
+  it('비운 채 저장한 새 문서를 새로고침하거나 다시 열어도 첫 문단이 빈 문단 블록이라 채울 수 있다', async () => {
+    await connectRhwp();
+    const path = join(dir, '제안서.hwpx');
+    const { firstBlock } = await create({ path });
+    await save();
+
+    await refresh();
+    expect(await outline()).toEqual([{ id: firstBlock, kind: 'paragraph', text: '' }]);
+    await json('replace_text', { target: { id: firstBlock }, text: '새로고침 뒤 제목' });
+    expect(await outlineTexts()).toEqual(['새로고침 뒤 제목']);
+
+    await json('open_document', { path });
+    expect(await outline()).toEqual([{ id: 'b1', kind: 'paragraph', text: '' }]);
+  });
+});
+
 describe('SPEC-003 새 문서에서의 편집 (SPEC-002 도구)', () => {
   it('AC-9 새 문서에서 replace_text·insert_paragraph·move_blocks·delete_blocks·undo 가 SPEC-002 와 같이 동작한다', async () => {
     await connectRhwp();

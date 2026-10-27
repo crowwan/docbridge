@@ -3,7 +3,7 @@
 // 편집·되돌리기는 뷰어와 같은 공용 경로(core/document-editor.ts)를, 저장 전 검증은 뷰어와 같은 exportForSave 를 쓴다.
 import { HwpDocument } from '@rhwp/core';
 import { blockPositionSchema } from '../src/core/block-schema.ts';
-import { createNewDocument, isFirstParagraph, styleSummaries } from '../src/core/create-document.ts';
+import { createNewDocument, styleSummaries } from '../src/core/create-document.ts';
 import { DocumentEditor } from '../src/core/document-editor.ts';
 import { findInBlocks } from '../src/core/find-text.ts';
 import { blockBoxes, highlightTargets } from '../src/core/highlight-targets.ts';
@@ -63,7 +63,7 @@ export function rhwpViewer(options: RhwpViewerOptions = {}): RhwpViewer {
           template === undefined ? undefined : new Uint8Array(Buffer.from(template.data, 'base64')),
           template?.keepContent ?? false,
         );
-        editor = new DocumentEditor(doc, isFirstParagraph);
+        editor = new DocumentEditor(doc);
         newDocument = true;
         return {
           pageCount: doc.pageCount(),
