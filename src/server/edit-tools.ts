@@ -4,6 +4,7 @@
 import { assertTableSpec, type TableSpec } from '../core/create-document.ts';
 import { assertDeletable } from '../core/delete-blocks.ts';
 import { UNDO_LIMIT } from '../core/edit-history.ts';
+import { assertTargetCount } from '../core/edit-operations.ts';
 import { targetLabel } from '../core/text-targets.ts';
 import type { TextTarget } from '../shared/protocol.ts';
 import { anchored, anchoredTarget } from './highlight-tools.ts';
@@ -31,27 +32,62 @@ export interface EditResult {
 
 export const unmarkedMessage = (id: string) => `${id}: 화면에 표시할 자리가 없어(빈 문단 등) 바뀐 블록 표시를 하지 못했습니다.`;
 
-/** 바뀐 블록 → 결과 항목. 칸을 고친 편집이면 표는 그 칸 글자를 앞 40자로 보인다 */
-function changedItem({ id, block }: EditedBlock, cell: TextTarget['cell']): ChangedItem[] {
+type EditedCell = NonNullable<TextTarget['cell']>;
+
+/** 바뀐 블록 → 결과 항목. 칸을 고친 편집이면 표는 고친 칸마다 그 칸 글자를 앞 40자로 보인다 */
+function changedItem({ id, block }: EditedBlock, cells: Map<string, EditedCell[]>): ChangedItem[] {
   if (id === undefined) return [];
-  if (block.kind === 'table' && cell !== undefined) {
-    const text = block.cells.find(({ row, col }) => row === cell.row && col === cell.col)?.text ?? '';
-    return [{ id, cell, text: preview(text) }];
+  const edited = cells.get(id) ?? [];
+  if (block.kind === 'table' && edited.length > 0) {
+    return edited.map((cell) => {
+      const text = block.cells.find(({ row, col }) => row === cell.row && col === cell.col)?.text ?? '';
+      return { id, cell, text: preview(text) };
+    });
   }
   return [{ id, text: outlineItem({ id, block }).text }];
 }
 
-export async function replaceText(session: DocumentSession, target: TextTarget, text: string): Promise<EditResult> {
-  const { changed, unmarked } = await session.edit((document) => ({
-    label: `replace_text ${targetLabel(target)}`,
-    operation: { kind: 'replace_text', target: anchoredTarget(document.ids, target), text },
-  }));
-  return editResult(changed, unmarked, target.cell);
+/** 블록 id 마다 고친 칸(같은 칸은 한 번, 준 순서) */
+function editedCells(targets: TextTarget[]): Map<string, EditedCell[]> {
+  const cells = new Map<string, EditedCell[]>();
+  for (const { id, cell } of targets) {
+    if (cell === undefined) continue;
+    const known = cells.get(id) ?? [];
+    if (!known.some(({ row, col }) => row === cell.row && col === cell.col)) cells.set(id, [...known, cell]);
+  }
+  return cells;
 }
 
-function editResult(changed: EditedBlock[], unmarked: string[], cell?: TextTarget['cell']): EditResult {
+export const TARGET_REQUIRED = 'target 과 targets 중 하나만 주세요.';
+
+/** replace_text 입력(target 또는 targets 하나) → 바꿀 자리 목록. 둘 다 주거나 하나도 안 주면 던진다 */
+export function targetsOf({ target, targets }: { target?: TextTarget | undefined; targets?: TextTarget[] | undefined }): TextTarget[] {
+  if (target !== undefined && targets === undefined) return [target];
+  if (targets !== undefined && target === undefined) return targets;
+  throw new Error(TARGET_REQUIRED);
+}
+
+/** 편집 이름: 자리 셋까지는 모두, 넘으면 셋 + 나머지 수 */
+function replaceLabel(targets: TextTarget[]): string {
+  const labels = targets.map(targetLabel);
+  const rest = labels.length - 3;
+  return `replace_text ${labels.slice(0, 3).join(', ')}${rest > 0 ? ` 외 ${rest}곳` : ''}`;
+}
+
+/**
+ * replace_text: 자리(하나 또는 여럿) 모두를 text 로 바꾼다. 편집 하나(undo 한 번). 위치는 모두 편집 전 문서 기준이고,
+ * 겹침·범위 검사와 뒤 자리부터 바꾸기는 뷰어(core/edit-operations.ts)가, 자리 수 상한은 보내기 전에 여기서도 한다(SPEC-005)
+ */
+export async function replaceText(session: DocumentSession, input: TextTarget | TextTarget[], text: string): Promise<EditResult> {
+  const targets = Array.isArray(input) ? input : [input];
+  assertTargetCount(targets.length);
+  const { changed, unmarked } = await session.edit((document) => ({
+    label: replaceLabel(targets),
+    operation: { kind: 'replace_text', targets: anchored(document.ids, targets), text },
+  }));
+  const cells = editedCells(targets);
   return {
-    changed: changed.flatMap((edited) => changedItem(edited, cell)),
+    changed: changed.flatMap((edited) => changedItem(edited, cells)),
     ...(unmarked.length === 0 ? {} : { warnings: unmarked.map(unmarkedMessage) }),
   };
 }

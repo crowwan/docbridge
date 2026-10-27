@@ -12,7 +12,8 @@ import { startBridge, type Bridge } from '../src/server/bridge.ts';
 import { createMcpServer } from '../src/server/mcp.ts';
 import { DocumentSession } from '../src/server/session.ts';
 import { REQUEST_TIMEOUT_MS, type RequestMessage } from '../src/shared/protocol.ts';
-import { replaceText, WHERE_REQUIRED } from '../src/server/edit-tools.ts';
+import { replaceText, TARGET_REQUIRED, WHERE_REQUIRED } from '../src/server/edit-tools.ts';
+import { MAX_REPLACE_TARGETS, tooManyTargetsMessage } from '../src/core/edit-operations.ts';
 import { FakeViewer, NO_RESPONSE } from './fake-viewer.ts';
 import { fixturePath } from './fixtures.ts';
 import { rhwpViewer, type RhwpViewer } from './rhwp-viewer.ts';
@@ -82,7 +83,7 @@ describe('SPEC-002 편집 도구 (replace_text · move_blocks · undo)', () => {
     expect(requests('edit').at(-1)?.params).toEqual({
       operation: {
         kind: 'replace_text',
-        target: { id: 'b11', start: 13, end: 20, anchor: { section: 0, paragraph: 10, part: 'text' } },
+        targets: [{ id: 'b11', start: 13, end: 20, anchor: { section: 0, paragraph: 10, part: 'text' } }],
         text: '11. 7.',
       },
       depth: 0,
@@ -146,7 +147,7 @@ describe('SPEC-002 편집 도구 (replace_text · move_blocks · undo)', () => {
       (document) => {
         const anchor = document.ids.anchor('b1');
         if (anchor === undefined) throw new Error('b1 이 없다');
-        return { label: 'id 표를 옮기는 편집', operation: { kind: 'replace_text', target: { id: 'b1', anchor }, text: '라마바구청' } };
+        return { label: 'id 표를 옮기는 편집', operation: { kind: 'replace_text', targets: [{ id: 'b1', anchor }], text: '라마바구청' } };
       },
       (ids) => void ids.paragraphInserted(0, 1),
     );
@@ -350,5 +351,73 @@ describe('SPEC-002 편집 도구 (replace_text · move_blocks · undo)', () => {
       '옮길 블록이 문서에서 이어져 있지 않습니다. 사이 블록 b7 도 ids 에 넣거나 따로 옮기세요.',
     );
     expect(requests('edit')).toHaveLength(0);
+  });
+
+  describe('SPEC-005 replace_text 여러 자리(targets)', () => {
+    // b11 "회신 기한: 2026. 11. 14.(금)까지 참석 인원을 회신하여 주시기 바랍니다." 의 두 "회신"
+    const replies = [
+      { id: 'b11', start: 0, end: 2 },
+      { id: 'b11', start: 33, end: 35 },
+    ];
+
+    it('AC-4 targets 의 여러 자리를 편집 전 위치 기준으로 한 편집에 바꾸고, undo 한 번에 모두 돌아간다', async () => {
+      const result = await json('replace_text', {
+        targets: [...replies, { id: 'b12', cell: { row: 2, col: 2 }, start: 0, end: 0 }, { id: 'b1', start: 0, end: 2 }],
+        text: '답장',
+      });
+
+      expect(result).toEqual({
+        changed: [
+          { id: 'b1', text: '답장다구청' },
+          { id: 'b11', text: '답장 기한: 2026. 11. 14.(금)까지 참석 인원을 답장하여 주시…' },
+          { id: 'b12', cell: { row: 2, col: 2 }, text: '답장구민회관 소강당' },
+        ],
+      });
+      expect(await readText('b11')).toBe('답장 기한: 2026. 11. 14.(금)까지 참석 인원을 답장하여 주시기 바랍니다.');
+      expect(requests('edit')).toHaveLength(1);
+
+      expect(await json('undo')).toEqual({ undone: 1, edits: ['replace_text b11, b11, b12 칸(2,2) 외 1곳'] });
+      expect(await readText('b11')).toBe('회신 기한: 2026. 11. 14.(금)까지 참석 인원을 회신하여 주시기 바랍니다.');
+      expect(await readText('b1')).toBe('가나다구청');
+    });
+
+    it('AC-4 같은 표의 여러 칸을 바꾸면 결과에 칸마다 항목을 준다', async () => {
+      expect(
+        await json('replace_text', {
+          targets: [
+            { id: 'b12', cell: { row: 1, col: 0 }, start: 0, end: 0 },
+            { id: 'b12', cell: { row: 2, col: 0 }, start: 0, end: 0 },
+          ],
+          text: '*',
+        }),
+      ).toMatchObject({ changed: [{ id: 'b12', cell: { row: 1, col: 0 } }, { id: 'b12', cell: { row: 2, col: 0 } }] });
+    });
+
+    it('AC-5 targets 가 겹치거나 하나라도 잘못되면 아무것도 바뀌지 않고 편집 기록에 남지 않는다', async () => {
+      expect(await errorText('replace_text', { targets: [replies[0], { id: 'b11', start: 1, end: 3 }], text: 'X' })).toBe(
+        '바꿀 자리가 겹칩니다: b11 1~3',
+      );
+      expect(await errorText('replace_text', { targets: [...replies, { id: 'b1', start: 2, end: 30 }], text: 'X' })).toBe(
+        'b1: 글자 범위가 맞지 않습니다(start 2, end 30, 글자 수 5). 0 ≤ start ≤ end ≤ 글자 수로 주세요.',
+      );
+      expect(await errorText('replace_text', { targets: [...replies, { id: 'b99' }], text: 'X' })).toBe(
+        '없는 블록 id 입니다: b99. get_outline 을 다시 불러 지금 블록 id 를 확인하세요.',
+      );
+      expect(await readText('b11')).toBe('회신 기한: 2026. 11. 14.(금)까지 참석 인원을 회신하여 주시기 바랍니다.');
+      expect([session.editCount, session.dirty]).toEqual([0, false]);
+    });
+
+    it(`AC-8 targets 가 ${MAX_REPLACE_TARGETS} 곳을 넘으면 뷰어에 보내지 않고 오류다`, async () => {
+      const targets = Array.from({ length: MAX_REPLACE_TARGETS + 1 }, () => ({ id: 'b1', start: 0, end: 1 }));
+
+      expect(await errorText('replace_text', { targets, text: 'X' })).toBe(tooManyTargetsMessage(MAX_REPLACE_TARGETS + 1));
+      expect(requests('edit')).toHaveLength(0);
+    });
+
+    it('target 과 targets 를 둘 다 주거나 하나도 안 주면 뷰어에 보내지 않는다', async () => {
+      expect(await errorText('replace_text', { target: { id: 'b1' }, targets: [{ id: 'b3' }], text: 'X' })).toBe(TARGET_REQUIRED);
+      expect(await errorText('replace_text', { text: 'X' })).toBe(TARGET_REQUIRED);
+      expect(requests('edit')).toHaveLength(0);
+    });
   });
 });

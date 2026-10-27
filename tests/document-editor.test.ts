@@ -6,7 +6,7 @@ import { BlockIdTable } from '../src/core/block-ids.ts';
 import type { Block } from '../src/core/block-schema.ts';
 import { DocumentEditor } from '../src/core/document-editor.ts';
 import { UNDO_LIMIT } from '../src/core/edit-history.ts';
-import type { EditOperation } from '../src/core/edit-operations.ts';
+import { MAX_REPLACE_TARGETS, type EditOperation } from '../src/core/edit-operations.ts';
 import { charLook, listFields, paraShapeIdOf, replaceFieldText } from '../src/core/edits.ts';
 import { blockBoxes } from '../src/core/highlight-targets.ts';
 import { createBlankDocument } from '../src/core/rhwp-node.ts';
@@ -32,7 +32,16 @@ const replace = (
   id: string,
   text: string,
   extra: { cell?: { row: number; col: number }; start?: number; end?: number } = {},
-): EditOperation => ({ kind: 'replace_text', target: targetOf(editor, id, extra), text });
+): EditOperation => ({ kind: 'replace_text', targets: [targetOf(editor, id, extra)], text });
+
+type Spot = { id: string; cell?: { row: number; col: number }; start?: number; end?: number };
+
+/** 여러 자리를 한 편집으로 바꾸는 replace_text(SPEC-005) */
+const replaceMany = (editor: DocumentEditor, spots: Spot[], text: string): EditOperation => ({
+  kind: 'replace_text',
+  targets: spots.map(({ id, ...extra }) => targetOf(editor, id, extra)),
+  text,
+});
 
 /** 서버와 같은 방법(planMove)으로 move_blocks 편집을 만든다. id 는 지금 블록 순서로 새로 붙인다 */
 function move(editor: DocumentEditor, ids: string[], reference: string, where: MoveWhere): EditOperation {
@@ -177,7 +186,7 @@ describe('SPEC-002 replace_text (편집 공용 경로)', () => {
     const editor = new DocumentEditor(openFixture('notice.hwpx'));
     const operation: EditOperation = {
       kind: 'replace_text',
-      target: { id: 'b99', anchor: { section: 0, paragraph: 99, part: 'text' } },
+      targets: [{ id: 'b99', anchor: { section: 0, paragraph: 99, part: 'text' } }],
       text: 'X',
     };
     expect(() => editor.edit(operation, editor.depth)).toThrow('b99: 뷰어 문서에 이 블록이 없습니다. get_outline 을 다시 부르세요.');
@@ -196,6 +205,135 @@ describe('SPEC-002 replace_text (편집 공용 경로)', () => {
     expect(doc.getTextRange(S, 0, 0, doc.getParagraphLength(S, 0))).toBe('가나다라마바');
     expect(JSON.stringify(editor.blocks)).toBe(before);
     expect(editor.undo(1, editor.depth)).toBe(0);
+  });
+});
+
+describe('SPEC-005 replace_text 여러 자리 (편집 공용 경로)', () => {
+  it('AC-4 같은 블록 안 여러 자리를 편집 전 위치 기준으로 바꾼다(앞 자리 길이가 달라져도, 준 순서와 상관없이)', () => {
+    const editor = mixedEditor();
+
+    editor.edit(replaceMany(editor, [{ id: 'b1', start: 4, end: 5 }, { id: 'b1', start: 0, end: 1 }], '가가가'), editor.depth);
+
+    expect(blockText(editor, 0)).toBe('가가가나다라가가가바');
+  });
+
+  it('AC-4 여러 블록·같은 칸 여러 자리를 한 편집으로 바꾸고, undo 한 번에 모두 돌아간다', () => {
+    const editor = new DocumentEditor(openFixture('notice.hwpx'));
+    const before = JSON.stringify(editor.blocks);
+    // b11 "회신 기한: … 인원을 회신하여 …" 의 두 "회신", b12 (1,1) 칸 "11. 20.(목) 14:00" 의 두 "1"
+    const operation = replaceMany(
+      editor,
+      [
+        { id: 'b11', start: 0, end: 2 },
+        { id: 'b11', start: 33, end: 35 },
+        { id: 'b12', cell: { row: 1, col: 1 }, start: 0, end: 1 },
+        { id: 'b12', cell: { row: 1, col: 1 }, start: 11, end: 12 },
+      ],
+      '답장',
+    );
+
+    const changed = editor.edit(operation, editor.depth).changed;
+
+    expect(blockText(editor, 10)).toBe('답장 기한: 2026. 11. 14.(금)까지 참석 인원을 답장하여 주시기 바랍니다.');
+    const table = editor.blocks[11];
+    expect(table?.kind === 'table' ? table.cells.find((c) => c.row === 1 && c.col === 1)?.text : undefined).toBe('답장1. 20.(목) 답장4:00');
+    expect(changed.map(({ block }) => block.kind)).toEqual(['paragraph', 'table']);
+
+    expect(editor.undo(1, editor.depth)).toBe(1);
+    expect(JSON.stringify(editor.blocks)).toBe(before);
+  });
+
+  it('AC-4 같은 누름틀 값 안 여러 자리도 편집 전 위치 기준이다', () => {
+    const editor = new DocumentEditor(openFixture('application.hwpx'));
+    // b7 = 신청인 누름틀
+    editor.edit(replace(editor, 'b7', '가나다'), editor.depth);
+
+    editor.edit(replaceMany(editor, [{ id: 'b7', start: 0, end: 1 }, { id: 'b7', start: 1, end: 2 }], 'XX'), editor.depth);
+
+    expect(blockText(editor, 6)).toBe('XXXX다');
+  });
+
+  it.each([
+    ['범위가 겹치면', [{ id: 'b1', start: 0, end: 3 }, { id: 'b1', start: 2, end: 4 }], '바꿀 자리가 겹칩니다: b1 2~4'],
+    ['같은 자리에 두 번 넣으면', [{ id: 'b1', start: 2, end: 2 }, { id: 'b1', start: 2, end: 2 }], '바꿀 자리가 겹칩니다: b1 2~2'],
+    ['블록 전체와 그 안 자리를 같이 주면', [{ id: 'b1' }, { id: 'b1', start: 1, end: 2 }], '바꿀 자리가 겹칩니다: b1 1~2'],
+    [
+      '한 자리라도 범위 밖이면',
+      [{ id: 'b1', start: 0, end: 1 }, { id: 'b1', start: 3, end: 9 }],
+      'b1: 글자 범위가 맞지 않습니다(start 3, end 9, 글자 수 6). 0 ≤ start ≤ end ≤ 글자 수로 주세요.',
+    ],
+    ['한 자리라도 문단에 cell 을 주면', [{ id: 'b1', start: 0, end: 1 }, { id: 'b1', cell: { row: 0, col: 0 } }], 'b1: 표 블록이 아니라 cell 을 줄 수 없습니다.'],
+  ])('AC-5 %s 아무것도 바꾸지 않고 이유를 던진다', (_case, spots, message) => {
+    const editor = mixedEditor();
+    const before = JSON.stringify(editor.blocks);
+
+    expect(() => editor.edit(replaceMany(editor, spots, 'X'), editor.depth)).toThrow(message);
+    expect(blockText(editor, 0)).toBe('가나다라마바');
+    expect(JSON.stringify(editor.blocks)).toBe(before);
+    expect(editor.undo(1, editor.depth)).toBe(0);
+  });
+
+  it('AC-5 표의 다른 칸 같은 위치는 겹치지 않는다', () => {
+    const editor = new DocumentEditor(openFixture('notice.hwpx'));
+    editor.edit(
+      replaceMany(
+        editor,
+        [
+          { id: 'b12', cell: { row: 1, col: 0 }, start: 0, end: 0 },
+          { id: 'b12', cell: { row: 1, col: 1 }, start: 0, end: 0 },
+        ],
+        '*',
+      ),
+      editor.depth,
+    );
+    const table = editor.blocks[11];
+    const cellText = (row: number, col: number) => (table?.kind === 'table' ? table.cells.find((c) => c.row === row && c.col === col)?.text : undefined);
+    expect([cellText(1, 0)?.[0], cellText(1, 1)?.[0]]).toEqual(['*', '*']);
+  });
+
+  it('AC-5 한 자리라도 뷰어 문서에 없는 블록이면 아무것도 바꾸지 않는다', () => {
+    const editor = mixedEditor();
+    const operation: EditOperation = {
+      kind: 'replace_text',
+      targets: [targetOf(editor, 'b1', { start: 0, end: 1 }), { id: 'b99', anchor: { section: 0, paragraph: 99, part: 'text' } }],
+      text: 'X',
+    };
+
+    expect(() => editor.edit(operation, editor.depth)).toThrow('b99: 뷰어 문서에 이 블록이 없습니다. get_outline 을 다시 부르세요.');
+    expect(blockText(editor, 0)).toBe('가나다라마바');
+  });
+
+  it('AC-6 자리마다 그 자리 첫 글자 모양을 따른다(굵은 자리와 보통 자리가 섞인 문단)', () => {
+    const editor = mixedEditor();
+    const boldId = charShapeIdAt(editor.doc, 0, 2);
+    const normalId = charShapeIdAt(editor.doc, 0, 0);
+
+    editor.edit(replaceMany(editor, [{ id: 'b1', start: 0, end: 1 }, { id: 'b1', start: 2, end: 3 }], 'XY'), editor.depth);
+
+    expect(blockText(editor, 0)).toBe('XY나XY라마바');
+    expect([0, 1, 2, 3, 4, 5].map((offset) => charShapeIdAt(editor.doc, 0, offset))).toEqual([
+      normalId,
+      normalId,
+      normalId,
+      boldId,
+      boldId,
+      boldId,
+    ]);
+  });
+
+  it(`AC-8 한 번에 ${MAX_REPLACE_TARGETS} 곳까지 바꾸고, 넘으면 이유를 던지고 바꾸지 않는다`, () => {
+    const doc = createBlankDocument();
+    doc.insertText(S, 0, 0, '가'.repeat(MAX_REPLACE_TARGETS + 1));
+    const editor = new DocumentEditor(doc);
+    const spots = (count: number) => Array.from({ length: count }, (_, i) => ({ id: 'b1', start: i, end: i + 1 }));
+
+    expect(() => editor.edit(replaceMany(editor, spots(MAX_REPLACE_TARGETS + 1), '나'), editor.depth)).toThrow(
+      `바꿀 자리가 ${MAX_REPLACE_TARGETS + 1} 곳이라 너무 많습니다(${MAX_REPLACE_TARGETS} 까지).`,
+    );
+    expect(blockText(editor, 0)).toBe('가'.repeat(MAX_REPLACE_TARGETS + 1));
+
+    editor.edit(replaceMany(editor, spots(MAX_REPLACE_TARGETS), '나'), editor.depth);
+    expect(blockText(editor, 0)).toBe(`${'나'.repeat(MAX_REPLACE_TARGETS)}가`);
   });
 });
 

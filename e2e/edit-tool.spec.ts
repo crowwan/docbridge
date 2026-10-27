@@ -207,3 +207,36 @@ test.describe('SPEC-003 표 만들기 화면 (서버가 내주는 뷰어)', () =
     await firstPage.screenshot({ path: `${SCREENS}/table-03-after-undo.png` });
   });
 });
+
+test.describe('SPEC-005 여러 자리 한 편집 화면 (서버가 내주는 뷰어)', () => {
+  test('AC-7 replace_text 의 targets 로 바꾼 블록이 모두 초록 테두리로 남고, undo 한 번에 모두 돌아가 표시가 없다', async ({ page }) => {
+    await session.open(fixturePath('notice.hwpx'));
+    const firstPage = page.getByRole('region', { name: '1쪽' });
+
+    // b1 "가나다구청", b11 의 두 "회신", b12 표 칸 하나 — 블록 셋을 한 편집으로
+    const result = await replaceText(
+      session,
+      [
+        { id: 'b1', start: 0, end: 3 },
+        { id: 'b11', start: 0, end: 2 },
+        { id: 'b11', start: 33, end: 35 },
+        { id: 'b12', cell: { row: 2, col: 2 }, start: 0, end: 0 },
+      ],
+      '답장',
+    );
+
+    expect(result.changed.map(({ id }) => id)).toEqual(['b1', 'b11', 'b12']);
+    await expect(marks(page)).toHaveCount(3);
+    for (const index of [0, 1, 2]) {
+      await expect(page.getByTestId(`edit-mark-${index}`)).toBeVisible();
+      expect(await inkBounds(page, 0, await markOnFirstPage(page, index))).not.toBeNull();
+    }
+    await firstPage.screenshot({ path: `${SCREENS}/replace-many-01-after.png` });
+
+    expect(await undo(session, 1)).toEqual({ undone: 1, edits: ['replace_text b1, b11, b11 외 1곳'] });
+
+    await expect(marks(page)).toHaveCount(0);
+    expect(await paragraphText('b1')).toBe('가나다구청');
+    expect(await paragraphText('b11')).toBe('회신 기한: 2026. 11. 14.(금)까지 참석 인원을 회신하여 주시기 바랍니다.');
+  });
+});

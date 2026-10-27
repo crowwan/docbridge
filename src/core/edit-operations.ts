@@ -10,15 +10,30 @@ import { insertTableParagraph } from './create-document.ts';
 import { deleteBlocks } from './delete-blocks.ts';
 import { isCellStep } from './fields.ts';
 import { insertParagraphNear, listFields, moveParagraphs, replaceCellText, replaceFieldText, replaceParagraphText } from './edits.ts';
-import { noParagraphChanges, TEXT_PART, type ParagraphChanges, type ParagraphPosition } from './paragraph-changes.ts';
+import { noParagraphChanges, positionKey, TEXT_PART, type ParagraphChanges, type ParagraphPosition } from './paragraph-changes.ts';
 import { applyParagraphStyle, findStyle, resetToStyle } from './styles.ts';
 import { spanIn, targetLabel } from './text-targets.ts';
 
 export type { ParagraphPosition } from './paragraph-changes.ts';
 
+/** 한 편집으로 바꾸는 자리 상한(SPEC-005) */
+export const MAX_REPLACE_TARGETS = 500;
+
+export const tooManyTargetsMessage = (count: number) =>
+  `바꿀 자리가 ${count} 곳이라 너무 많습니다(${MAX_REPLACE_TARGETS} 까지). 여러 번으로 나눠 주세요.`;
+
+/** 바꿀 자리 수가 상한을 넘으면 던진다. 서버는 뷰어에 보내기 전에, 뷰어는 적용하기 전에 같은 것으로 거부한다 */
+export function assertTargetCount(count: number): void {
+  if (count > MAX_REPLACE_TARGETS) throw new Error(tooManyTargetsMessage(count));
+}
+
+/**
+ * replace_text: 자리(targets) 모두를 text 로 바꾼다. 한 자리여도 배열이다(SPEC-005).
+ * 위치는 모두 편집 전 문서 기준이고, 하나라도 틀리거나 겹치면 아무것도 바꾸지 않는다
+ */
 export const replaceTextOperationSchema = z.object({
   kind: z.literal('replace_text'),
-  target: anchoredTargetSchema,
+  targets: z.array(anchoredTargetSchema).min(1),
   text: z.string(),
 });
 
@@ -118,7 +133,27 @@ function blockAt(blocks: Block[], target: AnchoredBlock): Block {
   return block;
 }
 
-function replaceInTable(doc: HwpDocument, block: TableBlock, target: AnchoredTarget, text: string): void {
+function assertSomethingToChange(target: AnchoredTarget, start: number, end: number, text: string): void {
+  if (start === end && text.length === 0) {
+    throw new Error(`${targetLabel(target)}: 바꿀 것이 없습니다(빈 범위에 빈 글자). 지우려면 범위를, 넣으려면 글자를 주세요.`);
+  }
+}
+
+/** 편집 전 블록으로 검사를 마친 바꿀 자리 하나. 적용은 문서만 본다(앞 자리를 바꿔 블록 글자가 달라져도 그대로 쓴다) */
+interface ReplaceSpot {
+  target: AnchoredTarget;
+  block: Block;
+  /** 겹침을 보는 묶음: 같은 블록(표는 같은 칸) */
+  group: string;
+  start: number;
+  end: number;
+  apply: (doc: HwpDocument, text: string) => void;
+}
+
+/** 블록 종류마다 정하는 범위와 적용 */
+type SpotRange = Pick<ReplaceSpot, 'start' | 'end' | 'apply'>;
+
+function tableSpot(block: TableBlock, target: AnchoredTarget): SpotRange & { cellIndex: number } {
   if (target.cell === undefined) throw new Error(`${target.id}: 표 블록은 cell 로 바꿀 칸을 고르세요.`);
   const { row, col } = target.cell;
   const cellIndex = block.cells.findIndex((cell) => cell.row === row && cell.col === col);
@@ -128,12 +163,11 @@ function replaceInTable(doc: HwpDocument, block: TableBlock, target: AnchoredTar
     );
   }
   const { start, end } = spanIn(target, block.cells[cellIndex]?.text ?? '', EDIT_SPAN);
-  assertSomethingToChange(target, start, end, text);
   const address = { section: block.section, paragraph: block.paragraph, controlIndex: block.controlIndex, cellIndex };
-  replaceCellText(doc, address, text, start, end);
+  return { cellIndex, start, end, apply: (doc, text) => replaceCellText(doc, address, text, start, end) };
 }
 
-function replaceInField(doc: HwpDocument, block: FieldBlock, target: AnchoredTarget, text: string): void {
+function fieldSpot(doc: HwpDocument, block: FieldBlock, target: AnchoredTarget): SpotRange {
   if (target.cell !== undefined) throw new Error(`${target.id}: 표 블록이 아니라 cell 을 줄 수 없습니다.`);
   // 같은 문단의 몇 번째 누름틀인지는 서버가 보낸 위치에 있다(블록 추출이 getFieldList 순서를 따른다).
   // 이름은 겹칠 수 있어 fieldId 로 고른다(ADR 002)
@@ -147,36 +181,64 @@ function replaceInField(doc: HwpDocument, block: FieldBlock, target: AnchoredTar
     throw new Error(`${target.id}: 표 안 표나 글상자에 든 누름틀은 아직 바꿀 수 없습니다.`);
   }
   const { start, end } = spanIn(target, block.value, EDIT_SPAN);
-  assertSomethingToChange(target, start, end, text);
-  replaceFieldText(doc, field.fieldId, text, start, end);
+  return { start, end, apply: (doc, text) => replaceFieldText(doc, field.fieldId, text, start, end) };
 }
 
-function assertSomethingToChange(target: AnchoredTarget, start: number, end: number, text: string): void {
-  if (start === end && text.length === 0) {
-    throw new Error(`${targetLabel(target)}: 바꿀 것이 없습니다(빈 범위에 빈 글자). 지우려면 범위를, 넣으려면 글자를 주세요.`);
-  }
-}
-
-/** replace_text: 대상 블록(칸·누름틀 값) 범위의 글자를 바꾼다. 글자 모양은 바뀌는 자리 첫 글자를 따른다(edits.ts) */
-function replaceText(doc: HwpDocument, blocks: Block[], { target, text }: ReplaceTextOperation): EditApplied {
-  // 줄바꿈 거부는 edits.ts 가 편집 전에 한다
+/** 대상 하나를 편집 전 블록으로 검사해 바꿀 자리로 만든다. 틀리면 던진다(문서는 아직 그대로) */
+function replaceSpot(doc: HwpDocument, blocks: Block[], target: AnchoredTarget, text: string): ReplaceSpot {
   const block = blockAt(blocks, target);
-  switch (block.kind) {
-    case 'paragraph': {
-      if (target.cell !== undefined) throw new Error(`${target.id}: 표 블록이 아니라 cell 을 줄 수 없습니다.`);
-      const { start, end } = spanIn(target, block.text, EDIT_SPAN);
-      assertSomethingToChange(target, start, end, text);
-      replaceParagraphText(doc, block.section, block.paragraph, text, start, end);
-      break;
+  const blockKey = `${target.anchor.section}:${target.anchor.paragraph}:${target.anchor.part}`;
+  const spot = (() => {
+    switch (block.kind) {
+      case 'paragraph': {
+        if (target.cell !== undefined) throw new Error(`${target.id}: 표 블록이 아니라 cell 을 줄 수 없습니다.`);
+        const { start, end } = spanIn(target, block.text, EDIT_SPAN);
+        return {
+          group: blockKey,
+          start,
+          end,
+          apply: (doc: HwpDocument, text: string) => replaceParagraphText(doc, block.section, block.paragraph, text, start, end),
+        };
+      }
+      case 'table': {
+        const { cellIndex, ...rest } = tableSpot(block, target);
+        return { group: `${blockKey}#${cellIndex}`, ...rest };
+      }
+      case 'field':
+        return { group: blockKey, ...fieldSpot(doc, block, target) };
     }
-    case 'table':
-      replaceInTable(doc, block, target, text);
-      break;
-    case 'field':
-      replaceInField(doc, block, target, text);
-      break;
-  }
-  return { paragraphs: [{ section: block.section, paragraph: block.paragraph }] };
+  })();
+  assertSomethingToChange(target, spot.start, spot.end, text);
+  return { target, block, ...spot };
+}
+
+/** 같은 블록(칸) 안 자리가 겹치면 던진다. 같은 위치에 넣기 둘(빈 범위)도 어느 것이 앞인지 정할 수 없어 겹침이다 */
+function assertNoOverlap(spots: ReplaceSpot[]): void {
+  const ordered = [...spots].sort((a, b) => a.group.localeCompare(b.group) || a.start - b.start || a.end - b.end);
+  ordered.forEach((spot, i) => {
+    const previous = ordered[i - 1];
+    if (previous === undefined || previous.group !== spot.group) return;
+    if (spot.start < previous.end || spot.start === previous.start) {
+      throw new Error(`바꿀 자리가 겹칩니다: ${targetLabel(spot.target)} ${spot.start}~${spot.end}`);
+    }
+  });
+}
+
+/** 적용 순서: 누름틀 값은 문단 글자 안에 있어 값을 바꾸면 문단 위치가 밀리므로 문단·칸 글자를 먼저, 묶음 안에서는 뒤 자리부터 */
+const applyOrder = (a: ReplaceSpot, b: ReplaceSpot) => Number(a.block.kind === 'field') - Number(b.block.kind === 'field') || b.start - a.start;
+
+/**
+ * replace_text: 자리마다 범위의 글자를 바꾼다. 글자 모양은 자리마다 바뀌는 자리 첫 글자를 따른다(edits.ts).
+ * 모든 자리를 편집 전 블록으로 먼저 검사(범위·칸·겹침)하고, 같은 블록 안은 뒤 자리부터 바꿔 앞 위치가 밀리지 않게 한다(SPEC-005)
+ */
+function replaceText(doc: HwpDocument, blocks: Block[], { targets, text }: ReplaceTextOperation): EditApplied {
+  // 줄바꿈 거부는 edits.ts 가 편집 전에 한다(글자는 모든 자리에 같아 첫 자리에서 거부된다)
+  assertTargetCount(targets.length);
+  const spots = targets.map((target) => replaceSpot(doc, blocks, target, text));
+  assertNoOverlap(spots);
+  for (const spot of [...spots].sort(applyOrder)) spot.apply(doc, text);
+  const paragraphs = new Map(spots.map(({ block: { section, paragraph } }) => [positionKey({ section, paragraph }), { section, paragraph }]));
+  return { paragraphs: [...paragraphs.values()] };
 }
 
 /**
