@@ -5,7 +5,8 @@ import { charLength } from '../core/chars.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { NOTE_MAX_CHARS, textTargetSchema } from '../shared/protocol.ts';
 import { UNDO_LIMIT } from '../core/edit-history.ts';
-import { deleteBlocks, insertParagraph, moveBlocks, NOTHING_TO_UNDO, replaceText, undo } from './edit-tools.ts';
+import { MAX_TABLE_SIZE } from '../core/create-document.ts';
+import { deleteBlocks, insertParagraph, insertTable, moveBlocks, NOTHING_TO_UNDO, replaceText, undo } from './edit-tools.ts';
 import { clearHighlight, highlight } from './highlight-tools.ts';
 import { findText, getOutline, readBlockContents } from './read-tools.ts';
 import { saveDocument } from './save-tool.ts';
@@ -128,6 +129,22 @@ export function createMcpServer(session: DocumentSession): McpServer {
       },
     },
     (args) => toolResult(() => insertParagraph(session, args)),
+  );
+
+  server.registerTool(
+    'insert_table',
+    {
+      description: `기준 블록 앞(before) 또는 뒤(after)에 rows×cols 표를 새로 만든다(바로 적용, undo 한 번에 되돌림). before·after 중 하나만 주고, 기준이 표·누름틀이면 그것이 든 문단 앞뒤다(표 칸 안에는 만들지 않는다). 구역 첫 문단 앞에는 넣지 못한다. 표는 바탕글 문단에 들어가 앞 문단의 개요 번호·글자 서식을 물려받지 않고, 열 너비는 쪽 본문 너비를 열 수로 똑같이 나눈다. rows·cols 는 1~${MAX_TABLE_SIZE}. cells 는 행마다 열 수만큼의 글자 배열(rows×cols 와 크기가 같아야 한다)이고 칸 글자의 줄바꿈은 칸 안 문단이 된다. header: true 면 첫 행이 머리글(한글 제목 셀, 쪽을 넘기면 다시 나옴, 굵은 글자). 기존 블록 id 는 그대로다. 결과 { inserted(새 표 블록 id), cells(칸 수), changed: [{ id, number?, text }](새 표와 번호가 다시 매겨진 문단, number 는 넣은 뒤 자동 번호), warnings? } — 칸 글자를 고치려면 replace_text 에 { id, cell: { row, col } }`,
+      inputSchema: {
+        before: z.string().optional().describe('이 블록 앞에 넣는다'),
+        after: z.string().optional().describe('이 블록 뒤에 넣는다'),
+        rows: z.number().describe(`행 수(1~${MAX_TABLE_SIZE})`),
+        cols: z.number().describe(`열 수(1~${MAX_TABLE_SIZE})`),
+        cells: z.array(z.array(z.string())).optional().describe('칸 글자: [행][열]. 없으면 빈 칸'),
+        header: z.boolean().optional().describe('첫 행을 머리글로(기본 false)'),
+      },
+    },
+    (args) => toolResult(() => insertTable(session, args)),
   );
 
   server.registerTool(

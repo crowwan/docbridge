@@ -1,6 +1,7 @@
 // 편집 도구(SPEC-002): 대상 id 를 id 표 위치로 바꿔 편집 공용 경로(session.edit)로 뷰어에 보내고, 바뀐 블록에 id 를 붙여 돌려준다.
 // 새 편집 도구(#21 move_blocks 등)는 core/edit-operations.ts 에 편집 종류를 더하고
 // 여기서 session.edit(문서 → { 이름, 편집 }) 를 부른다. 문단을 넣고 지운 만큼 id 표를 옮기는 일은 뷰어가 돌려준 결과로 session 이 한다.
+import { assertTableSpec, type TableSpec } from '../core/create-document.ts';
 import { assertDeletable } from '../core/delete-blocks.ts';
 import { UNDO_LIMIT } from '../core/edit-history.ts';
 import { targetLabel } from '../core/text-targets.ts';
@@ -55,7 +56,7 @@ function editResult(changed: EditedBlock[], unmarked: string[], cell?: TextTarge
   };
 }
 
-/** 바뀐 블록 결과 항목에 자동 번호를 붙인 것(insert_paragraph·move_blocks·set_style). 번호는 바뀐 뒤 번호 */
+/** 바뀐 블록 결과 항목에 자동 번호를 붙인 것(insert_paragraph·insert_table·move_blocks·set_style). 번호는 바뀐 뒤 번호 */
 export type NumberedItem = ChangedItem & { number?: string };
 
 /** 바뀐 블록 → 번호를 붙인 결과 항목(get_outline 항목과 같은 number·text). id 가 없으면 빈 배열 */
@@ -99,6 +100,44 @@ export async function insertParagraph(
   if (id === undefined) throw new Error(`${referenceId}: 뷰어가 넣은 문단을 알려 주지 않아 새 id 를 붙이지 못했습니다.`);
   return {
     inserted: id,
+    changed: changed.flatMap(numberedItem),
+    ...(unmarked.length === 0 ? {} : { warnings: unmarked.map(unmarkedMessage) }),
+  };
+}
+
+export interface InsertTableResult {
+  /** 새 표 블록 id */
+  inserted: string;
+  /** 칸 수(rows × cols) */
+  cells: number;
+  /** 새 표와 번호가 다시 매겨진 문단(insert_paragraph 결과와 같은 모양, number 는 넣은 뒤 자동 번호) */
+  changed: NumberedItem[];
+  warnings?: string[];
+}
+
+/**
+ * insert_table(SPEC-003): 기준 블록(before 또는 after 하나) 앞·뒤에 바탕글 문단을 넣고 rows×cols 표를 담는다. 편집 하나(undo 한 번).
+ * 크기·cells 는 뷰어에 보내기 전에 거부하고, 새 id 는 뷰어가 돌려준 넣은 문단의 표에 session 이 준다
+ */
+export async function insertTable(
+  session: DocumentSession,
+  { before, after, ...spec }: { before?: string; after?: string } & TableSpec,
+): Promise<InsertTableResult> {
+  const { referenceId, where } = referenceOf({ before, after });
+  // 크기는 문서·id 와 상관없이 먼저(스펙 문구가 "없는 블록 id" 에 가려지지 않게)
+  assertTableSpec(spec);
+  const { changed, unmarked, inserted } = await session.edit((document) => {
+    const { anchor } = anchoredTarget(document.ids, { id: referenceId });
+    return {
+      label: `insert_table ${where} ${referenceId}`,
+      operation: { kind: 'insert_table', reference: { id: referenceId, anchor }, where, ...spec },
+    };
+  });
+  const [id] = inserted;
+  if (id === undefined) throw new Error(`${referenceId}: 뷰어가 넣은 표를 알려 주지 않아 새 id 를 붙이지 못했습니다.`);
+  return {
+    inserted: id,
+    cells: spec.rows * spec.cols,
     changed: changed.flatMap(numberedItem),
     ...(unmarked.length === 0 ? {} : { warnings: unmarked.map(unmarkedMessage) }),
   };

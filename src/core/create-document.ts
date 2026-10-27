@@ -1,4 +1,4 @@
-// 새 문서 만들기 어댑터 — SPEC-003 기술 검증(#35)에서 확인한 절차를 함수로 둔다(ADR 003). 스타일은 styles.ts(#37).
+// 새 문서 만들기 어댑터 — SPEC-003 기술 검증(#35)에서 확인한 절차를 함수로 둔다(ADR 003). 스타일은 styles.ts(#37), 표 넣기는 insert_table 편집(#38, edit-operations.ts)이 쓴다.
 // rhwp 기본 동작이 스펙과 다른 곳만 바로잡는다(ADR 002 원칙 그대로):
 // - createTable 은 표 문단·칸 문단·표 아래 빈 문단에 넣는 자리 문단 모양·글자 모양을 물려준다
 //   (개요 문단 뒤면 모두 개요 번호를, 굵은 문단 뒤면 칸 글자가 굵게) → 새 문단을 바탕글 모양으로 맞춘 뒤 표를 넣고,
@@ -24,7 +24,8 @@ export interface TableSpec {
 
 export const MAX_TABLE_SIZE = 50;
 
-function assertTableSpec({ rows, cols, cells }: TableSpec): void {
+/** 표 크기 검사(SPEC-003 "표 크기"): 행·열 1~50 정수, cells 는 rows×cols. 서버 insert_table 이 뷰어에 보내기 전에도 부른다 */
+export function assertTableSpec({ rows, cols, cells }: TableSpec): void {
   const inRange = (n: number) => Number.isInteger(n) && n >= 1 && n <= MAX_TABLE_SIZE;
   if (!inRange(rows) || !inRange(cols)) throw new Error(`표 크기는 행·열 1~${MAX_TABLE_SIZE} 입니다(행 ${rows}, 열 ${cols}).`);
   if (cells !== undefined && (cells.length !== rows || cells.some((row) => row.length !== cols))) {
@@ -76,8 +77,12 @@ function insertTable(doc: HwpDocument, section: number, at: number, spec: TableS
   // 빈 문단에 넣으면 rhwp 는 그 문단을 표 문단으로 바꾸고 표 아래에 빈 문단 하나를 더한다(0.8.7)
   const created = parseJson(createdTableSchema, doc.createTable(section, at, 0, spec.rows, spec.cols));
   if (created.paraIdx !== at) throw new Error(`표가 예상한 문단(${at})이 아니라 ${created.paraIdx} 에 들어갔습니다.`);
-  // 덧붙인 빈 문단이 확실할 때만 지운다(문단이 하나 늘었고 표 바로 뒤가 글자·컨트롤 없는 문단). 아니면 사용자 문단일 수 있어 둔다
-  if (doc.getParagraphCount(section) === countBefore + 1 && isBareParagraph(doc, section, at + 1)) doc.deleteParagraph(section, at + 1);
+  // 덧붙인 빈 문단이 확실할 때만 지운다(문단이 하나 늘었고 표 바로 뒤가 글자·컨트롤 없는 문단). 늘지 않았으면 그대로.
+  // 그 밖(둘 이상 늘었거나 뒤 문단이 빈 문단이 아님)은 넣은 문단을 표 문단 하나로 알릴 수 없다 — 편집 경로의 id 표·relocate 가
+  // 한 칸만 밀어 뒤 블록 id 가 어긋나므로 거부한다(부르는 쪽이 스냅샷으로 되돌린다)
+  const added = doc.getParagraphCount(section) - countBefore;
+  if (added === 1 && isBareParagraph(doc, section, at + 1)) doc.deleteParagraph(section, at + 1);
+  else if (added !== 0) throw new Error(`표를 넣으며 생긴 문단(${added}개)을 확인하지 못해 표를 넣지 않았습니다.`);
   const table = { paragraph: created.paraIdx, controlIndex: created.controlIdx };
   if (spec.cells !== undefined) fillCells(doc, section, table, spec.cells);
   if (spec.header === true) markHeaderRow(doc, section, table, spec.cols);

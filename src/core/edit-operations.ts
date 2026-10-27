@@ -4,12 +4,13 @@
 // 대상 블록은 서버가 붙인 위치(anchor)로 지금 블록 목록에서 찾고, 범위·칸 검사는 블록 글자를 가진 여기서 한다.
 import type { HwpDocument } from '@rhwp/core';
 import { z } from 'zod';
-import { anchorsOf, blockIndexByAnchor, fieldOrdinal } from './block-ids.ts';
+import { anchorsOf, blockIndexByAnchor, fieldOrdinal, tablePart } from './block-ids.ts';
 import { anchoredTargetSchema, blockAnchorSchema, type AnchoredTarget, type Block, type FieldBlock, type TableBlock } from './block-schema.ts';
+import { insertTableParagraph } from './create-document.ts';
 import { deleteBlocks } from './delete-blocks.ts';
 import { isCellStep } from './fields.ts';
 import { insertParagraphNear, listFields, moveParagraphs, replaceCellText, replaceFieldText, replaceParagraphText } from './edits.ts';
-import { noParagraphChanges, type ParagraphChanges, type ParagraphPosition } from './paragraph-changes.ts';
+import { noParagraphChanges, TEXT_PART, type ParagraphChanges, type ParagraphPosition } from './paragraph-changes.ts';
 import { applyParagraphStyle, findStyle, resetToStyle } from './styles.ts';
 import { spanIn, targetLabel } from './text-targets.ts';
 
@@ -33,6 +34,23 @@ export const insertParagraphOperationSchema = z.object({
   text: z.string(),
   /** 문단 스타일 이름(한글·영문). 주면 새 문단을 그 스타일 모양 그대로로(SPEC-003) */
   style: z.string().optional(),
+});
+
+/**
+ * insert_table(SPEC-003, #38): 기준 블록이 든 본문 문단 앞·뒤에 새 문단 하나를 넣고 rows×cols 표를 담는다("문단 넣기 + 표 넣기" 한 편집).
+ * 크기·cells 검사는 create-document.ts assertTableSpec(서버도 보내기 전에 같은 것으로 거부한다)
+ */
+export const insertTableOperationSchema = z.object({
+  kind: z.literal('insert_table'),
+  /** 기준 블록. 표·누름틀이면 그것이 든 문단이 기준이다(표 칸 안에는 넣지 않는다) */
+  reference: anchoredBlockSchema,
+  where: z.enum(['before', 'after']),
+  rows: z.number().int(),
+  cols: z.number().int(),
+  /** 행 × 열 글자. 칸 글자의 줄바꿈은 칸 안 문단 */
+  cells: z.array(z.array(z.string())).optional(),
+  /** 첫 행을 머리글로(제목 셀·제목 줄 반복·굵은 글자) */
+  header: z.boolean().optional(),
 });
 
 export const deleteBlocksOperationSchema = z.object({
@@ -67,6 +85,7 @@ export const moveBlocksOperationSchema = z.object({
 export const editOperationSchema = z.discriminatedUnion('kind', [
   replaceTextOperationSchema,
   insertParagraphOperationSchema,
+  insertTableOperationSchema,
   deleteBlocksOperationSchema,
   moveBlocksOperationSchema,
   setStyleOperationSchema,
@@ -74,6 +93,7 @@ export const editOperationSchema = z.discriminatedUnion('kind', [
 export type EditOperation = z.infer<typeof editOperationSchema>;
 export type ReplaceTextOperation = z.infer<typeof replaceTextOperationSchema>;
 export type InsertParagraphOperation = z.infer<typeof insertParagraphOperationSchema>;
+export type InsertTableOperation = z.infer<typeof insertTableOperationSchema>;
 export type DeleteBlocksOperation = z.infer<typeof deleteBlocksOperationSchema>;
 export type MoveBlocksOperation = z.infer<typeof moveBlocksOperationSchema>;
 export type SetStyleOperation = z.infer<typeof setStyleOperationSchema>;
@@ -172,7 +192,18 @@ function insertParagraph(doc: HwpDocument, blocks: Block[], { reference, where, 
   const at = insertParagraphNear(doc, section, paragraph, where, text, { matchReference: styleEntry === undefined });
   const position = { section, paragraph: at };
   if (styleEntry !== undefined) resetToStyle(doc, section, at, styleEntry);
-  return { paragraphs: [position], changes: { ...noParagraphChanges(), inserted: [position] } };
+  return { paragraphs: [position], changes: { ...noParagraphChanges(), inserted: [{ ...position, part: TEXT_PART }] } };
+}
+
+/**
+ * insert_table: 기준 블록이 든 문단 앞·뒤에 바탕글 문단을 넣고 표를 담는다(create-document.ts insertTableParagraph — ADR 003).
+ * 넣은 문단은 표 문단이라 changes.inserted 의 part 를 표 꼬리표로 실어, 서버가 새 id 를 표 블록에 주게 한다
+ */
+function insertTable(doc: HwpDocument, blocks: Block[], { reference, where, rows, cols, cells, header }: InsertTableOperation): EditApplied {
+  const { section, paragraph } = blockAt(blocks, reference);
+  const table = insertTableParagraph(doc, section, paragraph, where, { rows, cols, cells, header });
+  const position = { section, paragraph: table.paragraph };
+  return { paragraphs: [position], changes: { ...noParagraphChanges(), inserted: [{ ...position, part: tablePart(table.controlIndex) }] } };
 }
 
 /** set_style: 문단 블록마다 스타일을 건다(styles.ts applyParagraphStyle). 번호가 바뀐 다른 문단은 공용 경로가 바뀐 블록에 더한다 */
@@ -236,6 +267,8 @@ export function applyEdit(doc: HwpDocument, blocks: Block[], operation: EditOper
       return replaceText(doc, blocks, operation);
     case 'insert_paragraph':
       return insertParagraph(doc, blocks, operation);
+    case 'insert_table':
+      return insertTable(doc, blocks, operation);
     case 'delete_blocks':
       return { paragraphs: [], changes: deleteBlocks(doc, blocks, operation.targets) };
     case 'move_blocks':
