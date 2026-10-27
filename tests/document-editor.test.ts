@@ -337,6 +337,93 @@ describe('SPEC-005 replace_text 여러 자리 (편집 공용 경로)', () => {
   });
 });
 
+describe('SPEC-005 문단 자리와 누름틀 값 (PR #67 리뷰)', () => {
+  /** application.hwpx 의 신청인 누름틀(b7, 문단 5)에 "홍길동" 을 채운 편집기. b6 문단 글자는 "신청인  홍길동"(누름틀 값 5~8) */
+  function filledEditor(): DocumentEditor {
+    const doc = openFixture('application.hwpx');
+    const applicant = listFields(doc).find((field) => field.name === '신청인');
+    if (applicant === undefined) throw new Error('신청인 누름틀이 없다');
+    doc.setFieldValue(applicant.fieldId, '홍길동');
+    return new DocumentEditor(doc);
+  }
+
+  it.each([
+    ['문단 범위가 누름틀 값 앞에서 값 안으로 걸치면', [{ id: 'b6', start: 4, end: 7 }], 'b6 4~7 (누름틀 "신청인" 값 5~8)'],
+    ['문단 범위가 누름틀 값을 덮으면', [{ id: 'b6', start: 5, end: 8 }], 'b6 5~8 (누름틀 "신청인" 값 5~8)'],
+    ['문단 전체를 바꾸면(누름틀 값이 든 문단)', [{ id: 'b6' }], 'b6 0~8 (누름틀 "신청인" 값 5~8)'],
+    ['누름틀 값 안에 문단 위치로 넣으면', [{ id: 'b6', start: 6, end: 6 }], 'b6 6~6 (누름틀 "신청인" 값 5~8)'],
+    ['여러 자리 중 하나라도 걸치면', [{ id: 'b6', start: 0, end: 1 }, { id: 'b6', start: 7, end: 8 }], 'b6 7~8 (누름틀 "신청인" 값 5~8)'],
+  ])('%s 아무것도 바꾸지 않고 누름틀 블록으로 바꾸라고 한다', (_case, spots, where) => {
+    const editor = filledEditor();
+    const before = JSON.stringify(editor.blocks);
+
+    expect(() => editor.edit(replaceMany(editor, spots, 'X'), editor.depth)).toThrow(
+      `바꿀 자리가 누름틀 값에 걸칩니다: ${where}. 누름틀 값은 그 누름틀 블록(get_outline 의 kind field) id 로 바꾸세요.`,
+    );
+    expect(JSON.stringify(editor.blocks)).toBe(before);
+    expect(editor.undo(1, editor.depth)).toBe(0);
+  });
+
+  it('표 칸 범위가 칸 안 누름틀 값에 걸쳐도 아무것도 바꾸지 않는다', () => {
+    const doc = openFixture('notice.hwpx');
+    // b12 표 (1,1) 칸(칸 번호 4) "11. 20.(목) 14:00" 첫 자리에 누름틀을 넣고 "XY" 를 채운다 → 칸 글자 "XY11. 20.(목) 14:00"
+    doc.insertClickHereFieldInCell(S, 11, 0, 4, 0, 0, false, '입력', '', '칸 누름틀', true);
+    const cellField = listFields(doc).find((field) => field.name === '칸 누름틀');
+    if (cellField === undefined) throw new Error('칸 누름틀이 없다');
+    doc.setFieldValue(cellField.fieldId, 'XY');
+    const editor = new DocumentEditor(doc);
+    const before = JSON.stringify(editor.blocks);
+
+    expect(() => editor.edit(replace(editor, 'b12', '-', { cell: { row: 1, col: 1 }, start: 1, end: 4 }), editor.depth)).toThrow(
+      '바꿀 자리가 누름틀 값에 걸칩니다: b12 칸(1,1) 1~4 (누름틀 "칸 누름틀" 값 0~2). 누름틀 값은 그 누름틀 블록(get_outline 의 kind field) id 로 바꾸세요.',
+    );
+    expect(JSON.stringify(editor.blocks)).toBe(before);
+
+    // 다른 칸(1,0) 같은 위치는 걸치지 않는다
+    editor.edit(replace(editor, 'b12', '-', { cell: { row: 1, col: 0 }, start: 1, end: 2 }), editor.depth);
+    expect(editor.depth).toBe(1);
+  });
+
+  it('누름틀 값 바로 앞·뒤에 문단 위치로 넣는 것은 값에 걸치지 않는다', () => {
+    const editor = filledEditor();
+
+    editor.edit(replaceMany(editor, [{ id: 'b6', start: 5, end: 5 }, { id: 'b6', start: 8, end: 8 }], '*'), editor.depth);
+
+    expect([blockText(editor, 5), blockText(editor, 6)]).toEqual(['신청인  *홍길동*', '홍길동']);
+  });
+
+  it('같은 문단의 문단 글자 자리와 그 누름틀 값 자리를 함께 주면 둘 다 편집 전 위치로 바뀐다', () => {
+    const editor = filledEditor();
+
+    // 문단 0~3 "신청인" 을 먼저 바꿔 누름틀이 밀려도, 누름틀 값 자리 0~1 "홍" 은 값 안 위치라 그대로 맞는다
+    editor.edit(replaceMany(editor, [{ id: 'b7', start: 0, end: 1 }, { id: 'b6', start: 0, end: 3 }], 'AB'), editor.depth);
+
+    expect([blockText(editor, 5), blockText(editor, 6)]).toEqual(['AB  AB길동', 'AB길동']);
+  });
+
+  it('앞 자리를 이미 바꾼 뒤 뒤 자리 적용이 실패하면 모든 자리가 되돌아간다', () => {
+    const editor = mixedEditor();
+    const before = JSON.stringify(editor.blocks);
+    const { doc } = editor;
+    // 검사는 모두 통과하는 자리 둘. 뒤 자리(4~5)부터 바꾸므로, 두 번째 글자 넣기(앞 자리 0~1)에서 rhwp 가 던지게 한다
+    const insertText = doc.insertText.bind(doc);
+    let inserts = 0;
+    doc.insertText = (section, paragraph, offset, text) => {
+      inserts += 1;
+      if (inserts === 2) throw new Error('rhwp 오류');
+      return insertText(section, paragraph, offset, text);
+    };
+
+    expect(() => editor.edit(replaceMany(editor, [{ id: 'b1', start: 0, end: 1 }, { id: 'b1', start: 4, end: 5 }], 'XY'), editor.depth)).toThrow(
+      'rhwp 오류',
+    );
+    expect(inserts).toBe(2);
+    expect(doc.getTextRange(S, 0, 0, doc.getParagraphLength(S, 0))).toBe('가나다라마바');
+    expect(JSON.stringify(editor.blocks)).toBe(before);
+    expect(editor.undo(1, editor.depth)).toBe(0);
+  });
+});
+
 describe('SPEC-002 되돌리기 (편집 공용 경로)', () => {
   it('AC-8 편집을 하나씩 되돌리고, 되돌릴 것이 없으면 0 을 돌려준다', () => {
     const editor = mixedEditor();

@@ -2,10 +2,10 @@
 import type { HwpDocument } from '@rhwp/core';
 import { z } from 'zod';
 import { bodyControlsAt } from './body-paragraphs.ts';
-import { fieldTableIndex, listFields } from './fields.ts';
+import { fieldTableIndex, isCellStep, listFields, type FieldInfo } from './fields.ts';
 import { positionKey as paragraphKey } from './paragraph-changes.ts';
 import { parseJson } from './json.ts';
-import type { Block, FieldBlock, ParagraphBlock, TableBlock } from './block-schema.ts';
+import type { Block, FieldBlock, FieldSpan, ParagraphBlock, TableBlock } from './block-schema.ts';
 
 export type { Block, FieldBlock, ParagraphBlock, TableBlock, TableCell } from './block-schema.ts';
 
@@ -172,10 +172,29 @@ function tablesByParagraph(doc: HwpDocument): Map<string, number[]> {
   return tables;
 }
 
+/**
+ * 누름틀 값이 든 글자 블록 안 자리. 문단 직속이면 문단 글자 위치 그대로, 본문 표 칸 안이면 칸 text(칸 안 문단을 \n 으로 이은 것) 위치로 바꾼다.
+ * 글상자·표 안 표는 블록 글자에 들지 않으므로 undefined
+ */
+function fieldSpan(doc: HwpDocument, field: FieldInfo): FieldSpan | undefined {
+  const { sectionIndex: section, paraIndex: paragraph, path = [] } = field.location;
+  const length = field.endCharIdx - field.startCharIdx;
+  const [step, ...deeper] = path;
+  if (step === undefined) return { start: field.startCharIdx, end: field.endCharIdx };
+  if (deeper.length > 0 || !isCellStep(step)) return undefined;
+  const { controlIndex, cellIndex, paraIndex: cellParagraph } = step;
+  const { row, col } = parseJson(cellInfoSchema, doc.getCellInfo(section, paragraph, controlIndex, cellIndex));
+  // 앞 칸 문단 글자 수와 사이 \n 하나씩
+  const before = Array.from({ length: cellParagraph }, (_, p) => doc.getCellParagraphLength(section, paragraph, controlIndex, cellIndex, p) + 1);
+  const start = before.reduce((sum, count) => sum + count, 0) + field.startCharIdx;
+  return { cell: { controlIndex, row, col }, start, end: start + length };
+}
+
 function fieldsByParagraph(doc: HwpDocument): Map<string, FieldBlock[]> {
   const fields = new Map<string, FieldBlock[]>();
   for (const field of listFields(doc)) {
     const { sectionIndex: section, paraIndex: paragraph, path } = field.location;
+    const span = fieldSpan(doc, field);
     const key = positionKey(section, paragraph);
     const block: FieldBlock = {
       kind: 'field',
@@ -187,6 +206,7 @@ function fieldsByParagraph(doc: HwpDocument): Map<string, FieldBlock[]> {
       value: field.value,
       // 표 칸 안만 표 안이다. 글상자 안 누름틀은 표 안이 아니다(지우기 판정과 같은 fieldTableIndex, #42)
       inTable: fieldTableIndex(path) !== undefined,
+      ...(span === undefined ? {} : { span }),
     };
     fields.set(key, [...(fields.get(key) ?? []), block]);
   }

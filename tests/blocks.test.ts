@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { extractBlocks, numbersForParagraphs, numbersFromLayout, type Block, type LayoutRun, type ParagraphBlock, type TableBlock } from '../src/core/blocks.ts';
+import { listFields } from '../src/core/fields.ts';
 import { findInBlocks } from '../src/core/find-text.ts';
 import { createBlankDocument } from '../src/core/rhwp-node.ts';
 import { openFixture } from './fixtures.ts';
 
+const S = 0;
 const paragraphs = (blocks: Block[]) => blocks.filter((b): b is ParagraphBlock => b.kind === 'paragraph');
 const tables = (blocks: Block[]) => blocks.filter((b): b is TableBlock => b.kind === 'table');
 
@@ -106,6 +108,38 @@ describe('SPEC-001 블록 추출 (기술 검증)', () => {
       ['신청일', '신청일을 넣으세요', 4],
       ['신청인', '이름을 넣으세요', 5],
     ]);
+  });
+
+  it('SPEC-005 누름틀은 값이 든 글자 블록(문단 text·표 칸 text) 안 자리를 준다', () => {
+    const doc = openFixture('application.hwpx');
+    const applicant = listFields(doc).find((field) => field.name === '신청인');
+    if (applicant === undefined) throw new Error('신청인 누름틀이 없다');
+    doc.setFieldValue(applicant.fieldId, '홍길동');
+
+    const blocks = extractBlocks(doc);
+    const field = blocks.find((b) => b.kind === 'field' && b.name === '신청인');
+    const paragraph = paragraphs(blocks).find((b) => b.paragraph === 5);
+
+    expect(field?.kind === 'field' ? field.span : undefined).toEqual({ start: 5, end: 8 });
+    expect([...(paragraph?.text ?? '')].slice(5, 8).join('')).toBe('홍길동');
+  });
+
+  it('SPEC-005 표 칸 안 누름틀의 자리는 칸 text(칸 안 문단을 \\n 으로 이은 것) 안 위치다', () => {
+    const doc = openFixture('notice.hwpx');
+    // b12 표(문단 11, 컨트롤 0)의 (1,1) 칸 "11. 20.(목) 14:00" 은 칸 번호 4. 둘째 문단 첫 자리에 누름틀을 넣는다
+    doc.splitParagraphInCell(S, 11, 0, 4, 0, 4);
+    doc.insertClickHereFieldInCell(S, 11, 0, 4, 1, 0, false, '입력', '', '칸 누름틀', true);
+    const cellField = listFields(doc).find((field) => field.name === '칸 누름틀');
+    if (cellField === undefined) throw new Error('칸 누름틀이 없다');
+    doc.setFieldValue(cellField.fieldId, 'XY');
+
+    const blocks = extractBlocks(doc);
+    const field = blocks.find((b) => b.kind === 'field' && b.name === '칸 누름틀');
+    const table = blocks.find((b) => b.kind === 'table');
+    const cellText = table?.kind === 'table' ? table.cells.find((c) => c.row === 1 && c.col === 1)?.text : undefined;
+
+    expect(cellText).toBe('11. \nXY20.(목) 14:00');
+    expect(field?.kind === 'field' ? field.span : undefined).toEqual({ cell: { controlIndex: 0, row: 1, col: 1 }, start: 5, end: 7 });
   });
 
   it('.hwp(바이너리) 문서도 .hwpx 와 같은 블록을 뽑는다', () => {

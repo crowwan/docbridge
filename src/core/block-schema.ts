@@ -45,6 +45,17 @@ export const fieldBlockSchema = z.object({
   guide: z.string(),
   value: z.string(),
   inTable: z.boolean(),
+  /**
+   * 값이 든 글자 블록 안 자리(SPEC-005): 문단 직속이면 그 문단 text 안, 본문 표 칸 안이면 cell(표 컨트롤·칸)과 칸 text 안 [start, end).
+   * 찾기·바꾸기가 누름틀 값에 걸친 자리를 가린다. 글상자·표 안 표 누름틀은 블록 글자에 들지 않아 없다
+   */
+  span: z
+    .object({
+      cell: z.object({ controlIndex: z.number(), row: z.number(), col: z.number() }).optional(),
+      start: z.number(),
+      end: z.number(),
+    })
+    .optional(),
 });
 
 export const blockSchema = z.discriminatedUnion('kind', [paragraphBlockSchema, tableBlockSchema, fieldBlockSchema]);
@@ -53,6 +64,7 @@ export type ParagraphBlock = z.infer<typeof paragraphBlockSchema>;
 export type TableCell = z.infer<typeof tableCellSchema>;
 export type TableBlock = z.infer<typeof tableBlockSchema>;
 export type FieldBlock = z.infer<typeof fieldBlockSchema>;
+export type FieldSpan = NonNullable<FieldBlock['span']>;
 export type Block = z.infer<typeof blockSchema>;
 
 const paragraphPositionSchema = paragraphBlockSchema.pick({ kind: true, section: true, paragraph: true });

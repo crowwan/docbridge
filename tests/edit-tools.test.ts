@@ -12,7 +12,7 @@ import { startBridge, type Bridge } from '../src/server/bridge.ts';
 import { createMcpServer } from '../src/server/mcp.ts';
 import { DocumentSession } from '../src/server/session.ts';
 import { REQUEST_TIMEOUT_MS, type RequestMessage } from '../src/shared/protocol.ts';
-import { replaceText, TARGET_REQUIRED, WHERE_REQUIRED } from '../src/server/edit-tools.ts';
+import { NOTHING_TO_UNDO, replaceAll, REPLACE_ALL_STALE, replaceText, TARGET_REQUIRED, WHERE_REQUIRED } from '../src/server/edit-tools.ts';
 import { MAX_REPLACE_TARGETS, tooManyTargetsMessage } from '../src/core/edit-operations.ts';
 import { FakeViewer, NO_RESPONSE } from './fake-viewer.ts';
 import { fixturePath } from './fixtures.ts';
@@ -351,6 +351,126 @@ describe('SPEC-002 편집 도구 (replace_text · move_blocks · undo)', () => {
       '옮길 블록이 문서에서 이어져 있지 않습니다. 사이 블록 b7 도 ids 에 넣거나 따로 옮기세요.',
     );
     expect(requests('edit')).toHaveLength(0);
+  });
+
+  describe('SPEC-005 replace_all', () => {
+    /** find_text 일치 수 */
+    const count = async (query: string) =>
+      z.object({ matchCount: z.number() }).parse(await json('find_text', { query })).matchCount;
+    const tableCell = async (row: number, col: number) => {
+      const { blocks } = z
+        .object({ blocks: z.array(z.object({ cells: z.array(z.object({ row: z.number(), col: z.number(), text: z.string() })) })) })
+        .parse(await json('read_blocks', { ids: ['b12'] }));
+      return blocks[0]?.cells.find((cell) => cell.row === row && cell.col === col)?.text;
+    };
+
+    it('AC-1 문단·표 칸의 모든 일치를 한 편집으로 바꾸고, undo 한 번에 모두 돌아간다', async () => {
+      // "11." 은 b11 문단(2026. 11. 14.)과 b12 표의 일정 칸들에 있다
+      const before = await count('11.');
+      const cell = await tableCell(1, 1);
+      expect(before).toBeGreaterThan(2);
+      expect(cell).toBe('11. 20.(목) 14:00');
+
+      const result = z
+        .object({ replaced: z.number(), changed: z.array(z.object({ id: z.string(), cell: z.object({ row: z.number(), col: z.number() }).optional() })) })
+        .parse(await json('replace_all', { find: '11.', text: '12.' }));
+
+      expect(result.replaced).toBe(before);
+      expect(result.changed.map(({ id }) => id)).toContain('b11');
+      expect(result.changed).toContainEqual(expect.objectContaining({ id: 'b12', cell: { row: 1, col: 1 } }));
+      expect(await count('11.')).toBe(0);
+      expect(await readText('b11')).toBe('회신 기한: 2026. 12. 14.(금)까지 참석 인원을 회신하여 주시기 바랍니다.');
+      expect(await tableCell(1, 1)).toBe('12. 20.(목) 14:00');
+      expect(requests('edit')).toHaveLength(1);
+
+      expect(await json('undo')).toEqual({ undone: 1, edits: [`replace_all "11." → "12." (${before}곳)`] });
+      expect(await count('11.')).toBe(before);
+      expect(await tableCell(1, 1)).toBe('11. 20.(목) 14:00');
+    });
+
+    it('AC-1 find 가 text 의 일부여도 편집 전 문서에서 한 번만 찾아 한 번씩만 바꾼다', async () => {
+      expect(await json('replace_all', { find: '회신', text: '재회신' })).toMatchObject({ replaced: 2 });
+      expect(await readText('b11')).toBe('재회신 기한: 2026. 11. 14.(금)까지 참석 인원을 재회신하여 주시기 바랍니다.');
+    });
+
+    it('AC-1 누름틀 값 안의 일치는 바꾸지 않는다', async () => {
+      // b3 = 수신 누름틀(b2 문단 안). 값에 "가나다" 를 넣으면 find_text 는 b2 에서도 찾는다
+      await json('replace_text', { target: { id: 'b3' }, text: '가나다구청 총무과' });
+      expect(await count('가나다')).toBe(4);
+
+      expect(await json('replace_all', { find: '가나다', text: '라마바' })).toMatchObject({ replaced: 3 });
+      expect([await readText('b1'), await readText('b3'), await readText('b14')]).toEqual(['라마바구청', '가나다구청 총무과', '라마바구청장']);
+    });
+
+    it('AC-2 ids 를 주면 그 블록 안 일치만 바꾼다', async () => {
+      // "가나다" 는 b1·b6·b14 에 있다
+      const result = await json('replace_all', { find: '가나다', text: '라마바', ids: ['b6', 'b14'] });
+
+      expect(result).toEqual({
+        replaced: 2,
+        changed: [
+          { id: 'b6', text: '관련: 라마바구청 안전총괄과-1234(2026. 9. 1.)' },
+          { id: 'b14', text: '라마바구청장' },
+        ],
+      });
+      expect(await readText('b1')).toBe('가나다구청');
+    });
+
+    it('AC-2 ids 에 없는 블록 id 가 있으면 뷰어에 편집을 보내지 않는다', async () => {
+      expect(await errorText('replace_all', { find: '가나다', text: '라마바', ids: ['b1', 'b99'] })).toBe(
+        '없는 블록 id 입니다: b99. get_outline 을 다시 불러 지금 블록 id 를 확인하세요.',
+      );
+      expect(requests('edit')).toHaveLength(0);
+    });
+
+    it.each([
+      ['문서에 없으면', { find: '없는 낱말', text: 'X' }, "'없는 낱말' 를 찾지 못했습니다."],
+      ['ids 블록 안에 없으면', { find: '회신', text: 'X', ids: ['b1'] }, "'회신' 를 찾지 못했습니다."],
+    ])('AC-3 일치가 0개면(%s) 오류이고 문서·undo 칸이 그대로다', async (_case, args, message) => {
+      expect(await errorText('replace_all', args)).toBe(message);
+      expect(requests('edit')).toHaveLength(0);
+      expect([session.editCount, session.dirty]).toEqual([0, false]);
+      expect(await errorText('undo')).toBe(NOTHING_TO_UNDO);
+    });
+
+    it(`바꿀 자리가 ${MAX_REPLACE_TARGETS} 곳을 넘으면 ids 로 나누라고 하고 뷰어에 보내지 않는다`, async () => {
+      const doc = createBlankDocument();
+      doc.insertText(0, 0, 0, '가'.repeat(MAX_REPLACE_TARGETS + 1));
+      const path = join(mkdtempSync(join(tmpdir(), 'docbridge-replace-all-')), 'many.hwpx');
+      writeFileSync(path, doc.exportHwpx());
+      await json('open_document', { path });
+
+      expect(await errorText('replace_all', { find: '가', text: '나' })).toBe(
+        `바꿀 자리가 ${MAX_REPLACE_TARGETS + 1} 곳이라 너무 많습니다(${MAX_REPLACE_TARGETS} 까지). ids 로 범위를 나눠 주세요.`,
+      );
+      expect(requests('edit')).toHaveLength(0);
+    });
+
+    it('일치를 찾은 뒤 바꾸기 전에 다른 편집이 끼면 바꾸지 않고 다시 부르라고 한다(블록 응답이 끼어든 편집 뒤에 와도)', async () => {
+      // 뷰어는 replace_all 의 블록 읽기를 편집 전 문서로 처리하지만 응답은 붙잡아 두고,
+      // 그사이 replace_text 편집이 끝난 뒤에 돌려준다 → 서버는 "편집 전 블록 + 편집 뒤 기록" 을 받는다(시간에 기대지 않는 재현)
+      let held: { id: number; blocks: unknown } | undefined;
+      let blocksRead = () => {};
+      const blocksArrived = new Promise<void>((resolve) => {
+        blocksRead = resolve;
+      });
+      viewer.serve((request) => {
+        if (request.method !== 'get_blocks' || held !== undefined) return rhwp.handle(request);
+        held = { id: request.id, blocks: rhwp.handle(request) };
+        blocksRead();
+        return NO_RESPONSE;
+      });
+
+      const all = replaceAll(session, { find: '회신', text: '답장' });
+      await blocksArrived;
+      await replaceText(session, { id: 'b11', start: 0, end: 0 }, '재');
+      if (held === undefined) throw new Error('블록 읽기 요청이 오지 않았다');
+      viewer.respondWith(held.id, held.blocks);
+
+      await expect(all).rejects.toThrow(REPLACE_ALL_STALE);
+      expect(await readText('b11')).toBe('재회신 기한: 2026. 11. 14.(금)까지 참석 인원을 회신하여 주시기 바랍니다.');
+      expect(session.editCount).toBe(1);
+    });
   });
 
   describe('SPEC-005 replace_text 여러 자리(targets)', () => {

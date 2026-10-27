@@ -4,6 +4,7 @@
 import { z } from 'zod';
 import { textBlockPositionSchema, type Block } from './block-schema.ts';
 import { charIndexes } from './chars.ts';
+import { crossesField, fieldSpansIn, type TextPlace } from './field-spans.ts';
 
 /** 일치 앞뒤로 보여주는 글자 수 */
 export const CONTEXT_CHARS = 20;
@@ -64,4 +65,19 @@ export function findInBlocks(blocks: Block[], query: string): TextMatch[] {
         return [];
     }
   });
+}
+
+/** 일치가 든 글자 블록(문단, 표면 그 칸) */
+function placeOf({ block, cell }: TextMatch): TextPlace {
+  const { section, paragraph } = block;
+  if (block.kind === 'paragraph' || cell === undefined) return { section, paragraph };
+  return { section, paragraph, cell: { controlIndex: block.controlIndex, ...cell } };
+}
+
+/**
+ * replace_all 이 바꿀 일치(SPEC-005): findInBlocks 와 같되, 누름틀 값에 걸친 일치는 뺀다
+ * (누름틀 값은 바꾸지 않는다. 값은 문단·칸 글자 안에 있어 findInBlocks 는 거기서도 찾는다)
+ */
+export function findReplaceable(blocks: Block[], query: string): TextMatch[] {
+  return findInBlocks(blocks, query).filter((match) => !fieldSpansIn(blocks, placeOf(match)).some((field) => crossesField(match, field)));
 }

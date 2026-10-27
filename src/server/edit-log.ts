@@ -59,6 +59,11 @@ export class EditLog<S> {
     return this.chain.length - 1;
   }
 
+  /** 지금 문서 상태 번호. 편집마다 새 번호이고, 되돌리면 그 편집 전 번호로 돌아간다(같은 번호 = 같은 문서) */
+  get state(): number {
+    return this.chain.at(-1) ?? 0;
+  }
+
   /** 저장하지 않은 편집이 있는지 */
   get dirty(): boolean {
     return this.unsavedEdits > 0;

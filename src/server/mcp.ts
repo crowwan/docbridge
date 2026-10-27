@@ -7,7 +7,7 @@ import { NOTE_MAX_CHARS, textTargetSchema } from '../shared/protocol.ts';
 import { UNDO_LIMIT } from '../core/edit-history.ts';
 import { MAX_TABLE_SIZE } from '../core/create-document.ts';
 import { MAX_REPLACE_TARGETS } from '../core/edit-operations.ts';
-import { deleteBlocks, insertParagraph, insertTable, moveBlocks, NOTHING_TO_UNDO, replaceText, targetsOf, undo } from './edit-tools.ts';
+import { deleteBlocks, insertParagraph, insertTable, moveBlocks, NOTHING_TO_UNDO, replaceAll, replaceText, targetsOf, undo } from './edit-tools.ts';
 import { clearHighlight, highlight } from './highlight-tools.ts';
 import { findText, getOutline, readBlockContents } from './read-tools.ts';
 import { saveDocument } from './save-tool.ts';
@@ -125,7 +125,7 @@ export function createMcpServer(session: DocumentSession): McpServer {
     'replace_text',
     {
       description:
-        `열린 문서의 글자를 바꾼다(바로 적용, undo 로 되돌림). 자리 하나는 target, 여럿은 targets(${MAX_REPLACE_TARGETS} 곳까지)로 주고 둘 중 하나만 준다. targets 는 모두 같은 text 로 한 편집(undo 한 번)에 바뀌고, 위치는 모두 편집 전 문서 기준이다(find_text 결과를 그대로 넘기면 된다. 같은 블록 앞 자리 길이가 바뀌어도 docbridge 가 맞춘다). 같은 블록·칸에서 자리가 겹치거나(같은 위치에 넣기 둘 포함) 하나라도 틀리면 아무것도 바꾸지 않는다. 자리(target·targets 항목)는 find_text 일치나 { id, cell?: { row, col }, start?, end? } — start·end 가 없으면 블록 글자 전체(표는 cell 로 칸을 골라야 하고 칸 글자 전체, 누름틀은 값 전체이고 start·end 는 값 안 위치). 위치는 read_blocks 의 text(표는 칸 text) 안 유니코드 글자 위치(0부터, end 미포함). text 가 비면 범위를 지우고, start = end 면 그 자리에 넣는다. 줄바꿈이 든 text 는 받지 않는다. 바뀐 글자는 바뀌는 자리 첫 글자의 글자 모양을 따른다. 칸 범위가 칸 안 여러 문단에 걸치면 그 문단들이 합쳐진다. 뷰어는 다시 그려지고 바뀐 블록에 모두 초록 테두리가 남는다. 결과 { changed: [{ id, cell?, text }], warnings? } — changed 는 대상과 같은 문단에 걸린 블록 모두(누름틀 값을 바꾸면 그 문단도 바뀐다. 다음 편집은 read_blocks·find_text 로 새 위치를 얻어서), 표 칸은 바꾼 칸마다 하나, text 는 바뀐 뒤 블록(칸) 앞 40자, warnings 는 뷰어에 표시하지 못한 블록. "편집 기록이 어긋났습니다" 오류가 나면 open_document 로 문서를 다시 연다`,
+        `열린 문서의 글자를 바꾼다(바로 적용, undo 로 되돌림). 같은 글자를 여러 곳에서 모두 바꿀 때는 replace_all 이 찾기와 바꾸기를 한 번에 한다(이 도구는 자리를 직접 고를 때). 자리 하나는 target, 여럿은 targets(${MAX_REPLACE_TARGETS} 곳까지)로 주고 둘 중 하나만 준다. targets 는 모두 같은 text 로 한 편집(undo 한 번)에 바뀌고, 위치는 모두 편집 전 문서 기준이다(find_text 결과를 그대로 넘기면 된다. 같은 블록 앞 자리 길이가 바뀌어도 docbridge 가 맞춘다). 같은 블록·칸에서 자리가 겹치거나(같은 위치에 넣기 둘 포함), 문단·칸 범위가 그 안 누름틀 값에 걸치거나(값은 누름틀 블록 id 로 바꾼다), 하나라도 틀리면 아무것도 바꾸지 않는다. 자리(target·targets 항목)는 find_text 일치나 { id, cell?: { row, col }, start?, end? } — start·end 가 없으면 블록 글자 전체(표는 cell 로 칸을 골라야 하고 칸 글자 전체, 누름틀은 값 전체이고 start·end 는 값 안 위치). 위치는 read_blocks 의 text(표는 칸 text) 안 유니코드 글자 위치(0부터, end 미포함). text 가 비면 범위를 지우고, start = end 면 그 자리에 넣는다. 줄바꿈이 든 text 는 받지 않는다. 바뀐 글자는 바뀌는 자리 첫 글자의 글자 모양을 따른다. 칸 범위가 칸 안 여러 문단에 걸치면 그 문단들이 합쳐진다. 뷰어는 다시 그려지고 바뀐 블록에 모두 초록 테두리가 남는다. 결과 { changed: [{ id, cell?, text }], warnings? } — changed 는 대상과 같은 문단에 걸린 블록 모두(누름틀 값을 바꾸면 그 문단도 바뀐다. 다음 편집은 read_blocks·find_text 로 새 위치를 얻어서), 표 칸은 바꾼 칸마다 하나, text 는 바뀐 뒤 블록(칸) 앞 40자, warnings 는 뷰어에 표시하지 못한 블록. "편집 기록이 어긋났습니다" 오류가 나면 open_document 로 문서를 다시 연다`,
       inputSchema: {
         target: textTargetSchema.optional().describe('바꿀 자리 하나. 블록 하나(또는 칸 하나) 안이어야 한다. targets 와 함께 주지 않는다'),
         targets: z
@@ -137,6 +137,19 @@ export function createMcpServer(session: DocumentSession): McpServer {
       },
     },
     ({ target, targets, text }) => toolResult(() => replaceText(session, targetsOf({ target, targets }), text)),
+  );
+
+  server.registerTool(
+    'replace_all',
+    {
+      description: `같은 글자를 여러 곳 바꿀 때 쓴다("24년을 26년으로 다 바꿔줘"). 열린 문서의 본문 문단·표 칸에서 find 를 모두 찾아 text 로 바꾼다(바로 적용, 모두 한 편집이라 undo 한 번에 되돌림). 찾기 규칙은 find_text 와 같다(대소문자·띄어쓰기 그대로, 앞에서부터 겹치지 않게). 찾기는 바꾸기 전 문서에서 한 번만 하므로 text 에 find 가 들어 있어도("24" → "2024") 한 번씩만 바뀐다. ids 를 주면 그 블록 안 일치만 바꾼다("이 문단들의 A 만"). 누름틀 값·머리말·꼬리말·각주는 바꾸지 않는다(누름틀 값은 replace_text 에 누름틀 블록 id). 일치가 없으면 바꾸지 않고 오류("'<find>' 를 찾지 못했습니다."), ${MAX_REPLACE_TARGETS} 곳을 넘으면 바꾸지 않고 오류(ids 로 범위를 나눠 다시 부른다). 자리마다 바뀌는 자리 첫 글자의 글자 모양을 따른다. 뷰어는 다시 그려지고 바뀐 블록에 모두 초록 테두리가 남는다. 결과 { replaced, changed: [{ id, cell?, text }], warnings? } — replaced 는 바꾼 자리 수, changed 는 바뀐 블록(replace_text 결과와 같은 모양: 표는 바꾼 칸마다, text 는 바뀐 뒤 앞 40자). 몇 곳만 골라 바꾸려면 find_text 로 찾아 replace_text 의 targets 로 준다`,
+      inputSchema: {
+        find: z.string().min(1).describe('찾을 글자(find_text 의 query 와 같은 규칙)'),
+        text: z.string().describe('바꿀 글자(빈 글자면 지우기, 줄바꿈 없이)'),
+        ids: z.array(z.string()).min(1).optional().describe('이 블록들 안에서만 바꾼다(get_outline·find_text 의 id)'),
+      },
+    },
+    ({ find, text, ids }) => toolResult(() => replaceAll(session, { find, text, ids })),
   );
 
   server.registerTool(
