@@ -121,7 +121,7 @@ test.describe('SPEC-002 문단 넣기·지우기 화면 (서버가 내주는 뷰
 
     const result = await insertParagraph(session, { after: 'b11', text: '문의: 안전총괄과(02-123-4567)' });
 
-    expect(result).toEqual({ inserted: 'b15', changed: [{ id: 'b15', text: '문의: 안전총괄과(02-123-4567)' }] });
+    expect(result).toEqual({ inserted: 'b15', changed: [{ id: 'b15', number: '4.', text: '문의: 안전총괄과(02-123-4567)' }] });
     expect(await paragraphText('b15')).toBe('문의: 안전총괄과(02-123-4567)');
     await expect(marks(page)).toHaveCount(1);
     const mark = await markOnFirstPage(page, 0);

@@ -225,6 +225,7 @@ export function charLook(doc: HwpDocument, section: number, paragraph: number, o
  * 기준 문단 앞(before)·뒤(after)에 새 문단을 넣고 text 를 채운다. 새 문단 번호를 돌려준다.
  * 문단 모양은 기준 문단을 따른다. 글자 모양은 앞에 넣으면 기준 문단 첫 글자, 뒤에 넣으면 마지막 글자를 따른다
  * (한글에서 문단 처음·끝에서 Enter 를 친 것과 같다).
+ * matchReference: false 면 기준 문단 모양·글자 모양을 맞추지 않고 글자만 넣는다(바로 스타일로 덮을 문단 — insert_paragraph style)
  */
 export function insertParagraphNear(
   doc: HwpDocument,
@@ -232,11 +233,17 @@ export function insertParagraphNear(
   reference: number,
   where: 'before' | 'after',
   text: string,
+  { matchReference = true }: { matchReference?: boolean } = {},
 ): number {
   assertSingleLine(text, INSERT_NEWLINE);
   // 구역 첫 문단 앞에 넣으면 구역·단 정의가 둘째 문단에 남고, HWPX 로 저장해 다시 열면 구역 정의가 둘이 된다(ADR 002)
   if (where === 'before' && reference === 0) throw new Error('구역 첫 문단 앞에는 문단을 넣을 수 없습니다. 첫 문단 뒤에 넣으세요.');
   const at = where === 'before' ? reference : reference + 1;
+  if (!matchReference) {
+    doc.insertParagraph(section, at);
+    if (text.length > 0) doc.insertText(section, at, 0, text);
+    return at;
+  }
   const referenceShape = paraShapeIdOf(doc, section, reference);
   const referenceLength = doc.getParagraphLength(section, reference);
   const lookOffset = where === 'before' ? 0 : Math.max(0, referenceLength - 1);

@@ -11,17 +11,11 @@ import { fileURLToPath } from 'node:url';
 import { HwpDocument } from '@rhwp/core';
 import { BlockIdTable } from '../src/core/block-ids.ts';
 import { extractBlocks } from '../src/core/blocks.ts';
-import {
-  applyParagraphStyle,
-  clearTemplateBody,
-  ensureTitleStyle,
-  insertTableParagraph,
-  styleIdByName,
-  type ClearedBody,
-} from '../src/core/create-document.ts';
+import { clearTemplateBody, insertTableParagraph, type ClearedBody } from '../src/core/create-document.ts';
 import { insertParagraphNear, replaceParagraphText } from '../src/core/edits.ts';
 import { exportVerifiedHwpx } from '../src/core/hwpx-export.ts';
 import { createBlankDocument, openDocumentFile } from '../src/core/rhwp-node.ts';
+import { applyParagraphStyle, ensureTitleStyle, findStyle, styleById } from '../src/core/styles.ts';
 import { outline } from '../src/server/reading.ts';
 
 const S = 0;
@@ -84,14 +78,14 @@ function writeLines(doc: HwpDocument, after: number, lines: [string, string][]):
   let last = after;
   for (const [text, style] of lines) {
     last = insertParagraphNear(doc, S, last, 'after', text);
-    applyParagraphStyle(doc, S, last, styleIdByName(doc, style));
+    applyParagraphStyle(doc, S, last, findStyle(doc, style));
   }
   return last;
 }
 
 function fill(doc: HwpDocument, titleStyle: CheckFile['titleStyle']): void {
   replaceParagraphText(doc, S, 0, TITLE);
-  applyParagraphStyle(doc, S, 0, titleStyle === 'title' ? ensureTitleStyle(doc) : styleIdByName(doc, '바탕글'));
+  applyParagraphStyle(doc, S, 0, titleStyle === 'title' ? styleById(doc, ensureTitleStyle(doc)) : findStyle(doc, '바탕글'));
   // 구역 첫 문단 뒤로(양식에 남긴 머리말 문단 등이 있으면 그 앞이 아니라 첫 문단 바로 뒤부터)
   const beforeTable = writeLines(doc, 0, BEFORE_TABLE);
   const table = insertTableParagraph(doc, S, beforeTable, 'after', TABLE);

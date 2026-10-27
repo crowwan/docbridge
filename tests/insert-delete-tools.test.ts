@@ -77,7 +77,8 @@ describe('SPEC-002 문단 넣기·지우기 도구 (insert_paragraph · delete_b
 
     const result = await json('insert_paragraph', { after: 'b11', text: '문의: 안전총괄과(02-123-4567)' });
 
-    expect(result).toEqual({ inserted: 'b15', changed: [{ id: 'b15', text: '문의: 안전총괄과(02-123-4567)' }] });
+    // 기준 문단(3.) 모양을 따라 번호 문단이 되고, 결과에 넣은 뒤 번호가 있다
+    expect(result).toEqual({ inserted: 'b15', changed: [{ id: 'b15', number: '4.', text: '문의: 안전총괄과(02-123-4567)' }] });
     const after = await outline();
     expect(after.get('b15')).toBe('paragraph:문의: 안전총괄과(02-123-4567)');
     expectIdsKept(before, after);

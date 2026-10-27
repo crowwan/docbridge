@@ -11,6 +11,7 @@ import { findText, getOutline, readBlockContents } from './read-tools.ts';
 import { saveDocument } from './save-tool.ts';
 import { OUTLINE_LIMIT, READ_CHAR_LIMIT } from './reading.ts';
 import type { DocumentSession } from './session.ts';
+import { listStyles, setStyle } from './style-tools.ts';
 
 const text = (value: string) => ({ content: [{ type: 'text' as const, text: value }] });
 
@@ -118,11 +119,12 @@ export function createMcpServer(session: DocumentSession): McpServer {
     'insert_paragraph',
     {
       description:
-        '기준 블록 앞(before) 또는 뒤(after)에 새 문단을 넣는다(바로 적용, undo 로 되돌림). before·after 중 하나만 준다. 기준이 표·누름틀이면 그것이 든 문단 앞뒤다. 문단 모양은 기준 문단, 글자 모양은 앞에 넣으면 기준 문단 첫 글자·뒤에 넣으면 마지막 글자를 따르고, 기준이 번호 문단이면 새 문단도 번호를 받아 번호가 다시 매겨진다. 구역 첫 문단 앞에는 넣지 못한다. text 는 줄바꿈 없이(문단 여럿은 문단마다 부른다), 비면 빈 문단. 기존 블록 id 는 그대로다. 결과 { inserted(새 블록 id), changed: [{ id, text }], warnings? }',
+        '기준 블록 앞(before) 또는 뒤(after)에 새 문단을 넣는다(바로 적용, undo 로 되돌림). before·after 중 하나만 준다. 기준이 표·누름틀이면 그것이 든 문단 앞뒤다. 문단 모양은 기준 문단, 글자 모양은 앞에 넣으면 기준 문단 첫 글자·뒤에 넣으면 마지막 글자를 따르고, 기준이 번호 문단이면 새 문단도 번호를 받아 번호가 다시 매겨진다. 구역 첫 문단 앞에는 넣지 못한다. text 는 줄바꿈 없이(문단 여럿은 문단마다 부른다), 비면 빈 문단. style(문단 스타일 이름, list_styles 의 name 이나 englishName)을 주면 새 문단은 그 스타일 모양 그대로다(문단·글자 모양 모두 스타일 것, 기준 문단 서식을 따르지 않는다. 개요 스타일이면 개요 번호를 받는다). 없는 스타일이면 넣지 않고 오류. 기존 블록 id 는 그대로다. 결과 { inserted(새 블록 id), changed: [{ id, number?, text }], warnings? } — changed 는 새 문단과 번호가 다시 매겨진 문단, number 는 넣은 뒤 자동 번호',
       inputSchema: {
         before: z.string().optional().describe('이 블록 앞에 넣는다'),
         after: z.string().optional().describe('이 블록 뒤에 넣는다'),
         text: z.string().describe('새 문단 글자(줄바꿈 없이)'),
+        style: z.string().optional().describe('새 문단의 문단 스타일 이름(예: "개요 1" / "Outline 1", "본문"). list_styles 로 목록을 본다'),
       },
     },
     (args) => toolResult(() => insertParagraph(session, args)),
@@ -153,9 +155,32 @@ export function createMcpServer(session: DocumentSession): McpServer {
   );
 
   server.registerTool(
+    'list_styles',
+    {
+      description:
+        '열린 문서의 문단 스타일 목록(문서의 스타일 순서). 스타일마다 { name, englishName, outline, outlineLevel? } — outline 은 그 스타일 문단이 개요 번호를 받는지(이름이 아니라 스타일 모양으로 본다. 양식에 따라 "개요 1" 도 번호가 없을 수 있다), outlineLevel 은 개요 수준(1부터). 서식은 이 스타일로만 고른다(insert_paragraph 의 style, set_style). 글자 스타일은 없다',
+      inputSchema: {},
+    },
+    () => toolResult(() => listStyles(session)),
+  );
+
+  server.registerTool(
+    'set_style',
+    {
+      description:
+        '문단 블록의 문단 스타일을 바꾼다(바로 적용, 여러 id 도 undo 한 번에 되돌림). style 은 list_styles 의 name 이나 englishName. 문단 모양은 스타일 것이 되고(정렬·들여쓰기 같은 직접 문단 모양은 없어진다 — 그래야 개요 번호가 붙는다), 글자는 스타일 글자 모양이던 글자만 바뀌고 직접 글자 서식(굵게 등)은 남는다. 표·누름틀 블록은 거부한다(그것이 든 문단은 그 문단 블록 id 로). 없는 스타일이면 바꾸지 않고 오류. 결과 { changed: [{ id, number?, text }], warnings? } — 고른 문단과 개요 번호가 바뀐 문단(뒤 개요 번호가 다시 매겨진 문단 포함), number 는 바꾼 뒤 자동 번호',
+      inputSchema: {
+        ids: z.array(z.string()).min(1).describe('스타일을 바꿀 문단 블록 id 목록'),
+        style: z.string().describe('문단 스타일 이름(예: "개요 1" / "Outline 1", "본문", "제목")'),
+      },
+    },
+    ({ ids, style }) => toolResult(() => setStyle(session, ids, style)),
+  );
+
+  server.registerTool(
     'undo',
     {
-      description: `편집(replace_text·insert_paragraph·delete_blocks 등)을 최근 것부터 되돌린다. 최대 ${UNDO_LIMIT}단계이고 그보다 옛 편집은 되돌릴 수 없다. 뷰어가 다시 그려진다. 결과 { undone, edits(되돌린 편집, 최근 것부터), warnings? }. 되돌릴 것이 없으면 "${NOTHING_TO_UNDO}"`,
+      description: `편집(replace_text·insert_paragraph·delete_blocks·move_blocks·set_style 등)을 최근 것부터 되돌린다. 최대 ${UNDO_LIMIT}단계이고 그보다 옛 편집은 되돌릴 수 없다. 뷰어가 다시 그려진다. 결과 { undone, edits(되돌린 편집, 최근 것부터), warnings? }. 되돌릴 것이 없으면 "${NOTHING_TO_UNDO}"`,
       inputSchema: {
         steps: z.number().int().min(1).max(UNDO_LIMIT).default(1).describe(`되돌릴 편집 수(기본 1, 최대 ${UNDO_LIMIT})`),
       },

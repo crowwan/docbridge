@@ -14,6 +14,7 @@ import { findInBlocks } from '../core/find-text.ts';
 import { selectionRects, type SelectionRect } from '../core/highlight-rects.ts';
 import { blockBoxes, highlightTargets } from '../core/highlight-targets.ts';
 import { exportForSave } from '../core/hwpx-export.ts';
+import { paragraphStyles } from '../core/styles.ts';
 import { base64ToBytes } from '../shared/base64.ts';
 import { errorMessage } from '../shared/errors.ts';
 import {
@@ -279,6 +280,8 @@ function handleRequest(request: RequestMessage): unknown {
     case 'clear_highlight':
       clearHighlights();
       return {};
+    case 'list_styles':
+      return paragraphStyles(openedEditor().doc);
     case 'edit':
       return applyEdit(request.params.operation, request.params.depth, request.params.unsavedEdits);
     case 'undo':
