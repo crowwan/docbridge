@@ -195,6 +195,22 @@ describe('SPEC-003 표 만들기 (기술 검증)', () => {
     expect(paragraphTexts(doc)).toEqual(['제목', '배경', '', '목표']);
   });
 
+  it('rhwp 가 문단을 둘 이상 더하거나 덧붙인 문단이 빈 문단이 아니면 거부하고 넣은 문단·표를 되돌린다 (#38 리뷰)', () => {
+    const doc = outlineDocument();
+    const before = paragraphTexts(doc);
+    const create = doc.createTable.bind(doc);
+    // 덧붙인 문단에 글자가 있는 rhwp 를 흉내낸다(사용자 문단일 수 있어 지우지 않는다 → 넣은 문단이 둘이 된다)
+    doc.createTable = (section, paragraph, offset, rows, cols) => {
+      const result = create(section, paragraph, offset, rows, cols);
+      doc.insertText(section, paragraph + 1, 0, '덧붙은 글자');
+      return result;
+    };
+
+    expect(() => insertTableParagraph(doc, S, 1, 'after', { rows: 1, cols: 1 })).toThrow('표를 넣으며 생긴 문단(1개)을 확인하지 못해');
+    expect(paragraphTexts(doc)).toEqual(before);
+    expect(extractBlocks(doc).some((b) => b.kind === 'table')).toBe(false);
+  });
+
   it('표가 예상한 문단에 들어가지 않으면 거부하고 넣은 문단·표를 되돌린다', () => {
     const doc = outlineDocument();
     const before = paragraphTexts(doc);

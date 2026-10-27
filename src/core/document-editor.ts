@@ -9,7 +9,7 @@ import type { Block } from './block-schema.ts';
 import { extractBlocks } from './blocks.ts';
 import { EditHistory } from './edit-history.ts';
 import { applyEdit, type EditApplied, type EditOperation } from './edit-operations.ts';
-import { positionKey, relocate, type ParagraphChanges, type ParagraphPosition } from './paragraph-changes.ts';
+import { positionKey, relocate, TEXT_PART, type ParagraphChanges, type ParagraphPosition } from './paragraph-changes.ts';
 
 export interface ChangedBlock {
   anchor: BlockAnchor;
@@ -104,7 +104,8 @@ export class DocumentEditor {
         return after === undefined ? [] : [positionKey(after)];
       }),
     );
-    for (const position of applied.changes?.inserted ?? []) known.add(positionKey(position));
+    // 표를 담으려고 넣은 문단(insert_table, part 'table:N')은 표 블록이 생기므로 빈 문단 블록으로 남기지 않는다
+    for (const position of applied.changes?.inserted ?? []) if (position.part === TEXT_PART) known.add(positionKey(position));
     return (section, paragraph) => known.has(positionKey({ section, paragraph }));
   }
 

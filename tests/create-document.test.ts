@@ -410,6 +410,47 @@ describe('SPEC-003 블록이 없는 문서의 첫 블록', () => {
   });
 });
 
+describe('SPEC-003 새 문서에 표 넣기 (insert_table)', () => {
+  const insertedSchema = z.object({ inserted: z.string() });
+  const cellsSchema = z.object({ blocks: z.array(z.object({ id: z.string(), kind: z.string(), cells: z.array(z.object({ text: z.string() })).optional() })) });
+
+  it('새 문서의 첫 블록 뒤에 표를 넣고 저장해 다시 열면 제목과 표·칸 글자가 그대로다', async () => {
+    await connectRhwp();
+    const path = join(dir, '제안서.hwpx');
+    const { firstBlock } = await create({ path });
+    await json('replace_text', { target: { id: firstBlock }, text: '도입 일정' });
+    const table = insertedSchema.parse(
+      await json('insert_table', { after: firstBlock, rows: 2, cols: 2, cells: [['단계', '시기'], ['시범', '11월']], header: true }),
+    );
+    expect(await outline()).toEqual([
+      { id: firstBlock, kind: 'paragraph', text: '도입 일정' },
+      { id: table.inserted, kind: 'table', text: expect.any(String) },
+    ]);
+
+    expect((await save()).verified).toEqual({ blockCount: 2 });
+    await json('open_document', { path });
+
+    expect((await outline()).map(({ kind }) => kind)).toEqual(['paragraph', 'table']);
+    expect(await outlineTexts()).toContain('도입 일정');
+    const read = cellsSchema.parse(await json('read_blocks', { ids: ['b2'] }));
+    expect(read.blocks[0]?.cells?.map(({ text }) => text)).toEqual(['단계', '시기', '시범', '11월']);
+  });
+
+  it('첫 블록을 비운 채 표만 넣으면 표가 블록이라 첫 빈 문단은 저장한 파일에서 블록이 아니다(블록이 없을 때만 남기는 규칙). 다시 열어도 표 앞에 문단을 넣을 수 있다', async () => {
+    await connectRhwp();
+    const path = join(dir, '표만.hwpx');
+    const { firstBlock } = await create({ path });
+    await json('insert_table', { after: firstBlock, rows: 1, cols: 2, cells: [['가', '나']] });
+
+    expect((await save()).verified).toEqual({ blockCount: 1 });
+    await json('open_document', { path });
+    expect((await outline()).map(({ kind }) => kind)).toEqual(['table']);
+
+    await json('insert_paragraph', { before: 'b1', text: '표 제목' });
+    expect((await outline()).map(({ kind, text }) => (kind === 'table' ? 'table' : text))).toEqual(['표 제목', 'table']);
+  });
+});
+
 describe('SPEC-003 새 문서에서의 편집 (SPEC-002 도구)', () => {
   it('AC-9 새 문서에서 replace_text·insert_paragraph·move_blocks·delete_blocks·undo 가 SPEC-002 와 같이 동작한다', async () => {
     await connectRhwp();
