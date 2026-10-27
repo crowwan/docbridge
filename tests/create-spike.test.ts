@@ -76,6 +76,24 @@ describe('SPEC-003 빈 문서 템플릿 (기술 검증)', () => {
     );
   });
 
+  it('"개요 1" 이라도 스타일 문단 모양에 개요가 없으면 개요 스타일로 보지 않고 번호도 붙지 않는다', () => {
+    const doc = createBlankDocument();
+    // 한컴 공문 양식에서 본 모양: 개요 스타일을 번호 없는 문단 모양으로 바꿔 쓴다(로컬 한컴 기안문)
+    doc.updateStyleShapes(styleIdByName(doc, '개요 1'), '{}', JSON.stringify({ headType: 'None' }));
+
+    expect(paragraphStyles(doc).find(({ name }) => name === '개요 1')).toEqual({ id: 2, name: '개요 1', englishName: 'Outline 1' });
+    writeParagraphs(doc, [['배경', '개요 1']]);
+    expect(paragraphLines(extractBlocks(doc))).toEqual(['배경']);
+  });
+
+  it('스타일 종류 값에 다른 비트가 섞인 문단 스타일(한컴 HWP 5 바이너리)도 문단 스타일로 본다', () => {
+    const doc = createBlankDocument();
+    // 한컴 HWP 5 바이너리 일부는 "본문"·"개요 1" 등의 종류 값이 4·108 로 온다. createStyle 이 종류 값을 그대로 둬서 재현한다
+    doc.createStyle(JSON.stringify({ name: '옛 문단', englishName: 'Old', type: 108, nextStyleId: 0 }));
+
+    expect(paragraphStyles(doc).some(({ name }) => name === '옛 문단')).toBe(true);
+  });
+
   it('빈 문서는 구역·단 정의가 든 빈 문단 하나라 블록이 없고, 첫 문단을 빈 문단 블록으로 남기면 채울 수 있다', () => {
     const doc = createBlankDocument();
     expect(doc.getParagraphCount(S)).toBe(1);

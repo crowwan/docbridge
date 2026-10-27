@@ -1,6 +1,6 @@
 // 새 문서 만들기 어댑터 — SPEC-003 기술 검증(#35)에서 확인한 절차를 함수로 둔다(ADR 003).
 // rhwp 기본 동작이 스펙과 다른 곳만 바로잡는다(ADR 002 원칙 그대로):
-// - createBlankDocument 의 스타일에는 "제목"이 없다 → 빈 문서에만 docbridge "제목" 스타일을 하나 더한다
+// - createBlankDocument 의 스타일에는 "제목"이 없다 → "제목" 스타일이 없는 문서에 docbridge 제목 스타일을 하나 더한다
 // - applyStyle 은 문단에 직접 문단 모양이 있으면 그 모양을 그대로 둔다(개요 번호가 안 붙는다) → 스타일의 문단 모양으로 맞춘다
 // - createTable 은 표 문단·칸 문단·표 아래 빈 문단에 넣는 자리 문단 모양을 물려준다(개요 문단 뒤면 모두 개요 번호를 받는다)
 //   → 새 문단을 바탕글로 맞춘 뒤 표를 넣고, rhwp 가 덧붙인 표 아래 빈 문단은 지운다
@@ -28,10 +28,16 @@ export interface ParagraphStyle {
   outlineLevel?: number;
 }
 
-/** 문서의 문단 스타일(글자 스타일 빼고). 개요 번호 여부는 스타일 문단 모양의 headType 으로 본다 */
+/** rhwp getStyleList 의 type: 0 문단, 1 글자. 한컴 HWP 5 바이너리 일부는 다른 비트가 섞여 문단 스타일도 4·108 로 온다(로컬 한컴 문서 2개) */
+const CHARACTER_STYLE = 1;
+
+/**
+ * 문서의 문단 스타일(글자 스타일 빼고). 개요 번호 여부는 스타일 이름이 아니라 스타일 문단 모양의 headType 으로 본다
+ * (한컴 공문 양식은 "개요 1" 을 번호 없는 모양으로 바꿔 쓰기도 한다 — 로컬 한컴 기안문)
+ */
 export function paragraphStyles(doc: HwpDocument): ParagraphStyle[] {
   return parseJson(styleListSchema, doc.getStyleList())
-    .filter(({ type }) => type === 0)
+    .filter(({ type }) => type !== CHARACTER_STYLE)
     .map(({ id, name, englishName }) => {
       const { paraProps } = parseJson(styleDetailSchema, doc.getStyleDetail(id));
       return paraProps.headType === 'Outline'
@@ -65,7 +71,7 @@ export function applyParagraphStyle(doc: HwpDocument, section: number, paragraph
   if (shape !== undefined && paraShapeIdAt(doc, section, paragraph) !== shape) doc.setParaShapeId(section, paragraph, shape);
 }
 
-/** docbridge 가 빈 문서에 더하는 제목 스타일(빈 문서 템플릿에는 "제목"이 없다). 가운데 정렬, 20pt 굵게, 다음 문단은 본문 */
+/** docbridge 가 "제목" 스타일이 없는 문서에 더하는 제목 스타일(빈 문서 템플릿에는 "제목"이 없다). 가운데 정렬, 20pt 굵게, 다음 문단은 본문 */
 export const TITLE_STYLE = { name: '제목', englishName: 'Title', fontSize: 2000 } as const;
 
 /** 제목 스타일이 없으면 만든다. 스타일 id 를 돌려준다 */
@@ -225,7 +231,9 @@ export function clearTemplateBody(doc: HwpDocument): ClearedBody {
     const keptSet = new Set([S_FIRST]);
     for (const control of controls) if (KEEP_CONTROLS.has(control.ctrlId)) keptSet.add(control.paragraph);
     const kept = [...keptSet].sort((x, y) => x - y);
-    for (const control of controls) countInto(keptSet.has(control.paragraph) && KEEP_CONTROLS.has(control.ctrlId) ? result.keptObjects : result.removedObjects, nameOf(control));
+    for (const control of controls) {
+      countInto(KEEP_CONTROLS.has(control.ctrlId) ? result.keptObjects : result.removedObjects, nameOf(control));
+    }
     // 남길 문단 k 뒤의 지울 문단 [k+1, next) 을 뒤에서부터: k 끝 ~ next-1 끝을 지우면 그 문단들이 k 에 합쳐지며 사라진다
     for (let i = kept.length - 1; i >= 0; i -= 1) {
       const from = kept[i] ?? S_FIRST;
@@ -243,7 +251,7 @@ export function clearTemplateBody(doc: HwpDocument): ClearedBody {
       const length = doc.getParagraphLength(section, paragraph);
       if (length > 0) doc.deleteText(section, paragraph, 0, length);
       applyParagraphStyle(doc, section, paragraph, NORMAL_STYLE);
-      result.keptParagraphs.unshift({ section, paragraph });
+      result.keptParagraphs.push({ section, paragraph });
     }
   }
   result.keptParagraphs.sort((x, y) => x.section - y.section || x.paragraph - y.paragraph);
