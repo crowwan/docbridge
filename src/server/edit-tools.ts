@@ -155,8 +155,9 @@ export async function moveBlocks(
       operation: { kind: 'move_blocks', section, start, end, before, blocks },
     };
   });
-  // 옮긴 블록 = 옮긴 범위에 든 블록(id 는 그대로라 계획 때 id 와 같다)
-  const movedIds = new Set(plan?.blocks.map(({ id }) => id));
+  // 옮긴 블록 = 옮긴 범위에 든 블록(문서 순서. id 는 그대로라 계획 때 id 와 같고, 뷰어가 범위를 양방향으로 맞춰 본다)
+  const moved = plan?.blocks.map(({ id }) => id) ?? [];
+  const movedIds = new Set(moved);
   const items = changed.flatMap(({ id, block }) => {
     if (id === undefined) return [];
     const number = block.kind === 'paragraph' ? block.number : undefined;
@@ -169,7 +170,7 @@ export async function moveBlocks(
   );
   const warnings = [...(typed.length === 0 ? [] : [typedNumberMessage(typed.map(({ id }) => id))]), ...unmarked.map(unmarkedMessage)];
   return {
-    moved: items.filter(({ id }) => movedIds.has(id)).map(({ id }) => id),
+    moved,
     changed: items.map(({ item }) => item),
     ...(warnings.length === 0 ? {} : { warnings }),
   };
