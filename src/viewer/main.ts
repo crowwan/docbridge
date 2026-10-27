@@ -13,6 +13,8 @@ import type { EditOperation } from '../core/edit-operations.ts';
 import { findInBlocks } from '../core/find-text.ts';
 import { selectionRects, type SelectionRect } from '../core/highlight-rects.ts';
 import { blockBoxes, highlightTargets } from '../core/highlight-targets.ts';
+import { exportForSave } from '../core/hwpx-export.ts';
+import { base64ToBytes } from '../shared/base64.ts';
 import { errorMessage } from '../shared/errors.ts';
 import {
   answerRequest,
@@ -222,14 +224,30 @@ function closeEditor(): void {
   currentEditor = undefined;
 }
 
-function base64ToBytes(data: string): Uint8Array {
-  const binary = atob(data);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  return bytes;
+/**
+ * 서버가 알려준 저장하지 않은 편집 수(서버 편집 기록이 기준 — 뷰어는 세지 않는다). 0 이 아니면 탭을 닫거나 새로고침할 때
+ * 브라우저 확인 창을 띄운다(SPEC-002 새로고침). 서버가 저장·편집·되돌리기 뒤에 edit_state 로 보내고, 새 문서를 열면 0
+ */
+let unsavedEdits = 0;
+
+window.addEventListener('beforeunload', (event) => {
+  // 확인 창 문구는 브라우저가 정한다(사이트가 바꿀 수 없다)
+  if (unsavedEdits > 0) event.preventDefault();
+});
+
+/** 서버 편집 상태를 따른다. 저장하면 마지막 파일 이름이 바뀌어 상태 줄도 바꾼다 */
+function applyEditState(fileName: string, count: number): void {
+  unsavedEdits = count;
+  currentFileName = fileName;
+  if (currentDoc !== undefined) setStatus(`${fileName} — ${currentDoc.pageCount()}쪽`);
+}
+
+function exportHwpx(): ViewerResult<'export_hwpx'> {
+  return exportForSave(openedEditor().doc);
 }
 
 function loadDocument(fileName: string, data: string): LoadDocumentResult {
+  unsavedEdits = 0;
   try {
     const { doc } = showDocument(base64ToBytes(data), fileName);
     currentEditor = new DocumentEditor(doc);
@@ -262,9 +280,14 @@ function handleRequest(request: RequestMessage): unknown {
       clearHighlights();
       return {};
     case 'edit':
-      return applyEdit(request.params.operation, request.params.depth);
+      return applyEdit(request.params.operation, request.params.depth, request.params.unsavedEdits);
     case 'undo':
-      return undoEdits(request.params.steps, request.params.depth);
+      return undoEdits(request.params.steps, request.params.depth, request.params.unsavedEdits);
+    case 'export_hwpx':
+      return exportHwpx();
+    case 'edit_state':
+      applyEditState(request.params.fileName, request.params.unsavedEdits);
+      return {};
     default: {
       // 메서드를 더하고 여기 처리를 빠뜨리면 컴파일 오류가 난다
       const unhandled: never = request;
@@ -288,7 +311,8 @@ function openedBlocks(): Block[] {
  * 편집하고 다시 그린 뒤 바뀐 블록에 표시를 남긴다. 다시 그리기·표시까지 성공해야 편집 기록에 들어간다.
  * 그 사이 던지면 문서는 스냅샷으로 돌아가므로 화면도 되돌린 문서로 다시 그린다
  */
-function applyEdit(operation: EditOperation, depth: number): ViewerResult<'edit'> {
+/** unsaved: 편집이 성공한 뒤의 저장하지 않은 편집 수(서버가 계산해 실어 보낸다) */
+function applyEdit(operation: EditOperation, depth: number, unsaved: number): ViewerResult<'edit'> {
   const editor = openedEditor();
   let unmarked: BlockAnchor[] = [];
   let drawn = false;
@@ -300,6 +324,7 @@ function applyEdit(operation: EditOperation, depth: number): ViewerResult<'edit'
       paintEditMarks(marks.boxes);
       unmarked = marks.unmarked;
     });
+    unsavedEdits = unsaved;
     return { changed, unmarked, pageCount: editor.doc.pageCount() };
   } catch (error) {
     if (drawn) redrawAfterFailure(editor.doc);
@@ -316,9 +341,11 @@ function redrawAfterFailure(doc: HwpDocument): void {
   }
 }
 
-function undoEdits(steps: number, depth: number): ViewerResult<'undo'> {
+/** unsaved: steps 를 다 되돌렸을 때의 저장하지 않은 편집 수. 덜 되돌렸으면 서버가 edit_state 로 맞춘다 */
+function undoEdits(steps: number, depth: number, unsaved: number): ViewerResult<'undo'> {
   const editor = openedEditor();
   const undone = editor.undo(steps, depth);
+  if (undone === steps) unsavedEdits = unsaved;
   if (undone > 0) redraw(editor.doc, 'keep');
   return { undone, pageCount: editor.doc.pageCount() };
 }

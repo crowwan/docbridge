@@ -83,6 +83,7 @@ describe('SPEC-002 글자 바꾸기·되돌리기 도구 (replace_text · undo)'
         text: '11. 7.',
       },
       depth: 0,
+      unsavedEdits: 1,
     });
   });
 

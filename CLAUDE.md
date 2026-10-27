@@ -36,9 +36,9 @@ npm run build          # 서버(tsc → dist/server) + 뷰어(vite → dist/view
 npm start              # 빌드 결과 실행: MCP 서버(stdio) + 뷰어 서버(7790, 사용 중이면 7799 까지 다음 포트).
                        # = node dist/server/index.js. DOCBRIDGE_PORT 로 시작 포트 변경
 npm run typecheck
-npm test               # Vitest: 블록 추출·블록 id·글자 단위·하이라이트 계산·요청/응답·open_document·읽기·하이라이트 도구(가짜/rhwp 테스트 뷰어)·편집 기술 검증·편집 공용 경로·replace_text·undo·
+npm test               # Vitest: 블록 추출·블록 id·글자 단위·하이라이트 계산·요청/응답·open_document·읽기·하이라이트 도구(가짜/rhwp 테스트 뷰어)·편집 기술 검증·편집 공용 경로·replace_text·undo·저장(경로 규칙·검증·새로고침)·
                        # fixture 별 get_outline 기대 JSON(tests/outline/, rhwp 회귀 — 바꿀 때 -u)·서버 통합 (CI)
-npm run e2e            # 빌드 후 Playwright: 렌더링·하이라이트·측정·문서 열기·토큰 거부·읽기 도구·하이라이트 도구·편집 표시 (로컬 전용, CI 에 없음)
+npm run e2e            # 빌드 후 Playwright: 렌더링·하이라이트·측정·문서 열기·토큰 거부·읽기 도구·하이라이트 도구·편집 표시·저장과 새로고침 확인 창 (로컬 전용, CI 에 없음)
 node scripts/make-fixtures.ts   # fixtures/ 의 생성 문서 다시 만들기
 node scripts/measure-edits.ts [문서…]   # 편집·되돌리기·HWPX 저장 검증 비용 측정 (ADR 002)
 node scripts/make-hwp-check.ts [폴더]   # 한글 프로그램 확인용 편집 HWPX (기본 ~/Downloads/docbridge-hwp-check, 레포에 넣지 않음)
@@ -56,15 +56,18 @@ src/
                읽기 도구(read-tools.ts: 뷰어 요청 + id 붙이기, reading.ts: 개요·읽기 결과와 500블록·20,000자 자르기),
                하이라이트 도구(highlight-tools.ts: 대상 id → id 표 위치로 바꿔 뷰어에 요청),
                편집 도구(edit-tools.ts: replace_text·undo → session.edit/undo 편집 공용 경로), 편집 기록(edit-log.ts: 되돌리기 20칸 id 표 사본·저장하지 않은 편집 수),
+               저장(save-tool.ts: 뷰어 export_hwpx → 검증 실패면 블록 id → 쓰기 → 마지막 파일·기준 id 표,
+               save-path.ts: 경로 규칙·배타적 만들기·임시 파일 → 이름 바꾸기),
                HTTP·WebSocket(bridge.ts: 토큰·포트·요청 전달), 포트 설정(port.ts), 브라우저 열기(browser.ts), stderr 로그
-  shared/      서버 ↔ 뷰어 요청/응답 프로토콜(protocol.ts: 메서드별 입력·결과 스키마·요청 id·타임아웃·TextTarget), 오류 문구(errors.ts)
+  shared/      서버 ↔ 뷰어 요청/응답 프로토콜(protocol.ts: 메서드별 입력·결과 스키마·요청 id·타임아웃·TextTarget), 오류 문구(errors.ts),
+               파일 크기 상한(limits.ts: 열기·저장 50MB), base64(base64.ts: 뷰어·테스트 뷰어 공용)
   core/        rhwp 어댑터 — 블록 모양 zod 스키마(block-schema.ts), 블록 추출(blocks.ts), 블록 id 대응표(block-ids.ts),
                글자 위치 단위(chars.ts: 유니코드 글자 = rhwp 글자 위치), 글자 찾기(find-text.ts),
                하이라이트 사각형(highlight-rects.ts: 줄 끝 보정), 하이라이트 대상 → 사각형(highlight-targets.ts: 요청당 한 번 도는 highlightTargets, 뷰어·테스트 뷰어 공용),
-               편집 어댑터(edits.ts: 옮기기·첫 글자 모양 바꾸기·칸·누름틀·문단 넣기), 되돌리기(edit-history.ts: 스냅샷 20칸 + id 표 사본),
+               편집 어댑터(edits.ts: 옮기기·첫 글자 모양 바꾸기·칸·누름틀·문단 넣기), 되돌리기(edit-history.ts: 스냅샷 20칸 + id 표 사본, 칸은 bounded-stack.ts — 서버 edit-log.ts 와 공용),
                편집 종류와 적용(edit-operations.ts: kind 판별 유니언 — 새 편집은 스키마 + applyEdit case 하나),
                편집 공용 경로(document-editor.ts: 스냅샷 → 편집 → 블록 다시 뽑기 → 바뀐 블록, 실패하면 되돌림 — 뷰어·테스트 뷰어 공용),
-               HWPX 저장 검증(hwpx-export.ts: 내보내 다시 열어 블록 비교·손실 보고) — SPEC-002 기술 검증(#18) 프로토타입, ADR 002,
+               HWPX 저장 검증(hwpx-export.ts: 내보내 다시 열어 블록 비교·손실 보고, exportForSave = 뷰어 export_hwpx 결과) — ADR 002,
                Node 용 초기화(rhwp-node.ts)
   viewer/      브라우저 뷰어(Vite root). Canvas 렌더링 + 하이라이트·note·바뀐 블록 표시 오버레이. 디자인 토큰은 tokens.css (의도는 docs/design.md)
 tests/         Vitest (Node 에서 rhwp WASM 을 직접 띄움). outline/ = fixture 별 get_outline 기대 JSON

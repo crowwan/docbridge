@@ -63,4 +63,27 @@ describe('SPEC-002 서버 편집 기록 (되돌리기 칸·저장하지 않은 �
     expect(log.dirty).toBe(false);
     expect(log.editCount).toBe(0);
   });
+
+  it('편집·되돌리기 요청에 실을 "그 뒤의 저장하지 않은 편집 수"는 실제로 기록·되돌린 뒤의 값과 같다 (#22)', () => {
+    const log = new EditLog<string>(2);
+    const recordChecked = (label: string) => {
+      const expected = log.unsavedAfterRecord();
+      log.record(label, label);
+      expect(log.unsavedEdits).toBe(expected);
+    };
+    const undoChecked = (steps: number) => {
+      const expected = log.unsavedAfterUndo(steps);
+      log.undo(steps);
+      expect(log.unsavedEdits).toBe(expected);
+    };
+    recordChecked('가');
+    recordChecked('나');
+    log.markSaved();
+    undoChecked(1);
+    recordChecked('다');
+    recordChecked('라');
+    // 칸(2)보다 많이 되돌리라고 해도 있는 만큼만
+    undoChecked(5);
+    expect(log.unsavedEdits).toBe(1);
+  });
 });
