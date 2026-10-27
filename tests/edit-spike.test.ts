@@ -419,6 +419,13 @@ describe('SPEC-002 문단 넣기 (기술 검증)', () => {
     expect(numbered(extractBlocks(doc)).filter((n) => /^\d/.test(n)).slice(0, 2)).toEqual(['1. 새로 넣은 ', '2. 관련: 가나']);
   });
 
+  it('구역 첫 문단 앞에는 넣지 않는다 (PR #24 리뷰)', () => {
+    const doc = openFixture('notice.hwpx');
+    const before = paragraphTexts(doc);
+    expect(() => insertParagraphNear(doc, S, 0, 'before', '맨 앞')).toThrow('구역 첫 문단 앞에는 문단을 넣을 수 없습니다.');
+    expect(paragraphTexts(doc)).toEqual(before);
+  });
+
   it('rhwp 는 구역 첫 문단 앞에 넣으면 구역 정의를 둘째 문단에 남기고, HWPX 로 저장해 다시 열면 구역 정의가 둘이 된다 (근거)', () => {
     const doc = openFixture('notice.hwpx');
     doc.insertParagraph(S, 0);
