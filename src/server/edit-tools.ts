@@ -1,6 +1,6 @@
 // 편집 도구(SPEC-002): 대상 id 를 id 표 위치로 바꿔 편집 공용 경로(session.edit)로 뷰어에 보내고, 바뀐 블록에 id 를 붙여 돌려준다.
 // 새 편집 도구(#21 move_blocks 등)는 core/edit-operations.ts 에 편집 종류를 더하고
-// 여기서 session.edit(이름, 문서 → 편집) 를 부른다. 문단을 넣고 지운 만큼 id 표를 옮기는 일은 뷰어가 돌려준 결과로 session 이 한다.
+// 여기서 session.edit(문서 → { 이름, 편집 }) 를 부른다. 문단을 넣고 지운 만큼 id 표를 옮기는 일은 뷰어가 돌려준 결과로 session 이 한다.
 import { assertDeletable } from '../core/delete-blocks.ts';
 import { UNDO_LIMIT } from '../core/edit-history.ts';
 import { targetLabel } from '../core/text-targets.ts';
@@ -41,10 +41,9 @@ function changedItem({ id, block }: EditedBlock, cell: TextTarget['cell']): Chan
 }
 
 export async function replaceText(session: DocumentSession, target: TextTarget, text: string): Promise<EditResult> {
-  const { changed, unmarked } = await session.edit(`replace_text ${targetLabel(target)}`, (document) => ({
-    kind: 'replace_text',
-    target: anchoredTarget(document.ids, target),
-    text,
+  const { changed, unmarked } = await session.edit((document) => ({
+    label: `replace_text ${targetLabel(target)}`,
+    operation: { kind: 'replace_text', target: anchoredTarget(document.ids, target), text },
   }));
   return editResult(changed, unmarked, target.cell);
 }
@@ -76,9 +75,12 @@ export async function insertParagraph(
   { before, after, text }: { before?: string; after?: string; text: string },
 ): Promise<InsertParagraphResult> {
   const { referenceId, where } = referenceOf({ before, after });
-  const { changed, unmarked, inserted } = await session.edit(`insert_paragraph ${where} ${referenceId}`, (document) => {
+  const { changed, unmarked, inserted } = await session.edit((document) => {
     const { anchor } = anchoredTarget(document.ids, { id: referenceId });
-    return { kind: 'insert_paragraph', reference: { id: referenceId, anchor }, where, text };
+    return {
+      label: `insert_paragraph ${where} ${referenceId}`,
+      operation: { kind: 'insert_paragraph', reference: { id: referenceId, anchor }, where, text },
+    };
   });
   const [id] = inserted;
   if (id === undefined) throw new Error(`${referenceId}: 뷰어가 넣은 문단을 알려 주지 않아 새 id 를 붙이지 못했습니다.`);
@@ -96,10 +98,10 @@ export interface DeleteBlocksResult {
  */
 export async function deleteBlocks(session: DocumentSession, ids: string[]): Promise<DeleteBlocksResult> {
   const unique = [...new Set(ids)];
-  const { deleted } = await session.edit(`delete_blocks ${unique.join(', ')}`, (document) => {
+  const { deleted } = await session.edit((document) => {
     const targets = anchored(document.ids, unique.map((id) => ({ id }))).map(({ id, anchor }) => ({ id, anchor }));
     assertDeletable(targets);
-    return { kind: 'delete_blocks', targets };
+    return { label: `delete_blocks ${unique.join(', ')}`, operation: { kind: 'delete_blocks', targets } };
   });
   return { deleted };
 }
@@ -145,14 +147,14 @@ export async function moveBlocks(
   const { referenceId: reference, where } = referenceOf({ before, after });
   let plan: MovePlan | undefined;
   const chosen = new Set(ids);
-  const { changed, unmarked } = await session.edit(
-    () => moveLabel(plan?.blocks.flatMap(({ id }) => (chosen.has(id) ? [id] : [])) ?? ids),
-    (document) => {
-      plan = planMove(document.ids, ids, reference, where);
-      const { section, start, end, before, blocks } = plan;
-      return { kind: 'move_blocks', section, start, end, before, blocks };
-    },
-  );
+  const { changed, unmarked } = await session.edit((document) => {
+    plan = planMove(document.ids, ids, reference, where);
+    const { section, start, end, before, blocks } = plan;
+    return {
+      label: moveLabel(blocks.flatMap(({ id }) => (chosen.has(id) ? [id] : []))),
+      operation: { kind: 'move_blocks', section, start, end, before, blocks },
+    };
+  });
   // 옮긴 블록 = 옮긴 범위에 든 블록(id 는 그대로라 계획 때 id 와 같다)
   const movedIds = new Set(plan?.blocks.map(({ id }) => id));
   const items = changed.flatMap(({ id, block }) => {

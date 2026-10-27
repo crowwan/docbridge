@@ -279,14 +279,13 @@ export class DocumentSession {
    * 요청에 서버 편집 순번을 실어 보낸다: 앞 편집 결과를 못 받았으면(타임아웃 등 — 뷰어는 적용했을 수 있다) 뷰어가 어긋남으로 거부한다
    */
   async edit(
-    /** 편집 이름(되돌리기 결과에 보인다). 함수면 편집을 만든 뒤(operationFor 다음) 부른다 */
-    label: string | (() => string),
-    operationFor: (document: OpenedDocument) => EditOperation,
+    /** 지금 문서로 편집과 그 이름(되돌리기 결과에 보인다)을 만든다. 던지면(없는 id·거부) 뷰어에 보내지 않는다 */
+    prepare: (document: OpenedDocument) => { label: string; operation: EditOperation },
     updateIds: (ids: BlockIdTable) => void = () => undefined,
   ): Promise<EditOutcome> {
     return this.enqueue(async () => {
       const document = this.openedDocument();
-      const operation = operationFor(document);
+      const { label, operation } = prepare(document);
       const before = document.ids.clone();
       const { changed, unmarked, pageCount, changes } = await this.send('edit', {
         operation,
@@ -295,7 +294,7 @@ export class DocumentSession {
       });
       const { inserted, deleted } = changes === undefined ? { inserted: [], deleted: [] } : applyParagraphChanges(document.ids, changes);
       updateIds(document.ids);
-      document.edits.record(typeof label === 'string' ? label : label(), before);
+      document.edits.record(label, before);
       document.pageCount = pageCount;
       const { ids } = document;
       return {

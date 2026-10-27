@@ -143,11 +143,10 @@ describe('SPEC-002 편집 도구 (replace_text · move_blocks · undo)', () => {
   it('AC-8 되돌리면 블록 id 표도 그 편집 전 상태로 돌아간다', async () => {
     // 문단을 넣는 편집(#20)처럼 id 표를 옮기는 편집을 공용 경로로 흉내 낸다: 글자는 바꾸고 id 표는 문단 하나를 민다
     await session.edit(
-      'id 표를 옮기는 편집',
       (document) => {
         const anchor = document.ids.anchor('b1');
         if (anchor === undefined) throw new Error('b1 이 없다');
-        return { kind: 'replace_text', target: { id: 'b1', anchor }, text: '라마바구청' };
+        return { label: 'id 표를 옮기는 편집', operation: { kind: 'replace_text', target: { id: 'b1', anchor }, text: '라마바구청' } };
       },
       (ids) => void ids.paragraphInserted(0, 1),
     );
