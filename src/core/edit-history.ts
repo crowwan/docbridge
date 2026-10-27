@@ -3,6 +3,7 @@
 // 20칸을 넘으면 가장 옛 칸의 스냅샷을 discardSnapshot 으로 버린다(메모리, ADR 002 측정).
 // 기록 하나는 문서 핸들 하나에 묶인다. 새 문서를 열면 새 EditHistory 를 만들고 옛 것은 dispose 한다.
 import type { HwpDocument } from '@rhwp/core';
+import { BoundedStack } from './bounded-stack.ts';
 
 export const UNDO_LIMIT = 20;
 
@@ -14,18 +15,17 @@ interface Entry<S> {
 }
 
 export class EditHistory<S> {
-  private readonly entries: Array<Entry<S>> = [];
+  private readonly entries: BoundedStack<Entry<S>>;
   private readonly doc: HwpDocument;
-  private readonly limit: number;
   private disposed = false;
 
   constructor(doc: HwpDocument, limit = UNDO_LIMIT) {
     this.doc = doc;
-    this.limit = limit;
+    this.entries = new BoundedStack(limit);
   }
 
   get size(): number {
-    return this.entries.length;
+    return this.entries.size;
   }
 
   /**
@@ -47,18 +47,14 @@ export class EditHistory<S> {
       this.doc.discardSnapshot(snapshot);
       return result;
     }
-    this.entries.push({ snapshot, label, before });
-    while (this.entries.length > this.limit) {
-      const oldest = this.entries.shift();
-      if (oldest) this.doc.discardSnapshot(oldest.snapshot);
-    }
+    for (const evicted of this.entries.push({ snapshot, label, before })) this.doc.discardSnapshot(evicted.snapshot);
     return result;
   }
 
   /** steps 만큼 되돌린다. 되돌린 편집 이름(최근 것부터)과 가장 옛 칸의 편집 전 상태. 되돌릴 것이 없으면 undefined */
   undo(steps = 1): { labels: string[]; state: S } | undefined {
     this.assertOpen();
-    const taken = this.entries.splice(Math.max(0, this.entries.length - steps)).reverse();
+    const taken = this.entries.take(steps);
     const oldest = taken.at(-1);
     if (oldest === undefined) return undefined;
     this.doc.restoreSnapshot(oldest.snapshot);
@@ -72,9 +68,9 @@ export class EditHistory<S> {
    */
   dispose(): number {
     if (this.disposed) return 0;
-    const count = this.entries.length;
-    for (const entry of this.entries) this.doc.discardSnapshot(entry.snapshot);
-    this.entries.length = 0;
+    const dropped = this.entries.clear();
+    for (const entry of dropped) this.doc.discardSnapshot(entry.snapshot);
+    const count = dropped.length;
     this.disposed = true;
     return count;
   }
