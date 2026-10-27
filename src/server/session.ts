@@ -251,6 +251,7 @@ export class DocumentSession {
         fileName: document.fileName,
         unsavedEdits: document.edits.unsavedEdits,
         newDocument: document.location.kind === 'new',
+        state: document.edits.state,
       });
     } catch (error) {
       log(`뷰어에 편집 상태를 보내지 못했습니다: ${String(error)}`);
@@ -415,6 +416,7 @@ export class DocumentSession {
         operation,
         depth: document.edits.depth,
         unsavedEdits: document.edits.unsavedAfterRecord(),
+        state: document.edits.stateAfterRecord(),
       });
       const { inserted, deleted } = changes === undefined ? { inserted: [], deleted: [] } : applyParagraphChanges(document.ids, changes);
       updateIds(document.ids);
@@ -444,6 +446,7 @@ export class DocumentSession {
         steps: available,
         depth: document.edits.depth,
         unsavedEdits: document.edits.unsavedAfterUndo(available),
+        state: document.edits.stateAfterUndo(available),
       });
       document.pageCount = pageCount;
       // 뷰어가 되돌린 만큼만(뷰어 스냅샷이 서버 기록보다 적을 수 있다 — 새로고침 뒤 등)

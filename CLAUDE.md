@@ -58,7 +58,7 @@ src/
   server/      MCP 서버 진입점(index.ts), 도구 등록(mcp.ts), 문서 세션(session.ts: 문서 자리(연 파일 / 저장 전 새 문서)·마지막 파일·id 표·편집 기록·뷰어 요청과 편집 공용 경로, create = create_document),
                읽기 도구(read-tools.ts: 뷰어 요청 + id 붙이기, reading.ts: 개요·읽기 결과와 500블록·20,000자 자르기),
                하이라이트 도구(highlight-tools.ts: 대상 id → id 표 위치로 바꿔 뷰어에 요청),
-               편집 도구(edit-tools.ts: replace_text·replace_all(서버가 일치를 구해 replace_text 여러 자리 편집으로)·insert_paragraph·insert_table·delete_blocks·move_blocks·undo → session.edit/undo 편집 공용 경로), 사람 편집(user-edit.ts: 뷰어 user_edit 블록 위치 → id 표로 id, 편집 순번 확인, 같은 session.edit 줄·거부 규칙, ⌘Z user_undo — SPEC-006, 알림은 session takeNotices), 스타일 도구(style-tools.ts: list_styles·set_style, 스타일 목록 항목 styleItems), 옮기기 계획(move-plan.ts: id 표로 이어짐·기준 등 거부 판정과 옮길 문단 범위), 편집 기록(edit-log.ts: 되돌리기 20칸 id 표 사본·저장하지 않은 편집 수),
+               편집 도구(edit-tools.ts: replace_text·replace_all(서버가 일치를 구해 replace_text 여러 자리 편집으로)·insert_paragraph·insert_table·delete_blocks·move_blocks·undo → session.edit/undo 편집 공용 경로), 사람 편집(user-edit.ts: 뷰어 user_edit 블록 위치 → id 표로 id, 문서 상태 번호 확인(뷰어가 본 문서 = 줄 차례의 문서), 같은 session.edit 줄·거부 규칙, ⌘Z user_undo — SPEC-006, 알림은 session takeNotices), 스타일 도구(style-tools.ts: list_styles·set_style, 스타일 목록 항목 styleItems), 옮기기 계획(move-plan.ts: id 표로 이어짐·기준 등 거부 판정과 옮길 문단 범위), 편집 기록(edit-log.ts: 되돌리기 20칸 id 표 사본·저장하지 않은 편집 수·문서 상태 번호 state — 편집·되돌리기·edit_state 요청에 실어 뷰어에 보낸다),
                저장(save-tool.ts: 뷰어 export_hwpx → 검증 실패면 블록 id → 쓰기 → 마지막 파일·기준 id 표,
                save-path.ts: 경로 규칙(새 문서 경로·새 문서 저장 포함)·배타적 만들기·임시 파일 → 이름 바꾸기),
                HTTP·WebSocket(bridge.ts: 토큰·포트·요청 전달, 뷰어 요청 받기 serveUserRequests — 마지막에 붙은 탭만), 포트 설정(port.ts), 브라우저 열기(browser.ts), stderr 로그

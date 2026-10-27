@@ -12,7 +12,7 @@ import { createMcpServer } from '../src/server/mcp.ts';
 import { DocumentSession } from '../src/server/session.ts';
 import { STALE_USER_EDIT } from '../src/server/user-edit.ts';
 import type { RequestMessage, UserEdit, UserResponseMessage } from '../src/shared/protocol.ts';
-import { FakeViewer } from './fake-viewer.ts';
+import { FakeViewer, NO_RESPONSE } from './fake-viewer.ts';
 import { fixturePath } from './fixtures.ts';
 import { rhwpViewer } from './rhwp-viewer.ts';
 
@@ -58,8 +58,16 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
     if (anchor === undefined) throw new Error(`${id} 가 없다`);
     return anchor;
   };
-  /** 뷰어가 지금 편집 순번으로 사람 편집을 보낸다 */
-  const userEdit = (edit: UserEdit, depth = session.document?.edits.depth ?? 0) => viewer.userRequest('user_edit', { edit, depth });
+  /** 서버가 아는 지금 문서 상태 번호(뷰어가 마지막으로 받은 편집·되돌리기의 상태 번호와 같다) */
+  const serverState = () => session.document?.edits.state ?? 0;
+  /** 뷰어가 보고 있는 문서의 상태 번호로 사람 편집을 보낸다 */
+  const userEdit = (edit: UserEdit, state = serverState()) => viewer.userRequest('user_edit', { edit, state });
+  /**
+   * 뷰어 편집 응답 붙잡기: holdNextEdit() 뒤 오는 edit 요청은 뷰어가 적용만 하고 응답은 release() 때 보낸다.
+   * 뷰어는 적용했지만 서버는 아직 기록하지 않은 사이를 시간에 기대지 않고 만든다
+   */
+  let holding: ((held: { request: RequestMessage; release: () => void }) => void) | undefined;
+  const holdNextEdit = () => new Promise<{ request: RequestMessage; release: () => void }>((resolve) => (holding = resolve));
   const succeeded = (response: UserResponseMessage) => {
     if (!response.ok) throw new Error(response.error);
     return response.result;
@@ -76,7 +84,15 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
     await client.connect(clientSide);
     viewer = await FakeViewer.connect(bridge.viewerUrl);
     sockets.push(viewer);
-    viewer.serve(rhwpViewer().handle);
+    const rhwp = rhwpViewer();
+    viewer.serve((request) => {
+      const result = rhwp.handle(request);
+      const hold = holding;
+      if (request.method !== 'edit' || hold === undefined) return result;
+      holding = undefined;
+      hold({ request, release: () => viewer.respondWith(request.id, result) });
+      return NO_RESPONSE;
+    });
     await json('open_document', { path: fixturePath('notice.hwpx') });
   });
 
@@ -113,7 +129,7 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
     expect((await outline()).ids).toEqual(before.filter((id) => id !== 'b4'));
   });
 
-  it('사람 편집은 Claude 편집과 같은 직렬 큐로 처리해 편집 순번·저장하지 않은 편집 수를 이어서 싣는다', async () => {
+  it('사람 편집은 Claude 편집과 같은 직렬 큐로 처리해 편집 순번·저장하지 않은 편집 수·상태 번호를 이어서 싣는다', async () => {
     await json('replace_text', { target: { id: 'b1' }, text: '라마바구청' });
 
     succeeded(await userEdit(replaceB11()));
@@ -123,6 +139,52 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
       [1, 2],
     ]);
     expect(session.unsavedEdits).toBe(2);
+    // 편집 요청마다 편집 뒤 상태 번호를 실어 보낸다(뷰어가 사람 편집에 실어 돌려준다)
+    expect(requests('edit').map(({ params }) => ('state' in params ? params.state : undefined))).toEqual([1, 2]);
+    expect(serverState()).toBe(2);
+  });
+
+  it('뷰어가 Claude 편집을 받기 전에 보낸 사람 편집(옛 상태 번호)은 그 편집이 기록된 뒤 차례가 와도 거부한다', async () => {
+    const held = holdNextEdit();
+    const claude = json('replace_text', { target: { id: 'b1' }, text: '라마바구청' });
+    const { release } = await held;
+
+    // 뷰어는 Claude 편집 전 화면(상태 0)을 보고 고쳤다
+    const user = userEdit(replaceB11(), 0);
+    release();
+    await claude;
+
+    expect(failure(await user)).toBe(STALE_USER_EDIT);
+    expect(await readText('b11')).toBe(B11_BEFORE);
+    expect(session.editCount).toBe(1);
+  });
+
+  it('뷰어가 Claude 편집을 적용한 뒤 보낸 사람 편집(새 상태 번호)은 서버 기록이 끝나기 전에 와도 그 뒤에 적용한다', async () => {
+    const held = holdNextEdit();
+    const claude = json('replace_text', { target: { id: 'b1' }, text: '라마바구청' });
+    const { request, release } = await held;
+    const applied = 'state' in request.params ? request.params.state : undefined;
+
+    // 뷰어는 Claude 편집을 적용한 화면(요청에 실려 온 상태 번호)에서 고쳤다. 서버는 아직 그 편집을 기록하지 않았다
+    const user = userEdit(replaceB11(), applied);
+    release();
+    await claude;
+
+    succeeded(await user);
+    expect(await readText('b1')).toBe('라마바구청');
+    expect(await readText('b11')).toBe(B11_AFTER);
+    expect(session.editCount).toBe(2);
+  });
+
+  it('되돌린 뒤 다른 편집으로 편집 순번이 같아져도 상태 번호가 다르면 거부한다', async () => {
+    await json('replace_text', { target: { id: 'b1' }, text: '라마바구청' });
+    const seen = serverState();
+    await json('undo');
+    await json('insert_paragraph', { after: 'b5', text: '새 문단' });
+    expect(session.document?.edits.depth).toBe(1);
+
+    expect(failure(await userEdit(replaceB11(), seen))).toBe(STALE_USER_EDIT);
+    expect(await readText('b11')).toBe(B11_BEFORE);
   });
 
   it('AC-7 사람 편집과 Claude 편집이 한 되돌리기 줄에 쌓이고, undo 가 사람 편집도 순서대로 되돌린다', async () => {
@@ -171,7 +233,7 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
     expect((await outline()).notices).toEqual([]);
   });
 
-  it('뷰어의 편집 순번이 서버와 다르면(그사이 문서가 바뀜) 뷰어에 보내지 않고 거부한다', async () => {
+  it('뷰어의 상태 번호가 서버와 다르면(그사이 문서가 바뀜) 뷰어에 보내지 않고 거부한다', async () => {
     expect(failure(await userEdit(replaceB11(), 3))).toBe(STALE_USER_EDIT);
 
     expect(requests('edit')).toEqual([]);
@@ -206,7 +268,7 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
         if (parsed.success) resolve(parsed.data);
       });
     });
-    ws.send(JSON.stringify({ type: 'user_request', id: 7, method: 'user_edit', params: { edit: { kind: 'insert_table' }, depth: 0 } }));
+    ws.send(JSON.stringify({ type: 'user_request', id: 7, method: 'user_edit', params: { edit: { kind: 'insert_table' }, state: 0 } }));
 
     const response = await reply;
     ws.close();

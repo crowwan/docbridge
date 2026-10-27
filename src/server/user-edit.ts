@@ -52,12 +52,15 @@ function prepareUserEdit(ids: BlockIdTable, edit: UserEdit): { label: string; op
 }
 
 /**
- * 사람 편집 하나를 편집 공용 경로로 한다. depth 는 뷰어가 편집을 만들 때의 편집 순번 — 줄 차례가 왔을 때 서버 순번과 다르면
- * (그사이 Claude 편집·되돌리기가 먼저 처리됨) 블록 위치가 어긋났을 수 있어 뷰어에 보내지 않고 거부한다
+ * 사람 편집 하나를 편집 공용 경로로 한다. state 는 뷰어가 보고 있던 문서의 상태 번호 — 줄 차례가 왔을 때 서버 번호와 다르면
+ * (그사이 Claude 편집·되돌리기가 끼어 문서가 바뀜) 블록 위치가 어긋났을 수 있어 뷰어에 보내지 않고 거부한다.
+ * 편집 순번(depth)이 아니라 상태 번호로 보는 것은, 되돌린 뒤 다른 편집을 하면 순번은 같아도 문서가 다르기 때문이다.
+ * 뷰어 번호는 서버가 편집 요청에 실어 보낸 것이라, 뷰어가 적용했지만 서버가 아직 기록하지 않은 편집 뒤의 사람 편집도
+ * (줄에서 그 기록 뒤에 차례가 오므로) 맞게 받는다
  */
-export async function applyUserEdit(session: DocumentSession, edit: UserEdit, depth: number): Promise<void> {
+export async function applyUserEdit(session: DocumentSession, edit: UserEdit, state: number): Promise<void> {
   await session.edit((document) => {
-    if (document.edits.depth !== depth) throw new Error(STALE_USER_EDIT);
+    if (document.edits.state !== state) throw new Error(STALE_USER_EDIT);
     const { label, operation, notice } = prepareUserEdit(document.ids, edit);
     return { label: `${label}${USER_EDIT_MARK}`, operation, notice };
   });
@@ -74,7 +77,7 @@ export async function undoFromViewer(session: DocumentSession): Promise<UserResu
 export async function handleUserRequest(session: DocumentSession, request: UserRequestMessage): Promise<unknown> {
   switch (request.method) {
     case 'user_edit':
-      await applyUserEdit(session, request.params.edit, request.params.depth);
+      await applyUserEdit(session, request.params.edit, request.params.state);
       return {};
     case 'user_undo':
       return undoFromViewer(session);

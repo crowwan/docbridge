@@ -50,13 +50,16 @@ function anchorOf(id: string) {
 test.describe('SPEC-006 사람 편집 요청과 ⌘Z 공용 되돌리기 (서버가 내주는 뷰어)', () => {
   test('AC-6 뷰어가 보낸 사람 편집이 서버를 거쳐 화면에 그려지고, 서버 블록도 고친 글자다', async ({ page }) => {
     await session.open(fixturePath('notice.hwpx'));
+    // Claude 편집 뒤 화면에서 고친다(뷰어가 편집 요청에 실려 온 문서 상태 번호를 따라가야 거부되지 않는다)
+    await replaceText(session, { id: 'b1' }, '라마바구청');
 
     await userEdit(page, { kind: 'replace_text', target: { anchor: anchorOf('b11'), start: 13, end: 20 }, text: '11. 7.' });
 
     expect(await paragraphText('b11')).toBe(B11_AFTER);
     // Claude 편집과 같은 경로라 바뀐 블록 표시도 남는다
     await expect(page.getByTestId('edit-mark-0')).toBeVisible();
-    expect(session.unsavedEdits).toBe(1);
+    expect(await paragraphText('b1')).toBe('라마바구청');
+    expect(session.unsavedEdits).toBe(2);
     await page.getByRole('region', { name: '1쪽' }).screenshot({ path: `${SCREENS}/user-edit-01-replace.png` });
   });
 

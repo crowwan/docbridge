@@ -284,6 +284,11 @@ function showStatus(doc: HwpDocument): void {
  * 브라우저 확인 창을 띄운다(SPEC-002 새로고침). 서버가 저장·편집·되돌리기 뒤에 edit_state 로 보내고, 새 문서를 열면 0
  */
 let unsavedEdits = 0;
+/**
+ * 보고 있는 문서의 상태 번호(서버 EditLog.state). 서버가 편집·되돌리기·edit_state 에 실어 보낸 값을 따르고, 문서를 열면 0.
+ * 사람 편집(user_edit)에 실어 보내 서버가 그사이 문서가 바뀌었는지 가린다(SPEC-006)
+ */
+let documentState = 0;
 /** 한 번도 저장하지 않은 새 문서(SPEC-003). 새로고침하면 사라지므로 편집이 없어도 확인 창을 띄운다. 저장하면 서버가 edit_state 로 끈다 */
 let unsavedNewDocument = false;
 
@@ -293,8 +298,9 @@ window.addEventListener('beforeunload', (event) => {
 });
 
 /** 서버 편집 상태를 따른다. 저장하면 마지막 파일 이름이 바뀌어 상태 줄도 바꾼다 */
-function applyEditState(fileName: string, count: number, newDocument: boolean): void {
+function applyEditState(fileName: string, count: number, newDocument: boolean, state: number): void {
   unsavedEdits = count;
+  documentState = state;
   unsavedNewDocument = newDocument;
   currentFileName = fileName;
   if (currentDoc !== undefined) showStatus(currentDoc);
@@ -333,6 +339,7 @@ function createDocument(params: ViewerParams<'create_document'>): CreateDocument
  */
 function replaceDocument<T>(fileName: string, newDocument: boolean, failure: string, open: () => T): T {
   unsavedEdits = 0;
+  documentState = 0;
   unsavedNewDocument = newDocument;
   try {
     return open();
@@ -368,14 +375,21 @@ function handleRequest(request: RequestMessage): unknown {
       return {};
     case 'list_styles':
       return paragraphStyles(openedEditor().doc);
-    case 'edit':
-      return applyEdit(request.params.operation, request.params.depth, request.params.unsavedEdits);
-    case 'undo':
-      return undoEdits(request.params.steps, request.params.depth, request.params.unsavedEdits);
+    case 'edit': {
+      const result = applyEdit(request.params.operation, request.params.depth, request.params.unsavedEdits);
+      documentState = request.params.state;
+      return result;
+    }
+    case 'undo': {
+      const result = undoEdits(request.params.steps, request.params.depth, request.params.unsavedEdits);
+      // 덜 되돌렸으면 서버가 edit_state 로 맞춘다
+      if (result.undone === request.params.steps) documentState = request.params.state;
+      return result;
+    }
     case 'export_hwpx':
       return exportHwpx();
     case 'edit_state':
-      applyEditState(request.params.fileName, request.params.unsavedEdits, request.params.newDocument);
+      applyEditState(request.params.fileName, request.params.unsavedEdits, request.params.newDocument, request.params.state);
       return {};
     default: {
       // 메서드를 더하고 여기 처리를 빠뜨리면 컴파일 오류가 난다
@@ -455,9 +469,10 @@ function sendUserRequest<M extends UserMethod>(method: M, params: UserParams<M>)
   return promise;
 }
 
-/** 사람 편집을 서버에 보낸다(지금 편집 순번과 함께). 다시 그리기·표시는 서버가 보내는 edit 요청에서 한다 */
+/** 사람 편집을 서버에 보낸다(보고 있는 문서의 상태 번호와 함께). 다시 그리기·표시는 서버가 보내는 edit 요청에서 한다 */
 async function requestUserEdit(edit: UserEdit): Promise<void> {
-  await sendUserRequest('user_edit', { edit, depth: openedEditor().depth });
+  openedEditor();
+  await sendUserRequest('user_edit', { edit, state: documentState });
 }
 
 /** 상태 줄에 사람 편집·되돌리기가 안 된 이유를 남긴다(다음 다시 그리기 때 원래 상태 줄로 돌아간다) */
