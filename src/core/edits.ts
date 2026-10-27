@@ -196,6 +196,14 @@ export function replaceFieldText(doc: HwpDocument, fieldId: number, text: string
   } else if (prepending) {
     // 값 첫 자리도 누름틀 밖이다 → 첫 글자를 "글자 + 첫 글자" 로 바꾼다(붙인 글자는 값 첫 글자 모양)
     replaceInSpot(spot, at, at + 1, text + sliceChars(field.value, 0, 1));
+  } else if (text !== '' && to === length && to - start === 1) {
+    // 값 끝 글자 하나를 바꾸면 그 글자 뒤(= 값 끝 위치)에 넣게 되는데, 값 끝 위치에 넣으면 누름틀 밖으로 나간다(#68).
+    // → 앞 글자부터 "앞 글자 + 새 글자" 로 바꿔 넣는 자리를 값 안쪽에 두고, 새 글자에는 바뀐 끝 글자 모양을 다시 건다.
+    //   한 글자 값 전체면 앞 글자가 없으니 값을 통째로 넣는다
+    const look = spot.look(at + start);
+    if (start === 0) doc.setFieldValue(fieldId, text);
+    else replaceInSpot(spot, at + start - 1, at + to, sliceChars(field.value, start - 1, start) + text);
+    spot.applyLook(at + start, at + start + charLength(text), look);
   } else {
     replaceInSpot(spot, at + start, at + to, text);
   }
