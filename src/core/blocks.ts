@@ -1,6 +1,7 @@
 // 문서를 Claude 에게 보여줄 블록(본문 문단·표·누름틀) 목록으로 바꾼다. rhwp 공개 API 만 쓴다.
 import type { HwpDocument } from '@rhwp/core';
 import { z } from 'zod';
+import { BODY_LIST, bodyParagraphLocator } from './body-paragraphs.ts';
 import { parseJson } from './json.ts';
 import type { Block, FieldBlock, ParagraphBlock, TableBlock } from './block-schema.ts';
 
@@ -174,22 +175,15 @@ function readTable(doc: HwpDocument, section: number, paragraph: number, control
   };
 }
 
-// getControls 의 para 는 구역을 이어 붙인 문서 전체 문단 번호다.
-// list 0 이 본문이고, 그 밖의 list 는 표 칸·글상자 안이다(표 안 표는 바깥 표 블록에 속한다).
-// 구역 첫 문단 번호는 getParagraphCount 합으로 구한다. getSectionStarts 는 구역 정의(SectionDef) 표식이
-// 든 문단까지 구역 시작으로 세서(구역 하나에 [0, 1] 이 나올 수 있다) 이 번호와 맞지 않는다(#6, 테스트).
+// 본문(list 0)의 표만 블록이다. 그 밖의 list 는 표 칸·글상자 안이다(표 안 표는 바깥 표 블록에 속한다).
+// getControls 의 para 는 문서 전체 문단 번호라 bodyParagraphLocator 로 (구역, 문단)으로 바꾼다
 function tablesByParagraph(doc: HwpDocument): Map<string, number[]> {
-  const sectionStarts: number[] = [];
-  let total = 0;
-  for (let s = 0; s < doc.getSectionCount(); s += 1) {
-    sectionStarts.push(total);
-    total += doc.getParagraphCount(s);
-  }
+  const locate = bodyParagraphLocator(doc);
   const tables = new Map<string, number[]>();
   for (const control of parseJson(controlsSchema, doc.getControls())) {
-    if (control.ctrlId !== 'tbl' || control.list !== 0) continue;
-    const section = sectionStarts.findLastIndex((start) => start <= control.para);
-    const key = positionKey(section, control.para - (sectionStarts[section] ?? 0));
+    if (control.ctrlId !== 'tbl' || control.list !== BODY_LIST) continue;
+    const { section, paragraph } = locate(control.para);
+    const key = positionKey(section, paragraph);
     tables.set(key, [...(tables.get(key) ?? []), control.controlIndex]);
   }
   return tables;

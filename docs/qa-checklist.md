@@ -29,3 +29,5 @@
 - [ ] SPEC-002 AC-13 이동·바꾸기·표 칸 채우기·저장한 실제 공문이 한글 프로그램에서 손상 경고 없이 열리고 편집 내용과 번호가 맞다
 - [ ] SPEC-002 기술 검증(#18): `node scripts/make-hwp-check.ts` 로 만든 `~/Downloads/docbridge-hwp-check/` 의 파일들이 한글 프로그램에서 경고 없이 열리고 `README.txt` 의 "확인할 것"이 맞다(경고가 나면 `기준-편집없음/` 같은 번호 파일도 열어 원인을 가른다, ADR 002 "NO-GO 일 때")
 - [ ] SPEC-002 저장(#22): 실제로 쓰는 기본 브라우저(Safari·Chrome)에서 편집한 뒤 뷰어 탭을 새로고침하면 확인 창이 뜨고, `save_document` 뒤에는 뜨지 않는다(E2E 는 Playwright Chromium 만, 편집은 검증 API 로 흉내냄)
+- [ ] SPEC-003 AC-10 빈 문서·양식에서 만든 문서(제목·개요·본문·표)를 저장한 파일이 한글 프로그램에서 경고 없이 열리고 스타일·개요 번호·표가 맞다
+- [ ] SPEC-003 기술 검증(#35): `node scripts/make-create-check.ts` 로 만든 `~/Downloads/docbridge-create-check/` 의 파일들이 한글 프로그램에서 경고 없이 열리고 `README.txt` 의 "확인할 것"이 맞다(경고가 나면 `00-기준`·`02-제목스타일없이` 파일로 원인을 가른다, ADR 003 "NO-GO 일 때"). 한컴이 저장한 실제 양식으로도 보려면 `DOCBRIDGE_CREATE_TEMPLATES=<파일,…>`
