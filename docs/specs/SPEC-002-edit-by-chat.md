@@ -1,11 +1,11 @@
 ---
 id: SPEC-002
 title: 말로 고치기와 저장
-status: draft          # draft | approved | in-progress | done | dropped
+status: approved       # draft | approved | in-progress | done | dropped
 milestone: v0.1
 issue:
 prototype:
-updated: 2026-10-26
+updated: 2026-10-27
 ---
 
 # SPEC-002 말로 고치기와 저장
@@ -131,3 +131,4 @@ GO 기준: 이동·바꾸기·칸 채우기를 한 fixture 3개가 한글에서 
 | 날짜 | 내용 |
 |---|---|
 | 2026-10-26 | 초안 |
+| 2026-10-27 | 승인 (대화로 바로 진행) |
