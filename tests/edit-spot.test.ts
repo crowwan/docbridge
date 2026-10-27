@@ -328,7 +328,7 @@ describe('SPEC-006 AC-8 입력칸이 열린 동안 Claude 편집을 따라가고
   });
 
   it('Claude 가 앞에 문단을 넣었으면 블록 위치를 옮겨 따라가고, 글자가 그대로면 옮긴 위치로 보낸다', () => {
-    const changes = { ...noParagraphChanges(), inserted: [{ section: 0, paragraph: 2, part: 'text' }] };
+    const changes = { ...noParagraphChanges(), inserted: [{ section: 0, paragraph: 2, parts: ['text'] }] };
     const followed = followEdit(b11, changes);
     const shifted = blocks.map((block) => (block.paragraph >= 2 ? { ...block, paragraph: block.paragraph + 1 } : block));
 

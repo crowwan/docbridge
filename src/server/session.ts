@@ -86,8 +86,8 @@ function applyParagraphChanges(ids: BlockIdTable, changes: ParagraphChanges): { 
     .map(({ id }) => id);
   for (const table of [...changes.deletedTables].reverse()) ids.tableDeleted(table.section, table.paragraph, table.controlIndex);
   for (const position of [...changes.deletedParagraphs].reverse()) ids.paragraphDeleted(position.section, position.paragraph);
-  // 새 id 는 뷰어가 알려 준 블록에(insert_table 이 넣은 문단은 글자가 없어 표 블록에)
-  const inserted = changes.inserted.map(({ section, paragraph, part }) => ids.paragraphInserted(section, paragraph, part));
+  // 새 id 는 뷰어가 알려 준 블록에(insert_table 이 넣은 문단은 글자가 없어 표 블록에, copy_blocks 는 넣은 문단의 블록마다)
+  const inserted = changes.inserted.flatMap(({ section, paragraph, parts }) => ids.paragraphInsertedWith(section, paragraph, parts));
   return { inserted, deleted };
 }
 
@@ -143,6 +143,8 @@ export interface CreateResult {
 export const reloadLostEditsMessage = (count: number) => `뷰어를 새로고침해서 저장하지 않은 편집 ${count}개가 사라졌습니다.`;
 /** 사람이 화면에서 한 일(편집·⌘Z)을 다음 도구 결과에 한 번 알린다(SPEC-006 AC-9) */
 export const userChangesMessage = (changes: string[]) => `사용자가 화면에서 고침: ${changes.join(', ')}`;
+export const openElsewhereMessage = (doc: string, path: string) =>
+  `${doc} 이 이 파일을 열고 있습니다: ${path}. 다른 경로에 저장하거나 ${doc} 을 close_document 로 닫은 뒤 저장하세요.`;
 export const unknownDocumentMessage = (doc: string) => `열린 문서에 ${doc} 가 없습니다. list_documents 로 확인해 주세요.`;
 
 /** close_document 가 저장하지 않은 편집(또는 한 번도 저장하지 않은 새 문서) 때문에 닫지 않을 때(SPEC-007) */
@@ -172,6 +174,8 @@ export interface DocumentSessionOptions {
   gone: () => void;
   /** 새로고침 때 마지막 파일을 읽는다(검사는 readDocumentFile) */
   readFile: (path: string) => Promise<Uint8Array>;
+  /** 이 파일(실제 경로)을 연 다른 문서의 이름. 없으면 undefined — 저장할 때 두 문서가 같은 파일을 가리키지 않게 본다 */
+  otherDocumentWith: (fileKey: string) => string | undefined;
 }
 
 /** create_document 결과의 양식 요약: 비웠으면 지운 개체·남긴 개체, keep_content 면 본문을 남겼다는 것 */
@@ -201,9 +205,12 @@ export class DocumentSession {
   private readonly readFile: (path: string) => Promise<Uint8Array>;
   private readonly notify: (text: string) => void;
   private readonly gone: () => void;
+  private readonly otherDocumentWith: (fileKey: string) => string | undefined;
   private current: OpenedDocument | undefined;
-  /** 여는 중인 파일(같은 파일을 연달아 열어도 같은 문서가 되게) */
+  /** 여는 중인 파일의 실제 경로(같은 파일을 연달아 열어도 같은 문서가 되게) */
   private opening: string | undefined;
+  /** 마지막 파일의 실제 경로(링크를 따라간 것 — paths.ts realFilePath). 같은 파일 판정에 쓴다 */
+  private lastFile: string | undefined;
   /** close_document·탭 닫기로 표에서 빠졌다. 그 뒤 줄 차례가 온 도구는 없는 문서로 끝난다 */
   private closed = false;
   /** 지난 도구 결과 뒤로 사람이 화면에서 한 일(예: "b11 글자"). 표의 takeNotices 가 한 줄로 묶어 꺼낸다 */
@@ -218,17 +225,23 @@ export class DocumentSession {
     this.readFile = options.readFile;
     this.notify = options.notify;
     this.gone = options.gone;
+    this.otherDocumentWith = options.otherDocumentWith;
   }
 
   get document(): OpenedDocument | undefined {
     return this.current;
   }
 
-  /** 이 문서의 파일(여는 중이면 그 파일, 저장 전 새 문서는 없음). 같은 파일을 다시 열면 이 문서가 된다 */
-  get path(): string | undefined {
+  /** 이 문서 파일의 실제 경로(여는 중이면 그 파일, 저장 전 새 문서는 없음). 같은 파일을 다시 열면 이 문서가 된다 */
+  get fileKey(): string | undefined {
     if (this.opening !== undefined) return this.opening;
-    const location = this.current?.location;
-    return location?.kind === 'file' ? location.path : undefined;
+    return this.current?.location.kind === 'file' ? this.lastFile : undefined;
+  }
+
+  /** 저장할 파일(실제 경로)을 다른 열린 문서가 마지막 파일로 쓰고 있으면 거부한다(두 문서가 같은 파일을 가리키면 다시 열기·새로고침이 엉뚱한 문서로 간다) */
+  assertNotOpenElsewhere(fileKey: string, path: string): void {
+    const other = this.otherDocumentWith(fileKey);
+    if (other !== undefined) throw new Error(openElsewhereMessage(other, path));
   }
 
   /** 되돌릴 수 있는 편집 수(최대 20). 문서가 없으면 0 */
@@ -259,10 +272,11 @@ export class DocumentSession {
   }
 
   /**
-   * 저장을 마쳤다(exclusive 안에서 부른다): 저장 경로가 마지막 파일이 되고, 지금 id 표를 기준 표로 떠 두고,
+   * 저장을 마쳤다(exclusive 안에서 부른다): 저장 경로가 마지막 파일이 되고(fileKey = 그 실제 경로), 지금 id 표를 기준 표로 떠 두고,
    * 저장하지 않은 편집 수를 0 으로, 뷰어에 편집 상태를 보낸다. blocks 는 저장한 문서의 블록 위치(저장 전 검증으로 다시 연 파일과 같다고 확인한 것)
    */
-  async recordSave(document: OpenedDocument, path: string, blocks: BlockPosition[]): Promise<void> {
+  async recordSave(document: OpenedDocument, path: string, blocks: BlockPosition[], fileKey = path): Promise<void> {
+    this.lastFile = fileKey;
     // 새 문서는 처음 저장한 파일이 원본이 된다(다음 경로 없는 저장은 <이름>-수정.hwpx, SPEC-003)
     const sourcePath = document.location.kind === 'file' ? document.location.sourcePath : path;
     document.location = { kind: 'file', path, sourcePath };
@@ -316,13 +330,13 @@ export class DocumentSession {
   }
 
   /**
-   * 파일을 이 문서 탭에 띄운다(path·bytes 는 표가 검사하고 읽었다). 탭이 없으면 빈 탭을 쓰거나 브라우저로 이 문서 탭 주소를 열고 붙기를 기다린다.
+   * 파일을 이 문서 탭에 띄운다(path·bytes 는 표가 검사하고 읽었다, fileKey = path 의 실제 경로). 탭이 없으면 빈 탭을 쓰거나 브라우저로 이 문서 탭 주소를 열고 붙기를 기다린다.
    * 이미 문서가 있으면(같은 파일 다시 열기) SPEC-002 "새 문서를 열면" 규칙대로 그 문서를 대신한다 — 편집 기록·되돌리기는 사라지고 버린 편집 수를 알린다.
    * 열지 못해 문서가 없으면 표에서 빠진다
    */
-  open(path: string, bytes: Uint8Array): Promise<OpenResult> {
+  open(path: string, bytes: Uint8Array, fileKey = path): Promise<OpenResult> {
     const fileName = basename(path);
-    this.opening = path;
+    this.opening = fileKey;
     return this.enqueue(async () => {
       try {
         await this.ensureViewer();
@@ -332,6 +346,7 @@ export class DocumentSession {
         this.userChanges = [];
         const loaded = await this.load(fileName, bytes, discarded);
         const ids = BlockIdTable.assign(loaded.blocks);
+        this.lastFile = fileKey;
         this.current = {
           location: { kind: 'file', path, sourcePath: path },
           fileName,

@@ -1,5 +1,5 @@
 import { once } from 'node:events';
-import { copyFile, mkdtemp } from 'node:fs/promises';
+import { copyFile, mkdtemp, readFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -142,6 +142,34 @@ describe('SPEC-007 여러 문서 세션·탭과 doc 인자 (list_documents · cl
 
     expect(openBrowser).not.toHaveBeenCalled();
     expect(blank.socket.history[0]).toMatchObject({ method: 'load_document', params: { doc: 'd1', fileName: 'notice.hwpx' } });
+  });
+
+  it('AC-1 같은 파일은 실제 경로(realpath)로 가린다 — 링크로 가리킨 경로(macOS /tmp ↔ /private/tmp 등)로 다시 열어도 같은 doc 이다', async () => {
+    const path = await copy('notice.hwpx', '공문.hwpx');
+    const linked = join(dir, '링크');
+    await symlink(dir, linked);
+
+    expect(await json('open_document', { path })).toMatchObject({ doc: 'd1' });
+    expect(await json('open_document', { path: join(linked, '공문.hwpx') })).toMatchObject({ doc: 'd1' });
+    expect(sessions.list().documents).toHaveLength(1);
+  });
+
+  it('열린 다른 문서의 파일 경로로는 저장하지 않는다(두 문서가 같은 파일을 가리키지 않게, 링크 경로도)', async () => {
+    const first = await copy('notice.hwpx', '공문.hwpx');
+    await json('open_document', { path: first });
+    await json('open_document', { path: fixturePath('report.hwpx') });
+    await json('replace_text', { doc: 'd1', target: { id: 'b1' }, text: '라마바구청' });
+    const bytes = await readFile(first);
+    const linked = join(dir, '링크');
+    await symlink(dir, linked);
+
+    const refused = `d1 이 이 파일을 열고 있습니다: ${first}. 다른 경로에 저장하거나 d1 을 close_document 로 닫은 뒤 저장하세요.`;
+    expect(await errorText('save_document', { doc: 'd2', path: first, overwrite: true })).toBe(refused);
+    expect(await errorText('save_document', { doc: 'd2', path: join(linked, '공문.hwpx'), overwrite: true })).toContain('d1 이 이 파일을 열고 있습니다');
+    expect(await readFile(first)).toEqual(bytes);
+    expect(sessions.get('d1').unsavedEdits).toBe(1);
+    // 자기 파일 덮어쓰기는 그대로 된다
+    expect(await json('save_document', { doc: 'd1', path: first, overwrite: true })).toMatchObject({ doc: 'd1', path: first });
   });
 
   it('AC-2 doc 없이 부른 도구는 마지막으로 쓴 문서(마지막으로 열었거나 도구 대상이 된 문서)를 대상으로 한다', async () => {

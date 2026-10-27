@@ -14,9 +14,9 @@ export const positionKey = ({ section, paragraph }: ParagraphPosition) => `${sec
 
 const positionSchema = z.object({ section: z.number().int().min(0), paragraph: z.number().int().min(0) });
 
-/** 넣은 문단에서 새 id 를 받을 블록 꼬리표 */
+/** 넣은 문단에서 새 id 를 받을 블록 꼬리표(block-ids.ts 위치 꼬리표: 문단 글자·표·누름틀) */
 export const TEXT_PART = 'text';
-const insertedPartSchema = z.union([z.literal(TEXT_PART), z.string().regex(/^table:\d+$/)]);
+const insertedPartSchema = z.union([z.literal(TEXT_PART), z.string().regex(/^(?:table|field):\d+$/)]);
 
 export const paragraphChangesSchema = z.object({
   /** 문단은 두고 표 컨트롤만 지운 자리(편집 전 위치와 컨트롤 번호) */
@@ -25,9 +25,10 @@ export const paragraphChangesSchema = z.object({
   deletedParagraphs: z.array(positionSchema),
   /**
    * 새로 넣은 문단(편집 뒤 위치, 문서 순서). 지우기 다음에 넣은 것으로 본다.
-   * part 는 그 문단에서 새 id 를 받을 블록(block-ids.ts 꼬리표): 'text' = 문단 글자(insert_paragraph), 'table:N' = 표(insert_table, #38)
+   * parts 는 그 문단에서 새 id 를 받을 블록(block-ids.ts 꼬리표, 문단 안 순서): ['text'] = 문단 글자(insert_paragraph), ['table:N'] = 표(insert_table, #38),
+   * copy_blocks(SPEC-007)는 원본 문단의 블록 그대로(문단 글자·표·누름틀, 블록이 없는 빈 문단이면 []). 'text' 가 든 문단은 비어도 블록으로 남는다
    */
-  inserted: z.array(positionSchema.extend({ part: insertedPartSchema })),
+  inserted: z.array(positionSchema.extend({ parts: z.array(insertedPartSchema) })),
   /**
    * 옮긴 문단(편집 전 위치): 같은 구역의 이어진 문단 [start, end) 를 before 문단 앞으로(#21). 옮긴 문단은 id 를 그대로 가져가므로
    * 지우고 넣기로는 나타낼 수 없어 따로 둔다. 옮기기 편집은 넣기·지우기와 같이 오지 않는다(오면 옮기기만 본다)

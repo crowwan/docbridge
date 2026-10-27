@@ -67,6 +67,7 @@ export class DocumentEditor {
       // 이미 문단 블록이던(id 가 있는) 문단과 새로 넣은 문단은 편집으로 비어도 블록으로 남긴다(처음 열 때 빈 문단만 뺀다).
       // 문단을 넣고 지우고 옮기는 편집은 그 위치를 편집 뒤 위치로 옮긴다(paragraph-changes.ts relocate)
       const next = extractBlocks(this.doc, this.keepParagraphs(applied, toAfter));
+      assertInsertedBlocks(next, applied.changes);
       // 바뀐 블록 = 편집한 문단 + 자동 번호가 바뀐 문단(옮기기처럼 번호가 다시 매겨지면 편집 대상 밖까지 번진다)
       const touched = new Set([...applied.paragraphs.map(positionKey), ...renumberedParagraphs(this.current, next, toAfter)]);
       const result = { changed: changedBlocks(next, touched), blocks: next, changes: applied.changes };
@@ -104,13 +105,34 @@ export class DocumentEditor {
         return after === undefined ? [] : [positionKey(after)];
       }),
     );
-    // 표를 담으려고 넣은 문단(insert_table, part 'table:N')은 표 블록이 생기므로 빈 문단 블록으로 남기지 않는다
-    for (const position of applied.changes?.inserted ?? []) if (position.part === TEXT_PART) known.add(positionKey(position));
+    // 표를 담으려고 넣은 문단(insert_table, parts ['table:N'])·원본에서 블록이 아니던 빈 문단(copy_blocks)은 빈 문단 블록으로 남기지 않는다
+    for (const position of applied.changes?.inserted ?? []) if (position.parts.includes(TEXT_PART)) known.add(positionKey(position));
     return (section, paragraph) => known.has(positionKey({ section, paragraph }));
   }
 
   private assertDepth(expected: number): void {
     if (expected !== this.appliedDepth) throw new Error(editHistoryMismatchMessage(expected, this.appliedDepth));
+  }
+}
+
+/**
+ * 넣은 문단의 블록이 편집이 알린 것(changes.inserted 의 parts)과 같은지. 다르면 서버가 없는 블록에 id 를 주거나 블록이 id 없이 남는다 —
+ * 던져서 편집을 되돌린다(copy_blocks 는 원본 블록 꼬리표를 그대로 싣는다)
+ */
+function assertInsertedBlocks(blocks: Block[], changes: ParagraphChanges | undefined): void {
+  if (changes === undefined || changes.inserted.length === 0) return;
+  const parts = new Map<string, string[]>();
+  for (const anchor of anchorsOf(blocks)) {
+    const key = positionKey(anchor);
+    parts.set(key, [...(parts.get(key) ?? []), anchor.part]);
+  }
+  for (const position of changes.inserted) {
+    const actual = parts.get(positionKey(position)) ?? [];
+    if (actual.join(',') !== position.parts.join(',')) {
+      throw new Error(
+        `넣은 문단(구역 ${position.section} 문단 ${position.paragraph})의 블록이 예상과 다릅니다(예상 ${position.parts.join(', ') || '없음'}, 실제 ${actual.join(', ') || '없음'}). 넣지 않았습니다.`,
+      );
+    }
   }
 }
 

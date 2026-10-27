@@ -4,7 +4,7 @@
 import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import type { Bridge } from './bridge.ts';
-import { absolutePath } from './paths.ts';
+import { absolutePath, realFilePath } from './paths.ts';
 import { RELATIVE_TEMPLATE_PATH, requireAbsolutePath, resolveNewDocumentPath } from './save-path.ts';
 import {
   DocumentSession,
@@ -160,12 +160,13 @@ export class DocumentSessions {
   /** 파일을 연다. 이미 열린 파일이면 그 문서에 다시 연다(같은 doc), 아니면 새 문서 탭에. 결과 맨 위에 doc */
   async open(inputPath: string): Promise<{ doc: string } & OpenResult> {
     const path = absolutePath(inputPath, process.cwd());
-    // 같은 파일인지는 부른 순간에 본다(읽는 사이 그 문서가 다른 이름으로 저장돼도 그 문서의 줄에 선다)
-    const opened = this.find(path);
+    // 같은 파일은 실제 경로로 가린다(링크·macOS /tmp ↔ /private/tmp). 부른 순간에 본다(읽는 사이 그 문서가 다른 이름으로 저장돼도 그 문서의 줄에 선다)
+    const fileKey = await realFilePath(path);
+    const opened = this.find(fileKey);
     const bytes = await readDocumentFile(path, this.readFile);
-    const session = (opened !== undefined && this.sessions.get(opened.name) === opened ? opened : this.find(path)) ?? this.add();
+    const session = (opened !== undefined && this.sessions.get(opened.name) === opened ? opened : this.find(fileKey)) ?? this.add();
     this.use(session.name);
-    return { doc: session.name, ...(await session.open(path, bytes)) };
+    return { doc: session.name, ...(await session.open(path, bytes, fileKey)) };
   }
 
   /** 새 문서를 새 문서 탭에 만든다(SPEC-003). 경로·양식은 문서 이름을 매기기 전에 검사한다 */
@@ -220,9 +221,9 @@ export class DocumentSessions {
     });
   }
 
-  /** 이 파일이 열린(또는 여는 중인) 문서 */
-  private find(path: string): DocumentSession | undefined {
-    return [...this.sessions.values()].find((session) => session.path === path);
+  /** 이 파일(실제 경로)이 열린(또는 여는 중인) 문서. except 문서는 빼고 본다 */
+  private find(fileKey: string, except?: string): DocumentSession | undefined {
+    return [...this.sessions.values()].find((session) => session.name !== except && session.fileKey === fileKey);
   }
 
   /** 새 문서 이름으로 세션을 더한다. 8개면 거부 */
@@ -237,6 +238,7 @@ export class DocumentSessions {
       readFile: this.readFile,
       notify: (text) => this.notices.push({ doc: name, text }),
       gone: () => this.remove(name),
+      otherDocumentWith: (fileKey) => this.find(fileKey, name)?.name,
     });
     this.sessions.set(name, session);
     return session;

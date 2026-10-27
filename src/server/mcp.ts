@@ -9,6 +9,7 @@ import { UNDO_LIMIT } from '../core/edit-history.ts';
 import { MAX_TABLE_SIZE } from '../core/create-document.ts';
 import { MAX_REPLACE_TARGETS } from '../core/edit-operations.ts';
 import { deleteBlocks, insertParagraph, insertTable, moveBlocks, NOTHING_TO_UNDO, replaceAll, replaceText, targetsOf, undo } from './edit-tools.ts';
+import { copyBlocks } from './copy-tool.ts';
 import { clearHighlight, highlight } from './highlight-tools.ts';
 import { findText, getOutline, readBlockContents } from './read-tools.ts';
 import { saveDocument } from './save-tool.ts';
@@ -249,6 +250,29 @@ export function createMcpServer(sessions: DocumentSessions): McpServer {
   );
 
   server.registerTool(
+    'copy_blocks',
+    {
+      description:
+        '원본 문서(from)의 이어진 블록(문단·표)을 대상 문서(to)의 기준 블록 앞(before)이나 뒤(after)에 서식째 복사한다(바로 적용, 대상 문서의 편집 하나라 undo(doc: to) 한 번에 되돌림. 원본은 그대로). from·to 는 list_documents 의 doc 이고 같으면 같은 문서 안 사본. 원본 범위 규칙은 move_blocks 와 같다(이어진 블록, 같은 문단의 누름틀·사이 빈 문단도 같이). 대상 기준은 insert_paragraph 와 같다(구역 첫 문단 앞 거부, 표·누름틀이면 그것이 든 문단 앞뒤). 글자·문단 모양·표·그림·누름틀·도형은 원본 그대로 가져온다. 스타일: 대상에 같은 이름이 있으면 대상 스타일(스타일 모양이던 글자는 대상 모양, 직접 서식은 원본), 없으면 원본 스타일을 이름·모양 그대로 대상에 더한다(같은 이름 스타일이 둘 남지 않는다). 자동 번호는 대상 위치를 따라 다시 매겨진다(같은 모양 번호 목록이 있으면 잇고 없으면 1부터, 개요는 대상 개요 번호). 각주·미주·머리말·꼬리말·감추기·책갈피·하이퍼링크 등이 든 문단이 범위에 있으면 아무것도 넣지 않고 문단마다 이유와 원본 id 를 돌려준다(그때는 read_blocks + insert_paragraph). 표 칸 하나의 글자만 옮기려면 read_blocks + replace_text. 결과 { doc(대상), inserted(넣은 블록의 새 id — 문단 글자·표·누름틀마다), changed: [{ id, number?, text }](넣은 블록과 번호가 다시 매겨진 문단), warnings? }',
+      inputSchema: {
+        from: z.string().describe('원본 문서 이름(예: d1)'),
+        ids: z.array(z.string()).min(1).describe('복사할 원본 블록 id(원본 get_outline 의 id). 문서에서 이어져 있어야 한다'),
+        to: z.string().describe('대상 문서 이름(예: d2). from 과 같으면 같은 문서 안 사본'),
+        before: z.string().optional().describe('대상 문서의 이 블록 앞에 넣는다(after 와 둘 중 하나)'),
+        after: z.string().optional().describe('대상 문서의 이 블록 뒤에 넣는다(before 와 둘 중 하나)'),
+      },
+    },
+    ({ from, to, ...args }) =>
+      toolResult(async (setTarget) => {
+        const source = sessions.get(from);
+        // 대상이 마지막으로 쓴 문서가 된다(원본을 먼저 고른다)
+        const target = sessions.get(to);
+        setTarget(target.name);
+        return { doc: target.name, ...(await copyBlocks(source, target, args)) };
+      }),
+  );
+
+  server.registerTool(
     'list_styles',
     {
       description:
@@ -275,7 +299,7 @@ export function createMcpServer(sessions: DocumentSessions): McpServer {
   server.registerTool(
     'undo',
     {
-      description: `편집(replace_text·insert_paragraph·delete_blocks·move_blocks·set_style 등)을 최근 것부터 되돌린다. 최대 ${UNDO_LIMIT}단계이고 그보다 옛 편집은 되돌릴 수 없다. 뷰어가 다시 그려진다. 사용자가 뷰어에서 고친 편집도 같은 줄에 쌓여 같이 되돌린다(edits 에 "(사용자 화면 편집)" 이 붙는다). 결과 { undone, edits(되돌린 편집, 최근 것부터), warnings? }. 되돌릴 것이 없으면 "${NOTHING_TO_UNDO}"`,
+      description: `편집(replace_text·insert_paragraph·delete_blocks·move_blocks·set_style·copy_blocks(대상 문서) 등)을 최근 것부터 되돌린다. 최대 ${UNDO_LIMIT}단계이고 그보다 옛 편집은 되돌릴 수 없다. 뷰어가 다시 그려진다. 사용자가 뷰어에서 고친 편집도 같은 줄에 쌓여 같이 되돌린다(edits 에 "(사용자 화면 편집)" 이 붙는다). 결과 { undone, edits(되돌린 편집, 최근 것부터), warnings? }. 되돌릴 것이 없으면 "${NOTHING_TO_UNDO}"`,
       inputSchema: {
         ...docInput,
         steps: z.number().int().min(1).max(UNDO_LIMIT).default(1).describe(`되돌릴 편집 수(기본 1, 최대 ${UNDO_LIMIT})`),

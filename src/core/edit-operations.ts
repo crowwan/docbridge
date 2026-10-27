@@ -21,6 +21,8 @@ import { isCellStep } from './fields.ts';
 import { insertParagraphNear, listFields, moveParagraphs, replaceCellText, replaceFieldText, replaceParagraphText } from './edits.ts';
 import { noParagraphChanges, positionKey, TEXT_PART, type ParagraphChanges, type ParagraphPosition } from './paragraph-changes.ts';
 import { applyParagraphStyle, findStyle, resetToStyle } from './styles.ts';
+import { copyParagraphs } from './copy-paragraphs.ts';
+import { base64ToBytes } from '../shared/base64.ts';
 import { spanIn, targetLabel } from './text-targets.ts';
 
 export type { ParagraphPosition } from './paragraph-changes.ts';
@@ -108,6 +110,25 @@ export const moveBlocksOperationSchema = z.object({
   blocks: z.array(z.object({ id: z.string(), anchor: blockAnchorSchema })).min(1),
 });
 
+/**
+ * copy_blocks(SPEC-007): 원본 문서(다른 탭, 같은 탭이면 사본)의 이어진 문단 [start, end) 를 기준 블록이 든 문단 앞·뒤에 서식째 넣는다.
+ * source.data 는 원본 탭이 내보낸 HWPX 바이트(base64, save 와 같은 검증을 거친 것), blocks 는 그 범위의 원본 블록(원본 id·위치) —
+ * 거부 문구에 원본 id 를 쓰고, 넣은 문단에서 새 id 를 받을 블록(changes.inserted 의 parts)을 정한다. 범위 규칙은 서버(move-plan.ts planCopySource)
+ */
+export const copyBlocksOperationSchema = z.object({
+  kind: z.literal('copy_blocks'),
+  source: z.object({
+    data: z.string(),
+    section: paragraphIndexSchema,
+    start: paragraphIndexSchema,
+    end: paragraphIndexSchema,
+    blocks: z.array(z.object({ id: z.string(), anchor: blockAnchorSchema })).min(1),
+  }),
+  /** 대상 기준 블록. 표·누름틀이면 그것이 든 문단이 기준이다(insert_paragraph 와 같다) */
+  reference: anchoredBlockSchema,
+  where: z.enum(['before', 'after']),
+});
+
 /** 뷰어가 적용하는 편집. kind 마다 입력이 다르다 */
 export const editOperationSchema = z.discriminatedUnion('kind', [
   replaceTextOperationSchema,
@@ -116,6 +137,7 @@ export const editOperationSchema = z.discriminatedUnion('kind', [
   deleteBlocksOperationSchema,
   moveBlocksOperationSchema,
   setStyleOperationSchema,
+  copyBlocksOperationSchema,
 ]);
 export type EditOperation = z.infer<typeof editOperationSchema>;
 export type ReplaceTextOperation = z.infer<typeof replaceTextOperationSchema>;
@@ -124,6 +146,7 @@ export type InsertTableOperation = z.infer<typeof insertTableOperationSchema>;
 export type DeleteBlocksOperation = z.infer<typeof deleteBlocksOperationSchema>;
 export type MoveBlocksOperation = z.infer<typeof moveBlocksOperationSchema>;
 export type SetStyleOperation = z.infer<typeof setStyleOperationSchema>;
+export type CopyBlocksOperation = z.infer<typeof copyBlocksOperationSchema>;
 
 /**
  * 편집이 바꾼 본문 문단(편집 뒤 위치). 그 문단에 걸린 블록(문단 글자·표·누름틀)을 모두 바뀐 블록으로 본다 —
@@ -282,18 +305,18 @@ function insertParagraph(doc: HwpDocument, blocks: Block[], { reference, where, 
   const at = insertParagraphNear(doc, section, paragraph, where, text, { matchReference: styleEntry === undefined });
   const position = { section, paragraph: at };
   if (styleEntry !== undefined) resetToStyle(doc, section, at, styleEntry);
-  return { paragraphs: [position], changes: { ...noParagraphChanges(), inserted: [{ ...position, part: TEXT_PART }] } };
+  return { paragraphs: [position], changes: { ...noParagraphChanges(), inserted: [{ ...position, parts: [TEXT_PART] }] } };
 }
 
 /**
  * insert_table: 기준 블록이 든 문단 앞·뒤에 바탕글 문단을 넣고 표를 담는다(create-document.ts insertTableParagraph — ADR 003).
- * 넣은 문단은 표 문단이라 changes.inserted 의 part 를 표 꼬리표로 실어, 서버가 새 id 를 표 블록에 주게 한다
+ * 넣은 문단은 표 문단이라 changes.inserted 의 parts 를 표 꼬리표로 실어, 서버가 새 id 를 표 블록에 주게 한다
  */
 function insertTable(doc: HwpDocument, blocks: Block[], { reference, where, rows, cols, cells, header }: InsertTableOperation): EditApplied {
   const { section, paragraph } = blockAt(blocks, reference);
   const table = insertTableParagraph(doc, section, paragraph, where, { rows, cols, cells, header });
   const position = { section, paragraph: table.paragraph };
-  return { paragraphs: [position], changes: { ...noParagraphChanges(), inserted: [{ ...position, part: tablePart(table.controlIndex) }] } };
+  return { paragraphs: [position], changes: { ...noParagraphChanges(), inserted: [{ ...position, parts: [tablePart(table.controlIndex)] }] } };
 }
 
 /** set_style: 문단 블록마다 스타일을 건다(styles.ts applyParagraphStyle). 번호가 바뀐 다른 문단은 공용 경로가 바뀐 블록에 더한다 */
@@ -335,18 +358,44 @@ function moveBlocks(doc: HwpDocument, blocks: Block[], { section, start, end, be
   }
   const result = moveParagraphs(doc, section, start, end, before);
   if (!result.ok) {
-    // 거부된 문단의 첫 블록 id. 블록이 없는 빈 문단이면 바로 앞 블록 뒤라고 적는다(범위 첫 문단에는 늘 블록이 있다)
-    const label = (paragraph: number) => {
-      const own = moving.find(({ anchor }) => anchor.paragraph === paragraph);
-      if (own !== undefined) return own.id;
-      const previous = moving.filter(({ anchor }) => anchor.paragraph < paragraph).at(-1);
-      return `${previous?.id ?? `문단 ${paragraph}`} 뒤 빈 문단`;
-    };
-    throw new Error(result.rejected.map(({ paragraph, reason }) => moveRejectedMessage(reason, label(paragraph))).join('\n'));
+    throw new Error(result.rejected.map(({ paragraph, reason }) => moveRejectedMessage(reason, rangeLabel(moving, paragraph))).join('\n'));
   }
   return {
     paragraphs: Array.from({ length: end - start }, (_, i) => ({ section, paragraph: result.moved.start + i })),
     changes: { ...noParagraphChanges(), moved: { section, start, end, before } },
+  };
+}
+
+export const copyRejectedMessage = (reason: string, label: string) =>
+  `이 문단은 복사할 수 없습니다(${reason}): ${label}. 글자만 가져오려면 read_blocks 와 insert_paragraph 를 쓰세요.`;
+
+/** 거부된 문단의 첫 블록 id. 블록이 없는 빈 문단이면 바로 앞 블록 뒤라고 적는다(범위 첫 문단에는 늘 블록이 있다) — 옮기기·복사 공용 */
+function rangeLabel(blocks: Array<{ id: string; anchor: { paragraph: number } }>, paragraph: number): string {
+  const own = blocks.find(({ anchor }) => anchor.paragraph === paragraph);
+  if (own !== undefined) return own.id;
+  const previous = blocks.filter(({ anchor }) => anchor.paragraph < paragraph).at(-1);
+  return `${previous?.id ?? `문단 ${paragraph}`} 뒤 빈 문단`;
+}
+
+/**
+ * copy_blocks: 원본 HWPX 바이트의 문단을 서식째 넣는다(copy-paragraphs.ts — 번호·스타일 보정). 대상 쪽 기준 규칙은 insert_paragraph 와 같다(구역 첫 문단 앞 거부).
+ * 가져올 수 없는 개체가 든 문단이 있으면 아무것도 넣지 않고 원본 id 와 이유로 던진다. 보정 중 예외도 그대로 던진다 — 되돌리기는 편집 공용 경로의 스냅샷.
+ * 넣은 문단마다 원본 블록의 꼬리표를 changes.inserted 로 돌려준다(서버가 그 블록마다 새 id 를 준다)
+ */
+function copyBlocks(doc: HwpDocument, blocks: Block[], { source, reference, where }: CopyBlocksOperation): EditApplied {
+  const { section, paragraph } = blockAt(blocks, reference);
+  const before = where === 'before' ? paragraph : paragraph + 1;
+  const result = copyParagraphs(doc, base64ToBytes(source.data), source, { section, before });
+  if (!result.ok) {
+    throw new Error(result.rejected.map(({ paragraph: p, reason }) => copyRejectedMessage(reason, rangeLabel(source.blocks, p))).join('\n'));
+  }
+  const inserted = Array.from({ length: source.end - source.start }, (_, i) => {
+    const parts = source.blocks.filter(({ anchor }) => anchor.paragraph === source.start + i).map(({ anchor }) => anchor.part);
+    return { section, paragraph: result.inserted.start + i, parts };
+  });
+  return {
+    paragraphs: inserted.map(({ section: s, paragraph: p }) => ({ section: s, paragraph: p })),
+    changes: { ...noParagraphChanges(), inserted },
   };
 }
 
@@ -365,6 +414,8 @@ export function applyEdit(doc: HwpDocument, blocks: Block[], operation: EditOper
       return moveBlocks(doc, blocks, operation);
     case 'set_style':
       return setStyle(doc, blocks, operation);
+    case 'copy_blocks':
+      return copyBlocks(doc, blocks, operation);
     default: {
       // 편집 종류를 더하고 여기 처리를 빠뜨리면 컴파일 오류가 난다
       const unhandled: never = operation;
