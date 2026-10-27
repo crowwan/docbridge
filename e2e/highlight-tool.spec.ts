@@ -67,6 +67,25 @@ async function expectOverlaysCoverInk(page: Page): Promise<void> {
   }
 }
 
+// 사용자 QA(#49) 상황처럼 세 줄쯤 되는 note
+const LONG_NOTE =
+  '교육 일정 안내 문단: 각 동 주민센터가 주민에게 알려 참석 인원을 모아 회신하라는 요청입니다. 회신 기한은 3번 항목에 있습니다.';
+
+/** note 가 쪽 캔버스와 겹치는 자리에 문서 글자 잉크가 없는지 본다(쪽 밖 여백에 있으면 겹칠 글자가 없다) */
+async function expectNoteClearOfText(page: Page): Promise<void> {
+  const noteBox = await page.getByRole('note').boundingBox();
+  const pageBox = await page.getByTestId('page-canvas-0').boundingBox();
+  if (!noteBox || !pageBox) throw new Error('note 나 쪽이 화면에 없다');
+  const region = {
+    left: Math.max(0, noteBox.x - pageBox.x),
+    top: Math.max(0, noteBox.y - pageBox.y),
+    right: Math.min(pageBox.width, noteBox.x + noteBox.width - pageBox.x),
+    bottom: Math.min(pageBox.height, noteBox.y + noteBox.height - pageBox.y),
+  };
+  if (region.right <= region.left || region.bottom <= region.top) return;
+  expect(await inkBounds(page, 0, region)).toBeNull();
+}
+
 async function firstMatch(query: string): Promise<TextTarget> {
   const [match] = (await findText(session, query)).matches;
   if (match === undefined) throw new Error(`${query} 를 찾지 못했다`);
@@ -121,13 +140,14 @@ test.describe('SPEC-001 근거 하이라이트 (서버가 내주는 뷰어)', ()
     await expectOverlaysCoverInk(page);
   });
 
-  test('note 를 주면 첫 대상 바로 옆(위)에 짧게 보인다', async ({ page }) => {
+  test('note 를 주면 첫 대상 바로 옆(위)에 짧게 보인다 — 위 줄이 비어 있으면 바로 위', async ({ page }) => {
     await session.open(fixturePath('notice.hwpx'));
 
-    await highlight(session, [await firstMatch('2026. 11. 14.(금)'), { id: 'b12', cell: { row: 1, col: 1 } }], '회신 기한');
+    // b1 = 맨 위 기관명 "가나다구청". 위에 글자가 없다
+    await highlight(session, [{ id: 'b1' }, { id: 'b12', cell: { row: 1, col: 1 } }], '보낸 기관');
 
     const note = page.getByRole('note');
-    await expect(note).toHaveText('회신 기한');
+    await expect(note).toHaveText('보낸 기관');
     await expect(note).toBeInViewport();
     const noteBox = await note.boundingBox();
     const firstBox = await page.getByTestId('highlight-0').boundingBox();
@@ -135,7 +155,46 @@ test.describe('SPEC-001 근거 하이라이트 (서버가 내주는 뷰어)', ()
     expect(noteBox.y + noteBox.height).toBeLessThanOrEqual(firstBox.y);
     expect(firstBox.y - (noteBox.y + noteBox.height)).toBeLessThanOrEqual(8);
     expect(Math.abs(noteBox.x - firstBox.x)).toBeLessThanOrEqual(1);
+    await expectNoteClearOfText(page);
     await page.getByRole('region', { name: '1쪽' }).screenshot({ path: 'test-results/screens/highlight-tool-note.png' });
+  });
+
+  test('앞 줄에 글자가 있고 쪽 오른쪽 바깥 여백이 넉넉하면 note 를 여백에 두어 문서 글자를 덮지 않는다(#51)', async ({ page }) => {
+    await page.setViewportSize({ width: 1400, height: 1200 });
+    await session.open(fixturePath('notice.hwpx'));
+
+    // b7 = "2. 하반기 주민 안전교육을 …" 바로 위가 "1. 관련: …" 줄. 세 줄쯤 되는 긴 note(사용자 QA 상황)
+    await highlight(session, [{ id: 'b7' }], LONG_NOTE);
+
+    const note = page.getByRole('note');
+    await expect(note).toBeInViewport();
+    await page.screenshot({ path: 'test-results/screens/highlight-tool-note-margin.png' });
+    await expectNoteClearOfText(page);
+    const noteBox = await note.boundingBox();
+    const pageBox = await page.getByTestId('page-canvas-0').boundingBox();
+    const firstBox = await page.getByTestId('highlight-0').boundingBox();
+    if (!noteBox || !pageBox || !firstBox) throw new Error('note 나 쪽이 화면에 없다');
+    expect(noteBox.x).toBeGreaterThanOrEqual(pageBox.x + pageBox.width);
+    expect(Math.abs(noteBox.y - firstBox.y)).toBeLessThanOrEqual(1);
+    // 쪽 밖이라 폭이 쪼그라들지 않고(최소 폭 160px 이상) 화면 안에 들어온다
+    expect(noteBox.width).toBeGreaterThanOrEqual(160);
+    expect(noteBox.x + noteBox.width).toBeLessThanOrEqual(page.viewportSize()?.width ?? 0);
+  });
+
+  test('앞 줄에 글자가 있고 바깥 여백도 좁으면 note 를 하이라이트 마지막 사각형 아래에 둔다(#51)', async ({ page }) => {
+    await page.setViewportSize({ width: 800, height: 1200 });
+    await session.open(fixturePath('notice.hwpx'));
+
+    await highlight(session, [{ id: 'b7' }], LONG_NOTE);
+
+    const note = page.getByRole('note');
+    await expect(note).toBeInViewport();
+    const noteBox = await note.boundingBox();
+    const lastBox = await overlays(page).last().boundingBox();
+    if (!noteBox || !lastBox) throw new Error('note 나 하이라이트가 화면에 없다');
+    expect(noteBox.y).toBeGreaterThanOrEqual(lastBox.y + lastBox.height);
+    expect(noteBox.y - (lastBox.y + lastBox.height)).toBeLessThanOrEqual(8);
+    await page.getByRole('region', { name: '1쪽' }).screenshot({ path: 'test-results/screens/highlight-tool-note-below.png' });
   });
 
   test('highlight 를 부르면 첫 대상이 화면에 보이도록 스크롤되고, 이전 하이라이트는 지워진다', async ({ page }) => {

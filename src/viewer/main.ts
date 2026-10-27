@@ -14,6 +14,7 @@ import { findInBlocks } from '../core/find-text.ts';
 import { selectionRects, type SelectionRect } from '../core/highlight-rects.ts';
 import { blockBoxes, highlightTargets } from '../core/highlight-targets.ts';
 import { exportForSave } from '../core/hwpx-export.ts';
+import { notePlacement, pageTextBoxes, type Box } from '../core/note-placement.ts';
 import { createdDocumentResult, createNewDocument } from '../core/create-document.ts';
 import { paragraphStyles } from '../core/styles.ts';
 import { base64ToBytes } from '../shared/base64.ts';
@@ -123,25 +124,53 @@ function clearHighlights(): void {
   for (const old of document.querySelectorAll('.highlight, .highlight-note')) old.remove();
 }
 
-const NOTE_GAP = 4;
+/** tokens.css 의 px 토큰 값 */
+function pxToken(name: string): number {
+  return Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name));
+}
 
-/** note 를 첫 사각형 바로 위(자리가 없으면 아래)에, 왼쪽 끝을 맞춰 붙인다. 쪽 밖으로 나가지 않게 한다 */
-function placeNote(pageEl: HTMLElement, rect: SelectionRect, text: string): void {
+const zoomed = (rect: Box): Box => ({ x: rect.x * ZOOM, y: rect.y * ZOOM, width: rect.width * ZOOM, height: rect.height * ZOOM });
+
+/**
+ * note 를 문서 글자를 덮지 않는 자리에 붙인다(#51, core/note-placement.ts): 첫 사각형 바로 위 →
+ * 쪽 오른쪽 바깥 여백 → 첫 대상 마지막 사각형 아래. firstRects = 첫 대상의 첫 사각형과 같은 쪽 사각형들
+ */
+function placeNote(pageEl: HTMLElement, firstRects: SelectionRect[], text: string, textBoxes: Box[]): void {
+  const first = firstRects[0];
+  const last = firstRects.at(-1);
+  if (first === undefined || last === undefined) return;
   const note = document.createElement('div');
   note.className = 'highlight-note';
   note.setAttribute('role', 'note');
   note.dataset['testid'] = 'highlight-note';
   note.textContent = text;
   pageEl.append(note);
-  const above = rect.y * ZOOM - note.offsetHeight - NOTE_GAP;
-  const top = above >= 0 ? above : (rect.y + rect.height) * ZOOM + NOTE_GAP;
-  const left = Math.max(0, Math.min(rect.x * ZOOM, pageEl.clientWidth - note.offsetWidth));
-  note.style.top = `${top}px`;
-  note.style.left = `${left}px`;
+  const placement = notePlacement(
+    zoomed(first),
+    zoomed(last),
+    { width: note.offsetWidth, height: note.offsetHeight },
+    {
+      page: { width: pageEl.clientWidth, height: pageEl.clientHeight },
+      rightMargin: document.documentElement.clientWidth - pageEl.getBoundingClientRect().right,
+      textBoxes: textBoxes.map(zoomed),
+    },
+    { gap: pxToken('--note-gap'), minMarginWidth: pxToken('--note-min-width') },
+  );
+  note.dataset['side'] = placement.side;
+  if (placement.side === 'margin') note.style.width = `${placement.width}px`;
+  note.style.top = `${placement.y}px`;
+  note.style.left = `${placement.x}px`;
 }
 
-/** 이전 하이라이트를 지우고 대상마다 사각형을 그린 뒤, note 를 첫 대상 옆에 붙이고 첫 대상으로 스크롤한다 */
-function paintHighlights(pageEls: HTMLElement[], targets: SelectionRect[][], note?: string): void {
+/**
+ * 이전 하이라이트를 지우고 대상마다 사각형을 그린 뒤, note 를 첫 대상 옆에 붙이고 첫 대상으로 스크롤한다.
+ * note.textBoxes = 쪽(0부터)의 글자 사각형(note 가 덮지 않을 자리)
+ */
+function paintHighlights(
+  pageEls: HTMLElement[],
+  targets: SelectionRect[][],
+  note?: { text: string; textBoxes: (pageIndex: number) => Box[] },
+): void {
   clearHighlights();
   let index = 0;
   let firstBox: HTMLElement | undefined;
@@ -161,7 +190,10 @@ function paintHighlights(pageEls: HTMLElement[], targets: SelectionRect[][], not
   }
   const first = targets[0]?.[0];
   const firstPage = first === undefined ? undefined : pageEls[first.pageIndex];
-  if (first !== undefined && firstPage !== undefined && note !== undefined) placeNote(firstPage, first, note);
+  if (first !== undefined && firstPage !== undefined && note !== undefined) {
+    const firstRects = (targets[0] ?? []).filter((rect) => rect.pageIndex === first.pageIndex);
+    placeNote(firstPage, firstRects, note.text, note.textBoxes(first.pageIndex));
+  }
   // 첫 대상의 첫 사각형으로(문서 순서상 첫 사각형이 아니다). 바로 옮긴다(부드러운 스크롤 없음):
   // 도구 결과를 받았을 때 이미 그 자리가 보여야 한다
   firstBox?.scrollIntoView({ block: 'center' });
@@ -173,7 +205,8 @@ function paintTargets(params: ViewerParams<'highlight'>): ViewerResult<'highligh
   const { rects, pages, warnings } = highlightTargets(doc, blocks, params.targets);
   // 하이라이트를 그리면 바뀐 블록 표시는 지운다(SPEC-002)
   clearEditMarks();
-  paintHighlights(currentPageEls, rects, params.note);
+  const note = params.note === undefined ? undefined : { text: params.note, textBoxes: (page: number) => pageTextBoxes(doc, page) };
+  paintHighlights(currentPageEls, rects, note);
   return { pages, ...(warnings.length === 0 ? {} : { warnings }) };
 }
 
