@@ -6,7 +6,7 @@
 - [x] E2E(DOCBRIDGE_E2E_PORT=7870, 47개 통과)·스크린샷, 문서(CLAUDE.md·ADR 003) [✅ 2026-10-27 14:20]
 - [x] PR #44·확인 기록(assets 975f166 pr/44)·CI 통과 [✅ 2026-10-27 14:30]
 - [x] PR #44 리뷰 반영(예상 밖 문단 거부·저장 왕복 테스트·inserted part·크기 검사 순서·정수 아님 문구) [✅ 2026-10-27 14:50]
-- [ ] #43·#37 머지 뒤 main 으로 rebase (#37 이 스타일 코드를 styles.ts 로 옮기면 create-document.ts resetToStyle import 맞춤)
+- [x] #43·#45 머지 뒤 main 으로 rebase(커밋 하나로 합쳐 rebase, styles.ts import, 결과 changed 는 NumberedItem) [✅ 2026-10-27 15:30]
 
 ## 발견
 

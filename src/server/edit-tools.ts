@@ -56,7 +56,7 @@ function editResult(changed: EditedBlock[], unmarked: string[], cell?: TextTarge
   };
 }
 
-/** 바뀐 블록 결과 항목에 자동 번호를 붙인 것(insert_paragraph·move_blocks·set_style). 번호는 바뀐 뒤 번호 */
+/** 바뀐 블록 결과 항목에 자동 번호를 붙인 것(insert_paragraph·insert_table·move_blocks·set_style). 번호는 바뀐 뒤 번호 */
 export type NumberedItem = ChangedItem & { number?: string };
 
 /** 바뀐 블록 → 번호를 붙인 결과 항목(get_outline 항목과 같은 number·text). id 가 없으면 빈 배열 */
@@ -105,11 +105,14 @@ export async function insertParagraph(
   };
 }
 
-export interface InsertTableResult extends EditResult {
+export interface InsertTableResult {
   /** 새 표 블록 id */
   inserted: string;
   /** 칸 수(rows × cols) */
   cells: number;
+  /** 새 표와 번호가 다시 매겨진 문단(insert_paragraph 결과와 같은 모양, number 는 넣은 뒤 자동 번호) */
+  changed: NumberedItem[];
+  warnings?: string[];
 }
 
 /**
@@ -132,7 +135,12 @@ export async function insertTable(
   });
   const [id] = inserted;
   if (id === undefined) throw new Error(`${referenceId}: 뷰어가 넣은 표를 알려 주지 않아 새 id 를 붙이지 못했습니다.`);
-  return { inserted: id, cells: spec.rows * spec.cols, ...editResult(changed, unmarked) };
+  return {
+    inserted: id,
+    cells: spec.rows * spec.cols,
+    changed: changed.flatMap(numberedItem),
+    ...(unmarked.length === 0 ? {} : { warnings: unmarked.map(unmarkedMessage) }),
+  };
 }
 
 export interface DeleteBlocksResult {
