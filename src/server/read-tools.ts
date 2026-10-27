@@ -23,7 +23,8 @@ function openedDocument(session: DocumentSession): OpenedDocument {
 
 const idTable = (session: DocumentSession): BlockIdTable => openedDocument(session).ids;
 
-async function labeledBlocks(session: DocumentSession): Promise<LabeledBlock[]> {
+/** 지금 문서 블록 전문에 id 를 붙여(id 없는 블록은 뺀다) */
+export async function labeledBlocks(session: DocumentSession): Promise<LabeledBlock[]> {
   const blocks: Block[] = await session.requestViewer('get_blocks', {});
   return idTable(session)
     .label(blocks)

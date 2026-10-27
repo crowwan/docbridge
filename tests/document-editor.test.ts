@@ -7,9 +7,10 @@ import type { Block } from '../src/core/block-schema.ts';
 import { DocumentEditor } from '../src/core/document-editor.ts';
 import { UNDO_LIMIT } from '../src/core/edit-history.ts';
 import type { EditOperation } from '../src/core/edit-operations.ts';
-import { listFields } from '../src/core/edits.ts';
+import { charLook, listFields, paraShapeIdOf } from '../src/core/edits.ts';
 import { blockBoxes } from '../src/core/highlight-targets.ts';
 import { createBlankDocument } from '../src/core/rhwp-node.ts';
+import { planMove, type MoveWhere } from '../src/server/move-plan.ts';
 import { openFixture } from './fixtures.ts';
 
 const S = 0;
@@ -32,6 +33,16 @@ const replace = (
   text: string,
   extra: { cell?: { row: number; col: number }; start?: number; end?: number } = {},
 ): EditOperation => ({ kind: 'replace_text', target: targetOf(editor, id, extra), text });
+
+/** 서버와 같은 방법(planMove)으로 move_blocks 편집을 만든다. id 는 지금 블록 순서로 새로 붙인다 */
+function move(editor: DocumentEditor, ids: string[], reference: string, where: MoveWhere): EditOperation {
+  const { section, start, end, before, blocks } = planMove(BlockIdTable.assign(editor.blocks), ids, reference, where);
+  return { kind: 'move_blocks', section, start, end, before, blocks };
+}
+
+/** 번호 문단의 "번호 앞 글자" 목록 */
+const numbered = (blocks: Block[]) =>
+  blocks.flatMap((block) => (block.kind === 'paragraph' && block.number !== undefined ? [`${block.number} ${block.text.slice(0, 5)}`] : []));
 
 function textOf(block: Block | undefined): string {
   if (block === undefined) return '(없음)';
@@ -436,7 +447,10 @@ describe('SPEC-002 delete_blocks (편집 공용 경로)', () => {
 
     const { changed, changes } = editor.edit(remove(editor, 'b8', 'b10'), editor.depth);
 
-    expect(changed).toEqual([]);
+    // 지운 문단은 바뀐 블록이 아니다. "나." 가 "가." 로 다시 매겨진 문단만 바뀐 블록이다(#21 번호가 바뀐 문단)
+    expect(changed.map(({ block }) => (block.kind === 'paragraph' ? `${block.number} ${block.text.slice(0, 5)}` : block.kind))).toEqual([
+      '가. 교육 내용',
+    ]);
     expect(changes).toEqual({
       deletedTables: [],
       deletedParagraphs: [
@@ -601,5 +615,162 @@ describe('SPEC-002 delete_blocks (편집 공용 경로)', () => {
 
     expect(editor.blocks).toHaveLength(count - 1);
     expect(editor.blocks.some((block) => block.kind === 'paragraph' && block.text === '' && block.paragraph === 7)).toBe(true);
+  });
+});
+
+describe('SPEC-002 move_blocks (편집 공용 경로)', () => {
+  it('AC-4 자동 번호 문단을 옮기면 서식째 옮겨지고 번호가 새 순서로 다시 매겨지며, 번호가 바뀐 문단도 바뀐 블록이다', () => {
+    const editor = new DocumentEditor(openFixture('notice.hwpx'));
+    const { doc } = editor;
+    const shapeOf = (paragraph: number) => paraShapeIdOf(doc, S, paragraph);
+    const replyShape = shapeOf(10);
+    const replyLook = charLook(doc, S, 10, 0);
+
+    // b11 "3. 회신 기한" 을 b6 "1. 관련" 앞으로
+    const { changed } = editor.edit(move(editor, ['b11'], 'b6', 'before'), editor.depth);
+
+    expect(numbered(editor.blocks)).toEqual(['1. 회신 기한', '2. 관련: 가', '3. 하반기 주', '가. 교육 대상', '나. 교육 내용', '다. 신청 방법']);
+    expect(changed.map(({ block }) => (block.kind === 'paragraph' ? `${block.number} ${block.text.slice(0, 5)}` : block.kind))).toEqual([
+      '1. 회신 기한',
+      '2. 관련: 가',
+      '3. 하반기 주',
+    ]);
+    expect(shapeOf(5)).toBe(replyShape);
+    expect(charLook(doc, S, 5, 0)).toBe(replyLook);
+  });
+
+  it('AC-4 이어진 개요 문단 여러 개를 하위 문단째 옮기고 상위 번호가 다시 매겨진다', () => {
+    const editor = new DocumentEditor(openFixture('report.hwpx'));
+
+    // b16 "4. 개선 과제" ~ b22(하위 문단) 를 b7 "2. 이용 현황" 앞으로
+    editor.edit(move(editor, ['b16', 'b17', 'b18', 'b19', 'b20', 'b21', 'b22'], 'b7', 'before'), editor.depth);
+
+    expect(numbered(editor.blocks).filter((n) => /^\d/.test(n))).toEqual(['1. 개요', '2. 개선 과제', '3. 이용 현황', '4. 분기별 비', '5. 향후 계획']);
+  });
+
+  it('AC-4 표가 든 문단을 옮기면 표 블록이 같이 옮겨지고 바뀐 블록으로 알린다', () => {
+    const editor = new DocumentEditor(openFixture('application.hwpx'));
+
+    const { changed } = editor.edit(move(editor, ['b2'], 'b3', 'after'), editor.depth);
+
+    expect(editor.blocks.map((block) => block.kind)).toEqual(['paragraph', 'paragraph', 'table', 'paragraph', 'field', 'paragraph', 'field', 'paragraph']);
+    expect(changed.map(({ block }) => block.kind)).toEqual(['table']);
+  });
+
+  it('AC-4 편집으로 비운 문단을 옮겨도 옮긴 자리에서 빈 문단 블록으로 남는다', () => {
+    const editor = new DocumentEditor(openFixture('notice.hwpx'));
+    editor.edit(replace(editor, 'b5', ''), editor.depth);
+    const count = editor.blocks.length;
+
+    // 비운 b5(문단 3)를 표(b12, 문단 11) 뒤로
+    editor.edit(move(editor, ['b5'], 'b12', 'after'), editor.depth);
+
+    expect(editor.blocks).toHaveLength(count);
+    expect(editor.blocks.find((block) => block.kind === 'paragraph' && block.paragraph === 11)).toMatchObject({ text: '' });
+  });
+
+  it('AC-4 비운 문단을 옮긴 뒤 되돌리면 블록 목록이 옮기기 전과 같다(엉뚱한 빈 문단 블록이 생기지 않는다) (PR #28 리뷰)', () => {
+    const editor = new DocumentEditor(openFixture('notice.hwpx'));
+    editor.edit(replace(editor, 'b5', ''), editor.depth);
+    const before = JSON.stringify(editor.blocks);
+    editor.edit(move(editor, ['b5'], 'b12', 'after'), editor.depth);
+
+    editor.undo(1, editor.depth);
+
+    expect(JSON.stringify(editor.blocks)).toBe(before);
+  });
+
+  it('AC-4 옮긴 편집을 되돌리면 번호와 문단이 옮기기 전으로 돌아간다', () => {
+    const editor = new DocumentEditor(openFixture('notice.hwpx'));
+    const before = JSON.stringify(editor.blocks);
+    editor.edit(move(editor, ['b11'], 'b6', 'before'), editor.depth);
+
+    expect(editor.undo(1, editor.depth)).toBe(1);
+    expect(JSON.stringify(editor.blocks)).toBe(before);
+  });
+
+  it('AC-5 옮길 수 없는 문단(각주·새 번호·책갈피)이 있으면 문단마다 이유와 블록 id 를 모아 던지고 아무것도 바꾸지 않는다', () => {
+    const doc = createBlankDocument();
+    doc.insertText(S, 0, 0, '첫째');
+    ['둘째', '셋째 각주', '넷째 새 번호', '다섯째 책갈피'].forEach((text, i) => {
+      doc.splitParagraph(S, i, doc.getParagraphLength(S, i));
+      doc.insertText(S, i + 1, 0, text);
+    });
+    doc.addBookmark(S, 4, 2, '책갈피1');
+    doc.insertFootnote(S, 2, 2);
+    doc.insertNewNumber(S, 3, 2, 5);
+    const editor = new DocumentEditor(doc);
+    const before = JSON.stringify(editor.blocks);
+    const tail = '. 글자만 옮기려면 insert_paragraph 와 delete_blocks 를 쓰세요.';
+
+    expect(() => editor.edit(move(editor, ['b3', 'b4', 'b5'], 'b2', 'before'), editor.depth)).toThrow(
+      [`이 문단은 옮길 수 없습니다(각주): b3${tail}`, `이 문단은 옮길 수 없습니다(새 번호로 시작): b4${tail}`, `이 문단은 옮길 수 없습니다(책갈피): b5${tail}`].join(
+        '\n',
+      ),
+    );
+    expect(JSON.stringify(editor.blocks)).toBe(before);
+    expect([editor.depth, editor.undo(1, editor.depth)]).toEqual([0, 0]);
+  });
+
+  it('AC-5 고른 블록 사이 빈 문단이 거부되면 앞 블록 id 뒤 빈 문단이라고 알린다', () => {
+    const doc = createBlankDocument();
+    doc.insertText(S, 0, 0, '첫째');
+    ['둘째', '', '넷째', '다섯째'].forEach((text, i) => {
+      doc.splitParagraph(S, i, doc.getParagraphLength(S, i));
+      if (text.length > 0) doc.insertText(S, i + 1, 0, text);
+    });
+    // 셋째 문단은 각주만 든 빈 문단이라 블록이 아니다
+    doc.insertFootnote(S, 2, 0);
+    const editor = new DocumentEditor(doc);
+    expect(editor.blocks.map(textOf)).toEqual(['첫째', '둘째', '넷째', '다섯째']);
+
+    expect(() => editor.edit(move(editor, ['b2', 'b3'], 'b4', 'after'), editor.depth)).toThrow(
+      '이 문단은 옮길 수 없습니다(각주): b2 뒤 빈 문단. 글자만 옮기려면 insert_paragraph 와 delete_blocks 를 쓰세요.',
+    );
+  });
+
+  it('AC-5 구역 첫 문단은 옮길 수 없고(구역·단 시작 문단), 그 앞으로도 옮기지 않는다', () => {
+    const editor = new DocumentEditor(openFixture('notice.hwpx'));
+
+    expect(() => editor.edit(move(editor, ['b1'], 'b6', 'after'), editor.depth)).toThrow(
+      '이 문단은 옮길 수 없습니다(구역·단 시작 문단): b1. 글자만 옮기려면 insert_paragraph 와 delete_blocks 를 쓰세요.',
+    );
+    expect(() => editor.edit(move(editor, ['b6'], 'b1', 'before'), editor.depth)).toThrow(
+      '구역 첫 문단 앞으로는 옮길 수 없습니다. 첫 문단 뒤로 옮기세요.',
+    );
+    expect(editor.depth).toBe(0);
+  });
+
+  it('옮길 블록 위치가 뷰어 블록과 다르면 get_outline 을 다시 부르라고 한다', () => {
+    const editor = new DocumentEditor(openFixture('notice.hwpx'));
+    const operation: EditOperation = {
+      kind: 'move_blocks',
+      section: 0,
+      start: 4,
+      end: 5,
+      before: 1,
+      blocks: [{ id: 'b9', anchor: { section: 0, paragraph: 4, part: 'text' } }],
+    };
+    expect(() => editor.edit(operation, editor.depth)).toThrow('b9: 뷰어 문서에 이 블록이 없습니다. get_outline 을 다시 부르세요.');
+  });
+
+  it('옮길 범위에 서버가 모르는 뷰어 블록이 있으면 같이 옮기지 않고 어긋났다고 거부한다 (PR #28 재리뷰)', () => {
+    const editor = new DocumentEditor(openFixture('notice.hwpx'));
+    const before = JSON.stringify(editor.blocks);
+    // 문단 1 에는 글자(b2)와 누름틀(b3)이 있는데 서버는 글자만 안다
+    const operation: EditOperation = {
+      kind: 'move_blocks',
+      section: 0,
+      start: 1,
+      end: 2,
+      before: 5,
+      blocks: [{ id: 'b2', anchor: { section: 0, paragraph: 1, part: 'text' } }],
+    };
+
+    expect(() => editor.edit(operation, editor.depth)).toThrow(
+      '옮길 범위의 블록이 서버와 뷰어에서 다릅니다(뷰어에만 있는 블록: 문단 1 field:0). open_document 로 문서를 다시 열어 주세요.',
+    );
+    expect(JSON.stringify(editor.blocks)).toBe(before);
+    expect(editor.depth).toBe(0);
   });
 });

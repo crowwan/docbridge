@@ -22,6 +22,9 @@ export interface EditOutcome {
   changes?: ParagraphChanges;
 }
 
+/** 편집 전 문단 위치 → 편집 뒤 위치(지운 문단은 undefined) */
+type Relocate = (position: ParagraphPosition) => ParagraphPosition | undefined;
+
 export const editHistoryMismatchMessage = (server: number, viewer: number) =>
   `편집 기록이 어긋났습니다(서버 ${server}, 뷰어 ${viewer}). open_document 로 문서를 다시 열어 주세요.`;
 
@@ -60,10 +63,12 @@ export class DocumentEditor {
     this.assertDepth(expectedDepth);
     const { changed, blocks, changes } = this.history.apply(operation.kind, this.current, () => {
       const applied = applyEdit(this.doc, this.current, operation);
-      const touched = new Set(applied.paragraphs.map(positionKey));
+      const toAfter = applied.changes === undefined ? (position: ParagraphPosition) => position : relocate(applied.changes);
       // 이미 문단 블록이던(id 가 있는) 문단과 새로 넣은 문단은 편집으로 비어도 블록으로 남긴다(처음 열 때 빈 문단만 뺀다).
-      // 문단을 넣거나 지우는 편집은 그 위치를 편집 뒤 위치로 옮긴다(paragraph-changes.ts relocate)
-      const next = extractBlocks(this.doc, this.keepParagraphs(applied));
+      // 문단을 넣고 지우고 옮기는 편집은 그 위치를 편집 뒤 위치로 옮긴다(paragraph-changes.ts relocate)
+      const next = extractBlocks(this.doc, this.keepParagraphs(applied, toAfter));
+      // 바뀐 블록 = 편집한 문단 + 자동 번호가 바뀐 문단(옮기기처럼 번호가 다시 매겨지면 편집 대상 밖까지 번진다)
+      const touched = new Set([...applied.paragraphs.map(positionKey), ...renumberedParagraphs(this.current, next, toAfter)]);
       const result = { changed: changedBlocks(next, touched), blocks: next, changes: applied.changes };
       show(result.changed, next);
       return result;
@@ -91,12 +96,11 @@ export class DocumentEditor {
   }
 
   /** 편집 뒤 블록으로 남길 문단: 지금 문단 블록인 위치(편집 뒤 위치로 옮김)와 새로 넣은 문단. 비어도 블록으로 남긴다 */
-  private keepParagraphs(applied: EditApplied): (section: number, paragraph: number) => boolean {
-    const moved = applied.changes === undefined ? (position: ParagraphPosition) => position : relocate(applied.changes);
+  private keepParagraphs(applied: EditApplied, toAfter: Relocate): (section: number, paragraph: number) => boolean {
     const known = new Set(
       this.current.flatMap((block) => {
         if (block.kind !== 'paragraph') return [];
-        const after = moved(block);
+        const after = toAfter(block);
         return after === undefined ? [] : [positionKey(after)];
       }),
     );
@@ -115,5 +119,20 @@ function changedBlocks(blocks: Block[], touched: Set<string>): ChangedBlock[] {
   return blocks.flatMap((block, i) => {
     const anchor = anchors[i];
     return anchor !== undefined && touched.has(positionKey(block)) ? [{ anchor, block }] : [];
+  });
+}
+
+/** 편집 전과 뒤에 자동 번호 문자열이 다른 문단(편집 뒤 위치 키). 편집 전 문단 블록만 본다(새로 넣은 문단은 편집한 문단이다) */
+function renumberedParagraphs(before: Block[], after: Block[], toAfter: Relocate): string[] {
+  const numberBefore = new Map<string, string | undefined>();
+  for (const block of before) {
+    if (block.kind !== 'paragraph') continue;
+    const position = toAfter(block);
+    if (position !== undefined) numberBefore.set(positionKey(position), block.number);
+  }
+  return after.flatMap((block) => {
+    if (block.kind !== 'paragraph') return [];
+    const key = positionKey(block);
+    return numberBefore.has(key) && numberBefore.get(key) !== block.number ? [key] : [];
   });
 }

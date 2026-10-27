@@ -1,11 +1,13 @@
 // 편집 도구(SPEC-002): 대상 id 를 id 표 위치로 바꿔 편집 공용 경로(session.edit)로 뷰어에 보내고, 바뀐 블록에 id 를 붙여 돌려준다.
 // 새 편집 도구(#21 move_blocks 등)는 core/edit-operations.ts 에 편집 종류를 더하고
-// 여기서 session.edit(이름, 문서 → 편집) 를 부른다. 문단을 넣고 지운 만큼 id 표를 옮기는 일은 뷰어가 돌려준 결과로 session 이 한다.
+// 여기서 session.edit(문서 → { 이름, 편집 }) 를 부른다. 문단을 넣고 지운 만큼 id 표를 옮기는 일은 뷰어가 돌려준 결과로 session 이 한다.
 import { assertDeletable } from '../core/delete-blocks.ts';
 import { UNDO_LIMIT } from '../core/edit-history.ts';
 import { targetLabel } from '../core/text-targets.ts';
 import type { TextTarget } from '../shared/protocol.ts';
 import { anchored, anchoredTarget } from './highlight-tools.ts';
+import { planMove, type MovePlan } from './move-plan.ts';
+import { labeledBlocks } from './read-tools.ts';
 import { outlineItem, preview } from './reading.ts';
 import type { DocumentSession, EditedBlock } from './session.ts';
 
@@ -39,10 +41,9 @@ function changedItem({ id, block }: EditedBlock, cell: TextTarget['cell']): Chan
 }
 
 export async function replaceText(session: DocumentSession, target: TextTarget, text: string): Promise<EditResult> {
-  const { changed, unmarked } = await session.edit(`replace_text ${targetLabel(target)}`, (document) => ({
-    kind: 'replace_text',
-    target: anchoredTarget(document.ids, target),
-    text,
+  const { changed, unmarked } = await session.edit((document) => ({
+    label: `replace_text ${targetLabel(target)}`,
+    operation: { kind: 'replace_text', target: anchoredTarget(document.ids, target), text },
   }));
   return editResult(changed, unmarked, target.cell);
 }
@@ -59,17 +60,27 @@ export interface InsertParagraphResult extends EditResult {
   inserted: string;
 }
 
+export const WHERE_REQUIRED = 'before 와 after 중 하나만 주세요.';
+
+/** 기준 블록 입력(before 또는 after 하나) → 기준 id 와 방향. 둘 다 주거나 하나도 안 주면 던진다(insert_paragraph·move_blocks 공용) */
+export function referenceOf({ before, after }: { before?: string; after?: string }): { referenceId: string; where: 'before' | 'after' } {
+  if (before !== undefined && after === undefined) return { referenceId: before, where: 'before' };
+  if (after !== undefined && before === undefined) return { referenceId: after, where: 'after' };
+  throw new Error(WHERE_REQUIRED);
+}
+
 /** 기준 블록(before 또는 after 하나) 앞·뒤에 새 문단을 넣는다. 서식은 기준 문단을 따른다 */
 export async function insertParagraph(
   session: DocumentSession,
   { before, after, text }: { before?: string; after?: string; text: string },
 ): Promise<InsertParagraphResult> {
-  if ((before === undefined) === (after === undefined)) throw new Error('before 와 after 중 하나만 주세요.');
-  const where = before === undefined ? 'after' : 'before';
-  const referenceId = before ?? after ?? '';
-  const { changed, unmarked, inserted } = await session.edit(`insert_paragraph ${where} ${referenceId}`, (document) => {
+  const { referenceId, where } = referenceOf({ before, after });
+  const { changed, unmarked, inserted } = await session.edit((document) => {
     const { anchor } = anchoredTarget(document.ids, { id: referenceId });
-    return { kind: 'insert_paragraph', reference: { id: referenceId, anchor }, where, text };
+    return {
+      label: `insert_paragraph ${where} ${referenceId}`,
+      operation: { kind: 'insert_paragraph', reference: { id: referenceId, anchor }, where, text },
+    };
   });
   const [id] = inserted;
   if (id === undefined) throw new Error(`${referenceId}: 뷰어가 넣은 문단을 알려 주지 않아 새 id 를 붙이지 못했습니다.`);
@@ -87,12 +98,77 @@ export interface DeleteBlocksResult {
  */
 export async function deleteBlocks(session: DocumentSession, ids: string[]): Promise<DeleteBlocksResult> {
   const unique = [...new Set(ids)];
-  const { deleted } = await session.edit(`delete_blocks ${unique.join(', ')}`, (document) => {
+  const { deleted } = await session.edit((document) => {
     const targets = anchored(document.ids, unique.map((id) => ({ id }))).map(({ id, anchor }) => ({ id, anchor }));
     assertDeletable(targets);
-    return { kind: 'delete_blocks', targets };
+    return { label: `delete_blocks ${unique.join(', ')}`, operation: { kind: 'delete_blocks', targets } };
   });
   return { deleted };
+}
+
+/** 옮긴 뒤 블록: 자동 번호 문단이면 옮긴 뒤 번호 */
+export type MovedItem = ChangedItem & { number?: string };
+
+export interface MoveBlocksResult {
+  /** 옮긴 블록 id(문서 순서). 고른 블록과 같은 문단에 걸린 블록도 담는다 */
+  moved: string[];
+  /** 옮긴 블록과 자동 번호가 바뀐 문단의 블록(문서 순서) */
+  changed: MovedItem[];
+  /** 직접 입력한 번호가 있는 문단, 뷰어에 표시하지 못한 블록 */
+  warnings?: string[];
+}
+
+// 글자로 친 번호: 1. 12) 가. 나) (1) (가) ① ㉠ ㉮ Ⅰ. — 숫자·한글·괄호·동그라미 번호는 뒤에 공백이나 글 끝이 와야 한다(①번 항목, (사)한국… 같은 문장은 아니다)(2026. 11. 같은 날짜는 4자리라 아니다)
+const TYPED_NUMBER =
+  /^\s*(?:(?:\d{1,2}|[가나다라마바사아자차카타파하])[.)](?=\s|$)|[(（](?:\d{1,2}|[가나다라마바사아자차카타파하])[)）](?=\s|$)|[\u2460-\u2473\u3260-\u327B](?=\s|$)|[\u2160-\u216B\u2170-\u217B][.)](?=\s|$))/u;
+
+/** 문단 글자 맨 앞에 직접 입력한 번호가 있는지(SPEC-002 "직접 입력한 번호") */
+export const hasTypedNumber = (text: string) => TYPED_NUMBER.test(text);
+
+export const typedNumberMessage = (ids: string[]) =>
+  `직접 입력한 번호가 있는 문단: ${ids.join(', ')}. 번호를 고치려면 replace_text 를 쓰세요.`;
+
+/** 편집 이름: 고른 블록을 문서 순서로(셋 이상이면 첫~끝) */
+const moveLabel = (ids: string[]) => `move_blocks ${ids.length <= 2 ? ids.join(', ') : `${ids[0]}~${ids.at(-1)}`}`;
+
+/**
+ * move_blocks: 이어진 블록을 기준 블록 앞/뒤로 서식째 옮긴다. 거부 판정과 범위는 planMove(id 표), 옮기기는 뷰어,
+ * id 표는 뷰어가 돌려준 실제로 옮긴 범위(changes.moved)로 session 이 옮긴다
+ */
+export async function moveBlocks(
+  session: DocumentSession,
+  { ids, before, after }: { ids: string[]; before?: string; after?: string },
+): Promise<MoveBlocksResult> {
+  const { referenceId: reference, where } = referenceOf({ before, after });
+  let plan: MovePlan | undefined;
+  const chosen = new Set(ids);
+  const { changed, unmarked } = await session.edit((document) => {
+    plan = planMove(document.ids, ids, reference, where);
+    const { section, start, end, before, blocks } = plan;
+    return {
+      label: moveLabel(blocks.flatMap(({ id }) => (chosen.has(id) ? [id] : []))),
+      operation: { kind: 'move_blocks', section, start, end, before, blocks },
+    };
+  });
+  // 옮긴 블록 = 옮긴 범위에 든 블록(문서 순서. id 는 그대로라 계획 때 id 와 같고, 뷰어가 범위를 양방향으로 맞춰 본다)
+  const moved = plan?.blocks.map(({ id }) => id) ?? [];
+  const movedIds = new Set(moved);
+  const items = changed.flatMap(({ id, block }) => {
+    if (id === undefined) return [];
+    const number = block.kind === 'paragraph' ? block.number : undefined;
+    return [{ id, block, item: { id, ...(number === undefined ? {} : { number }), text: outlineItem({ id, block }).text } }];
+  });
+  // 직접 입력한 번호: 옮긴 문단과 사이에서 순서가 바뀐 문단을 본다. 사이 문단은 바뀐 블록이 아니라 글자를 뷰어에서 다시 받는다
+  const reordered = new Set([...movedIds, ...(plan?.shifted ?? [])]);
+  const typed = (await labeledBlocks(session)).filter(
+    ({ id, block }) => reordered.has(id) && block.kind === 'paragraph' && hasTypedNumber(block.text),
+  );
+  const warnings = [...(typed.length === 0 ? [] : [typedNumberMessage(typed.map(({ id }) => id))]), ...unmarked.map(unmarkedMessage)];
+  return {
+    moved,
+    changed: items.map(({ item }) => item),
+    ...(warnings.length === 0 ? {} : { warnings }),
+  };
 }
 
 export interface UndoResult {

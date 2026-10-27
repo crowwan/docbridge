@@ -230,7 +230,7 @@ export function replaceFieldText(doc: HwpDocument, fieldId: number, text: string
 const paraShapeSchema = z.object({ paraShapeId: z.number() });
 const charPropsSchema = z.looseObject({ charShapeId: z.number() });
 
-const paraShapeIdOf = (doc: HwpDocument, section: number, paragraph: number) =>
+export const paraShapeIdOf = (doc: HwpDocument, section: number, paragraph: number) =>
   parseJson(paraShapeSchema, doc.getParaPropertiesAt(section, paragraph)).paraShapeId;
 
 /**

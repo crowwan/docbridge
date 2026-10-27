@@ -1,15 +1,18 @@
 import { once } from 'node:events';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { UNDO_LIMIT } from '../src/core/edit-history.ts';
+import { createBlankDocument } from '../src/core/rhwp-node.ts';
 import { startBridge, type Bridge } from '../src/server/bridge.ts';
 import { createMcpServer } from '../src/server/mcp.ts';
 import { DocumentSession } from '../src/server/session.ts';
 import { REQUEST_TIMEOUT_MS, type RequestMessage } from '../src/shared/protocol.ts';
-import { replaceText } from '../src/server/edit-tools.ts';
+import { replaceText, WHERE_REQUIRED } from '../src/server/edit-tools.ts';
 import { FakeViewer, NO_RESPONSE } from './fake-viewer.ts';
 import { fixturePath } from './fixtures.ts';
 import { rhwpViewer, type RhwpViewer } from './rhwp-viewer.ts';
@@ -19,7 +22,7 @@ const toolResultSchema = z.object({
   isError: z.boolean().optional(),
 });
 
-describe('SPEC-002 글자 바꾸기·되돌리기 도구 (replace_text · undo)', () => {
+describe('SPEC-002 편집 도구 (replace_text · move_blocks · undo)', () => {
   let bridge: Bridge;
   let session: DocumentSession;
   let client: Client;
@@ -140,11 +143,10 @@ describe('SPEC-002 글자 바꾸기·되돌리기 도구 (replace_text · undo)'
   it('AC-8 되돌리면 블록 id 표도 그 편집 전 상태로 돌아간다', async () => {
     // 문단을 넣는 편집(#20)처럼 id 표를 옮기는 편집을 공용 경로로 흉내 낸다: 글자는 바꾸고 id 표는 문단 하나를 민다
     await session.edit(
-      'id 표를 옮기는 편집',
       (document) => {
         const anchor = document.ids.anchor('b1');
         if (anchor === undefined) throw new Error('b1 이 없다');
-        return { kind: 'replace_text', target: { id: 'b1', anchor }, text: '라마바구청' };
+        return { label: 'id 표를 옮기는 편집', operation: { kind: 'replace_text', target: { id: 'b1', anchor }, text: '라마바구청' } };
       },
       (ids) => void ids.paragraphInserted(0, 1),
     );
@@ -253,5 +255,100 @@ describe('SPEC-002 글자 바꾸기·되돌리기 도구 (replace_text · undo)'
 
     expect(await errorText('replace_text', { target: { id: 'b1' }, text: 'X' })).toBe(expected);
     expect(await errorText('undo')).toBe(expected);
+  });
+
+  /** get_outline 의 id 와 번호(문서 순서) */
+  const outline = async () =>
+    z
+      .object({ blocks: z.array(z.object({ id: z.string(), number: z.string().optional(), text: z.string() })) })
+      .parse(await json('get_outline'))
+      .blocks.map(({ id, number, text }) => `${id} ${number ?? ''}${text.slice(0, 4)}`);
+
+  it('AC-4 move_blocks 는 블록을 옮기고 id 를 유지하며, 옮긴 뒤 번호와 번호가 바뀐 블록을 돌려준다', async () => {
+    const result = await json('move_blocks', { ids: ['b11'], before: 'b6' });
+
+    expect(result).toEqual({
+      moved: ['b11'],
+      changed: [
+        { id: 'b11', number: '1.', text: '회신 기한: 2026. 11. 14.(금)까지 참석 인원을 회신하여 주시…' },
+        { id: 'b6', number: '2.', text: '관련: 가나다구청 안전총괄과-1234(2026. 9. 1.)' },
+        { id: 'b7', number: '3.', text: '하반기 주민 안전교육을 아래와 같이 실시하오니 각 동 주민센터에서는 주민…' },
+      ],
+    });
+    expect((await outline()).slice(4, 8)).toEqual(['b5 제목  ', 'b11 1.회신 기', 'b6 2.관련: ', 'b7 3.하반기 ']);
+    expect(requests('edit').at(-1)?.params).toEqual({
+      operation: { kind: 'move_blocks', section: 0, start: 10, end: 11, before: 5, blocks: [{ id: 'b11', anchor: { section: 0, paragraph: 10, part: 'text' } }] },
+      depth: 0,
+      unsavedEdits: 1,
+    });
+    // 옮긴 뒤에도 같은 id 로 이어서 고친다
+    await json('replace_text', { target: { id: 'b11', start: 0, end: 5 }, text: '회신 마감' });
+    expect(await readText('b11')).toMatch(/^회신 마감:/);
+  });
+
+  it('AC-4 옮긴 편집을 되돌리면 블록 순서·번호와 id 표가 옮기기 전으로 돌아간다', async () => {
+    const before = await outline();
+    // 입력 순서와 상관없이 편집 이름은 문서 순서(PR #28 리뷰)
+    await json('move_blocks', { ids: ['b10', 'b8', 'b9', 'b7', 'b6'], after: 'b11' });
+
+    expect(await json('undo')).toEqual({ undone: 1, edits: ['move_blocks b6~b10'] });
+    expect(await outline()).toEqual(before);
+  });
+
+  it('AC-6 직접 입력한 번호가 있는 문단을 옮기면 결과 warnings 에 그 블록 id 를 담는다', async () => {
+    await json('replace_text', { target: { id: 'b13' }, text: '1. 붙임 교육 신청서 1부.' });
+
+    expect(await json('move_blocks', { ids: ['b13'], after: 'b14' })).toEqual({
+      moved: ['b13'],
+      changed: [{ id: 'b13', text: '1. 붙임 교육 신청서 1부.' }],
+      warnings: ['직접 입력한 번호가 있는 문단: b13. 번호를 고치려면 replace_text 를 쓰세요.'],
+    });
+  });
+
+  it('AC-6 옛 자리와 새 자리 사이에서 순서가 바뀐 문단의 직접 입력 번호도 경고한다 (PR #28 재리뷰)', async () => {
+    // "머리 / 1. 가 / 2. 나 / 3. 다" 에서 "3. 다" 를 "1. 가" 앞으로 → 1·2 문단도 순서가 바뀌어 번호가 틀어진다
+    const doc = createBlankDocument();
+    doc.insertText(0, 0, 0, '머리');
+    ['1. 가', '2. 나', '3. 다'].forEach((text, i) => {
+      doc.splitParagraph(0, i, doc.getParagraphLength(0, i));
+      doc.insertText(0, i + 1, 0, text);
+    });
+    const path = join(mkdtempSync(join(tmpdir(), 'docbridge-move-')), 'typed.hwpx');
+    writeFileSync(path, doc.exportHwpx());
+    await json('open_document', { path });
+
+    expect(await json('move_blocks', { ids: ['b4'], before: 'b2' })).toMatchObject({
+      moved: ['b4'],
+      warnings: ['직접 입력한 번호가 있는 문단: b4, b2, b3. 번호를 고치려면 replace_text 를 쓰세요.'],
+    });
+  });
+
+  it('AC-5 옮길 수 없는 문단이 있으면 이유와 블록 id 를 돌려주고 아무것도 바꾸지 않는다', async () => {
+    const doc = createBlankDocument();
+    doc.insertText(0, 0, 0, '첫째');
+    ['둘째', '셋째 각주'].forEach((text, i) => {
+      doc.splitParagraph(0, i, doc.getParagraphLength(0, i));
+      doc.insertText(0, i + 1, 0, text);
+    });
+    doc.insertFootnote(0, 2, 2);
+    const path = join(mkdtempSync(join(tmpdir(), 'docbridge-move-')), 'footnote.hwpx');
+    writeFileSync(path, doc.exportHwpx());
+    await json('open_document', { path });
+    const before = await outline();
+
+    expect(await errorText('move_blocks', { ids: ['b3'], before: 'b2' })).toBe(
+      '이 문단은 옮길 수 없습니다(각주): b3. 글자만 옮기려면 insert_paragraph 와 delete_blocks 를 쓰세요.',
+    );
+    expect(await outline()).toEqual(before);
+    expect([session.editCount, session.dirty]).toEqual([0, false]);
+  });
+
+  it('before 와 after 를 둘 다 주거나 하나도 안 주면, 또는 계획 단계에서 거부되면 뷰어에 보내지 않는다', async () => {
+    expect(await errorText('move_blocks', { ids: ['b11'], before: 'b6', after: 'b7' })).toBe(WHERE_REQUIRED);
+    expect(await errorText('move_blocks', { ids: ['b11'] })).toBe(WHERE_REQUIRED);
+    expect(await errorText('move_blocks', { ids: ['b6', 'b8'], after: 'b11' })).toBe(
+      '옮길 블록이 문서에서 이어져 있지 않습니다. 사이 블록 b7 도 ids 에 넣거나 따로 옮기세요.',
+    );
+    expect(requests('edit')).toHaveLength(0);
   });
 });
