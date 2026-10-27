@@ -7,6 +7,7 @@
 // 글자 위치는 모두 유니코드 글자 단위(rhwp 와 같다, chars.ts).
 import { HwpDocument } from '@rhwp/core';
 import { z } from 'zod';
+import { errorMessage } from '../shared/errors.ts';
 import { charLength, sliceChars } from './chars.ts';
 
 function parse<T>(schema: z.ZodType<T>, json: string): T {
@@ -299,15 +300,42 @@ const importRequest = (section: number, start: number, end: number, before: numb
     dryRun,
   });
 
-const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
+/** 옮기기에 쓸 사본 만들기(같은 핸들은 importParagraphBlock 이 받지 않는다) */
+export type MakeCopy = (doc: HwpDocument) => HwpDocument;
+
+// 사본은 HWP 로 먼저 만든다. HWPX 사본은 HWPX 번호 정의(paraHead)를 가져오지 못해 번호 문단을 거부한다.
+// HWP 사본에서 거부되면(HWPX 문서의 그리기 개체 등이 HWP 로 바뀌며 해석하지 못한 컨트롤 데이터가 된다) HWPX 사본으로 한 번 더 본다(ADR 002)
+export const DEFAULT_COPIES: MakeCopy[] = [(doc) => new HwpDocument(doc.exportHwp()), (doc) => new HwpDocument(doc.exportHwpx())];
+
+const COPY_MISMATCH = '문서 사본이 원본과 달라 옮길 수 없습니다';
+
+/** 사본이 원본과 같은 문단 번호를 쓸 수 있는지: 구역 문단 수와 옮길 문단 글자가 같아야 한다 */
+function copyMatches(doc: HwpDocument, copy: HwpDocument, section: number, start: number, end: number): boolean {
+  if (copy.getSectionCount() !== doc.getSectionCount()) return false;
+  if (copy.getParagraphCount(section) !== doc.getParagraphCount(section)) return false;
+  for (let p = start; p < end; p += 1) {
+    if (paragraphTextOf(copy, section, p) !== paragraphTextOf(doc, section, p)) return false;
+  }
+  return true;
+}
+
+const paragraphTextOf = (doc: HwpDocument, section: number, paragraph: number) =>
+  doc.getTextRange(section, paragraph, 0, doc.getParagraphLength(section, paragraph));
 
 /**
  * 같은 구역 안 이어진 문단 [start, end) 를 before 문단 앞으로 옮긴다(before 는 1..문단 수, 문단 수면 맨 끝).
- * 절차(rhwp-code-analysis 5-3): 사본(exportHwp, 거부되면 exportHwpx → new HwpDocument) → dryRun → 실행 → 원본 지우기(인덱스 보정)
- * → 문단 모양 되돌리기. 거부되면 아무것도 바꾸지 않고 거부된 문단과 이유를 모두 돌려준다.
+ * 절차(rhwp-code-analysis 5-3): 사본(copies 순서대로) → 사본이 원본과 같은지 확인 → dryRun → 실행 → 원본 지우기(인덱스 보정)
+ * → 문단 모양 되돌리기. 거부되면(사본을 못 만들거나 원본과 다르거나 rhwp 가 거부) 아무것도 바꾸지 않고 거부된 문단과 이유를 돌려준다.
  * 실행 중 예외는 그대로 던진다 — 되돌리기는 부르는 쪽 스냅샷(EditHistory.apply)이 맡는다.
  */
-export function moveParagraphs(doc: HwpDocument, section: number, start: number, end: number, before: number): MoveResult {
+export function moveParagraphs(
+  doc: HwpDocument,
+  section: number,
+  start: number,
+  end: number,
+  before: number,
+  copies: MakeCopy[] = DEFAULT_COPIES,
+): MoveResult {
   const count = doc.getParagraphCount(section);
   if (!(0 <= start && start < end && end <= count && 0 <= before && before <= count)) {
     throw new Error(`옮길 문단 범위가 맞지 않습니다(start ${start}, end ${end}, before ${before}, 문단 수 ${count}).`);
@@ -317,15 +345,27 @@ export function moveParagraphs(doc: HwpDocument, section: number, start: number,
   if (before === 0) throw new Error('구역 첫 문단 앞으로는 옮길 수 없습니다.');
   const size = end - start;
   let rejected: MoveRejection[] = [];
-  // 사본은 HWP 로 먼저 만든다. HWPX 사본은 HWPX 번호 정의(paraHead)를 가져오지 못해 번호 문단을 거부한다.
-  // HWP 사본에서 거부되면(HWPX 문서의 그리기 개체 등이 HWP 로 바뀌며 해석하지 못한 컨트롤 데이터가 된다) HWPX 사본으로 한 번 더 본다(ADR 002)
-  for (const exportCopy of [() => doc.exportHwp(), () => doc.exportHwpx()]) {
-    const source = new HwpDocument(exportCopy());
+  const reject = (found: MoveRejection[]) => {
+    // 모두 거부되면 거부가 적은 쪽, 같으면 나중 사본 쪽 이유(HWPX 사본은 책갈피 등 컨트롤 이름이 남는다)
+    if (rejected.length === 0 || found.length <= rejected.length) rejected = found;
+  };
+  for (const makeCopy of copies) {
+    let source: HwpDocument;
     try {
+      source = makeCopy(doc);
+    } catch (error) {
+      reject([{ paragraph: start, reason: `문서 사본을 만들지 못했습니다: ${errorMessage(error)}` }]);
+      continue;
+    }
+    try {
+      // 원본의 문단 번호를 사본에 그대로 쓰므로, 왕복에서 문단이 달라졌으면 엉뚱한 문단을 들여오고 원본을 지운다
+      if (!copyMatches(doc, source, section, start, end)) {
+        reject([{ paragraph: start, reason: COPY_MISMATCH }]);
+        continue;
+      }
       const found = dryRunRejections(doc, source, section, start, end, before);
       if (found.length > 0) {
-        // 둘 다 거부되면 거부가 적은 쪽, 같으면 HWPX 사본 쪽 이유(책갈피 등 컨트롤 이름이 남는다)
-        if (rejected.length === 0 || found.length <= rejected.length) rejected = found;
+        reject(found);
         continue;
       }
       const shapes = Array.from({ length: size }, (_, i) => paraShapeIdOf(source, section, start + i));
@@ -362,7 +402,7 @@ function dryRunRejections(
       try {
         doc.importParagraphBlock(source, importRequest(section, p, p + 1, before, true));
       } catch (error) {
-        rejected.push({ paragraph: p, reason: moveRejectReason(errorText(error)) });
+        rejected.push({ paragraph: p, reason: moveRejectReason(errorMessage(error)) });
       }
     }
     // 문단 하나씩은 되는데 묶음이 안 되면(문단 경계를 넘는 누름틀 등) 범위 첫 문단에 이유를 붙인다
@@ -370,7 +410,7 @@ function dryRunRejections(
       try {
         doc.importParagraphBlock(source, importRequest(section, start, end, before, true));
       } catch (error) {
-        rejected.push({ paragraph: start, reason: moveRejectReason(errorText(error)) });
+        rejected.push({ paragraph: start, reason: moveRejectReason(errorMessage(error)) });
       }
     }
     return rejected;

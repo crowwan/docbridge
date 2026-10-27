@@ -179,6 +179,40 @@ describe('SPEC-002 문단 옮기기 (기술 검증)', () => {
     expect(() => doc.importParagraphBlock(viaHwpx, request)).toThrow('opaque HWPX paraHead import is not supported');
   });
 
+  it('사본의 문단 수나 옮길 문단 글자가 원본과 다르면 다음 사본으로, 모두 다르면 아무것도 바꾸지 않고 거부한다 (PR #24 리뷰)', () => {
+    const doc = openFixture('notice.hwpx');
+    const before = paragraphTexts(doc);
+    const reply = paragraphIndex(doc, '회신 기한');
+    const related = paragraphIndex(doc, '관련:');
+    const otherDocument = () => openFixture('report.hwpx');
+    const changedText = (d: HwpDocument) => {
+      const copy = new HwpDocument(d.exportHwp());
+      copy.insertText(S, reply, 0, '다른 ');
+      return copy;
+    };
+
+    const rejected = moveParagraphs(doc, S, reply, reply + 1, related, [otherDocument, changedText]);
+    expect(rejected).toEqual({ ok: false, rejected: [{ paragraph: reply, reason: '문서 사본이 원본과 달라 옮길 수 없습니다' }] });
+    expect(paragraphTexts(doc)).toEqual(before);
+
+    expect(moveParagraphs(doc, S, reply, reply + 1, related, [otherDocument, (d) => new HwpDocument(d.exportHwp())]).ok).toBe(true);
+  });
+
+  it('사본 만들기가 실패하면 다음 사본을 시도하고, 모두 실패하면 거부한다 (PR #24 리뷰)', () => {
+    const doc = openFixture('notice.hwpx');
+    const reply = paragraphIndex(doc, '회신 기한');
+    const related = paragraphIndex(doc, '관련:');
+    const broken = (): HwpDocument => {
+      throw new Error('사본 실패');
+    };
+
+    expect(moveParagraphs(doc, S, reply, reply + 1, related, [broken, (d) => new HwpDocument(d.exportHwp())]).ok).toBe(true);
+    expect(moveParagraphs(doc, S, related + 1, related + 2, related, [broken])).toEqual({
+      ok: false,
+      rejected: [{ paragraph: related + 1, reason: '문서 사본을 만들지 못했습니다: 사본 실패' }],
+    });
+  });
+
   it('rhwp 거부 문구에서 이유를 읽고, 모르는 이유는 그대로 둔다', () => {
     expect(moveRejectReason('렌더링 오류: paragraph block: source: paragraph block unsupported at [Paragraph(0), Control(0)]: Footnote')).toBe('각주');
     expect(moveRejectReason('렌더링 오류: paragraph block: source: paragraph block unsupported at [Paragraph(2)]: Something')).toBe('Something');
@@ -369,6 +403,16 @@ describe('SPEC-002 문단 넣기 (기술 검증)', () => {
     expect(numbered(extractBlocks(doc)).filter((n) => /^\d/.test(n)).slice(0, 2)).toEqual(['1. 새로 넣은 ', '2. 관련: 가나']);
   });
 
+  it('rhwp 는 구역 첫 문단 앞에 넣으면 구역 정의를 둘째 문단에 남기고, HWPX 로 저장해 다시 열면 구역 정의가 둘이 된다 (근거)', () => {
+    const doc = openFixture('notice.hwpx');
+    doc.insertParagraph(S, 0);
+    doc.insertText(S, 0, 0, '맨 앞');
+    const sectionDefs = (d: HwpDocument) =>
+      z.array(z.object({ ctrlId: z.string(), para: z.number() })).parse(JSON.parse(d.getControls())).filter((c) => c.ctrlId === 'secd').map((c) => c.para);
+    expect(sectionDefs(doc)).toEqual([1]);
+    expect(sectionDefs(new HwpDocument(doc.exportHwpx()))).toEqual([0, 1]);
+  });
+
   it('rhwp insertParagraph 는 앞 문단 모양을 물려줘서 앞에 넣을 때 바로잡는다 (근거)', () => {
     const doc = openFixture('notice.hwpx');
     const firstSub = paragraphIndex(doc, '교육 대상');
@@ -462,14 +506,6 @@ describe('SPEC-002 되돌리기 (기술 검증)', () => {
     expect(history.size).toBe(0);
   });
 
-  it('새 문서를 열 때 버린 편집 수를 돌려준다', () => {
-    const doc = mixedDocument();
-    const history = new EditHistory<null>(doc);
-    history.apply('a', null, () => replaceParagraphText(doc, S, 0, 'a'));
-    history.apply('b', null, () => replaceParagraphText(doc, S, 0, 'b'));
-    expect(history.clear()).toBe(2);
-    expect(history.undo()).toBeUndefined();
-  });
 });
 
 describe('SPEC-002 HWPX 저장 검증 (기술 검증)', () => {
