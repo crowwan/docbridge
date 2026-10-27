@@ -360,7 +360,7 @@ describe('SPEC-003 새 문서와 새로고침', () => {
     await save();
 
     expect(viewer.confirmsUnload()).toBe(false);
-    expect(viewer.editStates).toEqual([{ fileName: '제안서.hwpx', unsavedEdits: 0, newDocument: false }]);
+    expect(viewer.editStates).toEqual([{ fileName: '제안서.hwpx', unsavedEdits: 0, newDocument: false, state: 0 }]);
   });
 
   it('저장한 새 문서는 새로고침하면 저장한 파일로 돌아간다(사라지지 않는다)', async () => {

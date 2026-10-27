@@ -88,6 +88,7 @@ describe('SPEC-002 편집 도구 (replace_text · move_blocks · undo)', () => {
       },
       depth: 0,
       unsavedEdits: 1,
+      state: 1,
     });
   });
 
@@ -281,6 +282,7 @@ describe('SPEC-002 편집 도구 (replace_text · move_blocks · undo)', () => {
       operation: { kind: 'move_blocks', section: 0, start: 10, end: 11, before: 5, blocks: [{ id: 'b11', anchor: { section: 0, paragraph: 10, part: 'text' } }] },
       depth: 0,
       unsavedEdits: 1,
+      state: 1,
     });
     // 옮긴 뒤에도 같은 id 로 이어서 고친다
     await json('replace_text', { target: { id: 'b11', start: 0, end: 5 }, text: '회신 마감' });

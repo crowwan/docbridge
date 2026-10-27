@@ -64,6 +64,16 @@ export class EditLog<S> {
     return this.chain.at(-1) ?? 0;
   }
 
+  /** 편집 하나를 더 기록하면 될 상태 번호(뷰어 편집 요청에 미리 싣는다) */
+  stateAfterRecord(): number {
+    return this.nextState;
+  }
+
+  /** steps 만큼(있는 만큼만) 되돌리면 될 상태 번호 */
+  stateAfterUndo(steps: number): number {
+    return this.chain[this.chain.length - 1 - Math.min(steps, this.entries.size)] ?? 0;
+  }
+
   /** 저장하지 않은 편집이 있는지 */
   get dirty(): boolean {
     return this.unsavedEdits > 0;

@@ -276,7 +276,7 @@ describe('SPEC-002 저장 (save_document)', () => {
     const { path } = await save();
 
     expect(session.unsavedEdits).toBe(0);
-    expect(viewer.editStates).toEqual([{ fileName: '공문-수정.hwpx', unsavedEdits: 0, newDocument: false }]);
+    expect(viewer.editStates).toEqual([{ fileName: '공문-수정.hwpx', unsavedEdits: 0, newDocument: false, state: 1 }]);
     expect(viewer.unsavedEdits()).toBe(0);
     const disconnected = once(bridge.events, 'disconnected');
     sockets.at(-1)?.close();

@@ -1,5 +1,5 @@
 // 서버 ↔ 뷰어 WebSocket 프로토콜.
-// 서버가 요청(request)을 보내고 뷰어가 같은 id 로 응답(response)한다. 메시지는 JSON 문자열이고,
+// 서버가 요청(request)을 보내고 뷰어가 같은 id 로 응답(response)한다. 거꾸로 뷰어가 사람 편집을 요청(user_request)하면 서버가 응답(user_response)한다(SPEC-006). 메시지는 JSON 문자열이고,
 // 받는 쪽은 아래 zod 스키마로 읽는다(타입 단언 없이).
 import { z } from 'zod';
 import {
@@ -76,6 +76,12 @@ export const editResultSchema = z.object({
 const depthSchema = z.number().int().min(0);
 
 /**
+ * 문서 상태 번호(서버 EditLog.state): 편집마다 새 번호, 되돌리면 그 편집 전 번호(같은 번호 = 같은 문서). 문서를 열거나 만들면 0.
+ * 서버가 편집·되돌리기·edit_state 에 "이 요청 뒤의 번호"를 실어 보내고, 뷰어는 보고 있는 문서의 번호를 사람 편집(user_edit)에 실어 돌려준다(SPEC-006)
+ */
+const stateSchema = z.number().int().min(0);
+
+/**
  * 이 요청이 성공한 뒤의 저장하지 않은 편집 수(서버 EditLog 가 미리 계산). 뷰어는 성공하면 이 값으로 탭 닫기 확인 창을 정한다 —
  * 편집·되돌리기 뒤에 edit_state 를 따로 보내는 왕복을 줄인다
  */
@@ -101,11 +107,14 @@ export const viewerMethodSchemas = {
    * 편집 공용 경로(SPEC-002): 스냅샷 → 편집 → 다시 그리기 → 블록 다시 뽑기 → 바뀐 블록 표시(이전 표시·하이라이트는 지워진다).
    * 다시 그리기·표시까지 성공해야 기록에 들어가고, 실패하면 스냅샷으로 되돌려 문서는 그대로다. 편집 종류는 operation.kind(core/edit-operations.ts)
    */
-  edit: { params: z.object({ operation: editOperationSchema, depth: depthSchema, unsavedEdits: unsavedEditsSchema }), result: editResultSchema },
+  edit: {
+    params: z.object({ operation: editOperationSchema, depth: depthSchema, unsavedEdits: unsavedEditsSchema, state: stateSchema }),
+    result: editResultSchema,
+  },
   /** 스냅샷으로 steps 만큼(있는 만큼만) 되돌리고 다시 그린다. 결과는 되돌린 수(없으면 0) */
   undo: {
-    // unsavedEdits 는 steps 를 다 되돌렸을 때의 값. 덜 되돌렸으면 뷰어는 쓰지 않고 서버가 edit_state 로 맞춘다
-    params: z.object({ steps: z.number().int().min(1), depth: depthSchema, unsavedEdits: unsavedEditsSchema }),
+    // unsavedEdits·state 는 steps 를 다 되돌렸을 때의 값. 덜 되돌렸으면 뷰어는 쓰지 않고 서버가 edit_state 로 맞춘다
+    params: z.object({ steps: z.number().int().min(1), depth: depthSchema, unsavedEdits: unsavedEditsSchema, state: stateSchema }),
     result: z.object({ undone: z.number(), pageCount: z.number() }),
   },
   /** 지금 문서를 HWPX 로 내보내 다시 열어 비교한다(저장 전 검증). 같을 때만 바이트(base64)를 싣는다. 50MB 를 넘으면 오류 */
@@ -116,7 +125,7 @@ export const viewerMethodSchemas = {
    */
   // newDocument: 한 번도 저장하지 않은 새 문서(SPEC-003). 편집이 없어도 확인 창을 띄운다
   edit_state: {
-    params: z.object({ fileName: z.string(), unsavedEdits: z.number().int().min(0), newDocument: z.boolean() }),
+    params: z.object({ fileName: z.string(), unsavedEdits: z.number().int().min(0), newDocument: z.boolean(), state: stateSchema }),
     result: z.object({}),
   },
 } as const;
@@ -183,6 +192,70 @@ type MissingRequestMethod = Exclude<ViewerMethod, RequestMessage['method']>;
 const everyMethodHasRequestSchema: [MissingRequestMethod] extends [never] ? true : MissingRequestMethod = true;
 void everyMethodHasRequestSchema;
 
+/**
+ * 사람 편집(SPEC-006): 뷰어가 서버에 "이 편집을 해 달라"고 보낸다. 대상은 뷰어가 가진 블록 위치(anchor)이고,
+ * 서버가 id 표로 블록 id 로 바꿔 Claude 편집과 같은 직렬 큐·편집 기록(session.edit)으로 처리한다(편집기를 새로 만들지 않는다)
+ */
+export const userEditSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('replace_text'),
+    /** 글자 범위·칸은 replace_text 대상과 같다(블록 id 대신 블록 위치) */
+    target: textTargetSchema.omit({ id: true }).extend({ anchor: blockAnchorSchema }),
+    text: z.string(),
+  }),
+  z.object({ kind: z.literal('delete_blocks'), targets: z.array(blockAnchorSchema).min(1) }),
+  z.object({
+    kind: z.literal('move_blocks'),
+    blocks: z.array(blockAnchorSchema).min(1),
+    where: z.enum(['before', 'after']),
+    reference: blockAnchorSchema,
+  }),
+]);
+export type UserEdit = z.infer<typeof userEditSchema>;
+
+/** 뷰어가 서버에 부르는 메서드와 입력·결과 스키마 */
+export const userMethodSchemas = {
+  /**
+   * 사람 편집. state 는 뷰어가 보고 있던 문서의 상태 번호(마지막으로 받은 편집·되돌리기·edit_state 의 번호) —
+   * 서버 줄에서 차례가 왔을 때 서버 번호와 다르면(그사이 다른 편집·되돌리기가 끼어 문서가 바뀜) 거부한다
+   */
+  user_edit: { params: z.object({ edit: userEditSchema, state: stateSchema }), result: z.object({}) },
+  /** ⌘Z/Ctrl+Z: 공용 되돌리기 줄에서 마지막 편집 하나(사람·Claude 상관없이)를 되돌린다. 결과는 되돌린 편집 이름 */
+  user_undo: { params: z.object({}), result: z.object({ undone: z.array(z.string()) }) },
+} as const;
+
+type UserMethodSchemas = typeof userMethodSchemas;
+export type UserMethod = keyof UserMethodSchemas;
+export type UserParams<M extends UserMethod> = z.infer<UserMethodSchemas[M]['params']>;
+export type UserResult<M extends UserMethod> = z.infer<UserMethodSchemas[M]['result']>;
+
+const userRequestSchema = <M extends UserMethod, P extends z.ZodType>(method: M, params: P) =>
+  z.object({ type: z.literal('user_request'), id: z.number(), method: z.literal(method), params });
+
+/** 서버가 뷰어의 요청을 읽는 스키마 */
+export const userRequestMessageSchema = z.discriminatedUnion('method', [
+  userRequestSchema('user_edit', userMethodSchemas.user_edit.params),
+  userRequestSchema('user_undo', userMethodSchemas.user_undo.params),
+]);
+export type UserRequestMessage = z.infer<typeof userRequestMessageSchema>;
+
+type MissingUserMethod = Exclude<UserMethod, UserRequestMessage['method']>;
+const everyUserMethodHasRequestSchema: [MissingUserMethod] extends [never] ? true : MissingUserMethod = true;
+void everyUserMethodHasRequestSchema;
+
+/** 뷰어가 서버 응답의 결과를 메서드 M 의 결과 타입으로 읽는다 */
+export const parseUserResult: { [M in UserMethod]: (result: unknown) => UserResult<M> } = {
+  user_edit: (result) => userMethodSchemas.user_edit.result.parse(result),
+  user_undo: (result) => userMethodSchemas.user_undo.result.parse(result),
+};
+
+/** 서버 → 뷰어 응답(뷰어 요청에 대한). 서버 요청에 대한 뷰어 응답(response)과 type 으로 가른다 */
+export const userResponseMessageSchema = z.union([
+  z.object({ type: z.literal('user_response'), id: z.number(), ok: z.literal(true), result: z.unknown() }),
+  z.object({ type: z.literal('user_response'), id: z.number(), ok: z.literal(false), error: z.string() }),
+]);
+export type UserResponseMessage = z.infer<typeof userResponseMessageSchema>;
+
 export const responseMessageSchema = z.union([
   z.object({ type: z.literal('response'), id: z.number(), ok: z.literal(true), result: z.unknown() }),
   z.object({ type: z.literal('response'), id: z.number(), ok: z.literal(false), error: z.string() }),
@@ -221,8 +294,11 @@ export function answerRequest(raw: string, handle: (request: RequestMessage) => 
 export const timeoutMessage = (method: string, timeoutMs: number) =>
   `뷰어가 ${timeoutMs / 1000}초 안에 응답하지 않았습니다(${method}). 뷰어 탭을 확인하고 다시 시도하세요.`;
 
+/** 요청 하나의 끝(응답 메시지 종류와 상관없이 id·성공 여부·결과) */
+export type Settlement = { type?: string; id: number } & ({ ok: true; result: unknown } | { ok: false; error: string });
+
 interface Pending {
-  settle(response: ResponseMessage): void;
+  settle(response: Settlement): void;
   fail(error: Error): void;
 }
 
@@ -272,7 +348,7 @@ export class RequestTracker {
   }
 
   /** 응답을 해당 요청에 넘긴다. 이미 끝난(타임아웃 등) 요청의 응답은 무시한다 */
-  settle(response: ResponseMessage): void {
+  settle(response: Settlement): void {
     this.pending.get(response.id)?.settle(response);
   }
 

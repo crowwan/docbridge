@@ -6,16 +6,21 @@ import { createServer, type IncomingMessage, type Server as HttpServer, type Ser
 import type { AddressInfo } from 'node:net';
 import { extname, join, normalize } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
+import { z } from 'zod';
 import {
   RequestTracker,
   responseMessageSchema,
   parseViewerResult,
   requestMessageSchema,
+  userRequestMessageSchema,
   type RequestMessage,
+  type UserRequestMessage,
+  type UserResponseMessage,
   type ViewerMethod,
   type ViewerParams,
   type ViewerResult,
 } from '../shared/protocol.ts';
+import { errorMessage } from '../shared/errors.ts';
 import { log } from './log.ts';
 
 const HOST = '127.0.0.1';
@@ -52,6 +57,11 @@ export interface Bridge {
   hasViewer(): boolean;
   /** 마지막으로 붙은 뷰어에 요청을 보내고 응답을 기다린다. 뷰어가 없거나 도중에 끊기면 ViewerNotConnectedError */
   request<M extends ViewerMethod>(method: M, params: ViewerParams<M>): Promise<ViewerResult<M>>;
+  /**
+   * 뷰어가 보낸 요청(사람 편집·⌘Z, SPEC-006)을 handler 로 처리해 그 뷰어에 응답한다. 요청을 받는 뷰어(마지막에 붙은 탭)의 것만 처리하고
+   * 다른 탭의 요청은 INACTIVE_VIEWER 로 거부한다. handler 가 던지면 그 문구로 실패 응답
+   */
+  serveUserRequests(handler: (request: UserRequestMessage) => Promise<unknown>): void;
   close(): Promise<void>;
 }
 
@@ -67,6 +77,12 @@ export class ViewerNotConnectedError extends Error {
     this.name = 'ViewerNotConnectedError';
   }
 }
+
+export const INACTIVE_VIEWER = '다른 뷰어 탭이 docbridge 에 붙어 있어 이 탭에서는 고칠 수 없습니다. 마지막에 연 탭에서 고치세요.';
+const NO_USER_HANDLER = 'docbridge 가 뷰어 편집을 받을 준비가 되지 않았습니다.';
+
+/** 뷰어 요청 모양(type user_request 와 id)은 맞지만 메서드·입력을 읽지 못한 것 — id 로 오류 응답한다 */
+const looseUserRequestSchema = z.object({ type: z.literal('user_request'), id: z.number() });
 
 function tokenOf(url: string | undefined): string | null {
   return new URL(url ?? '/', `http://${HOST}`).searchParams.get('token');
@@ -147,8 +163,37 @@ export async function startBridge(options: BridgeOptions): Promise<Bridge> {
     events.emit('disconnected');
   };
 
-  const receive = (data: unknown) => {
-    const parsed = responseMessageSchema.safeParse(JSON.parse(String(data)));
+  let userHandler: ((request: UserRequestMessage) => Promise<unknown>) | undefined;
+
+  /** 뷰어 요청을 처리해 보낸 뷰어에 응답한다. 응답 전에 그 뷰어가 끊겼으면 보내지 않는다 */
+  const answerUser = async (ws: WebSocket, id: number, run: () => Promise<unknown>) => {
+    let response: UserResponseMessage;
+    try {
+      response = { type: 'user_response', id, ok: true, result: await run() };
+    } catch (error) {
+      response = { type: 'user_response', id, ok: false, error: errorMessage(error) };
+    }
+    if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(response));
+  };
+
+  const receive = (ws: WebSocket, data: unknown) => {
+    const message: unknown = JSON.parse(String(data));
+    const userRequest = userRequestMessageSchema.safeParse(message);
+    if (userRequest.success) {
+      const request = userRequest.data;
+      void answerUser(ws, request.id, async () => {
+        if (ws !== activeViewer()) throw new Error(INACTIVE_VIEWER);
+        if (userHandler === undefined) throw new Error(NO_USER_HANDLER);
+        return userHandler(request);
+      });
+      return;
+    }
+    const looseUser = looseUserRequestSchema.safeParse(message);
+    if (looseUser.success) {
+      void answerUser(ws, looseUser.data.id, () => Promise.reject(new Error(`서버가 읽을 수 없는 뷰어 요청입니다: ${userRequest.error.message}`)));
+      return;
+    }
+    const parsed = responseMessageSchema.safeParse(message);
     if (parsed.success) tracker.settle(parsed.data);
     else log(`뷰어 메시지를 읽지 못했습니다: ${parsed.error.message}`);
   };
@@ -168,7 +213,7 @@ export async function startBridge(options: BridgeOptions): Promise<Bridge> {
       viewers.push(ws);
       ws.on('message', (data) => {
         try {
-          receive(data);
+          receive(ws, data);
         } catch (error) {
           log(`뷰어 메시지 처리 오류: ${String(error)}`);
         }
@@ -192,6 +237,9 @@ export async function startBridge(options: BridgeOptions): Promise<Bridge> {
     viewerUrl: `http://${HOST}:${port}/?token=${token}`,
     events,
     hasViewer: () => viewers.length > 0,
+    serveUserRequests(handler) {
+      userHandler = handler;
+    },
     request(method, params) {
       const viewer = activeViewer();
       if (viewer === undefined) return Promise.reject(new ViewerNotConnectedError());

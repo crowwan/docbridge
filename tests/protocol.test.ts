@@ -85,10 +85,11 @@ const sampleParams: { [M in ViewerMethod]: ViewerParams<M> } = {
     operation: { kind: 'replace_text', targets: [{ id: 'b1', anchor: { section: 0, paragraph: 0, part: 'text' } }], text: '새 글자' },
     depth: 0,
     unsavedEdits: 1,
+    state: 1,
   },
-  undo: { steps: 1, depth: 1, unsavedEdits: 0 },
+  undo: { steps: 1, depth: 1, unsavedEdits: 0, state: 0 },
   export_hwpx: {},
-  edit_state: { fileName: '공문-수정.hwpx', unsavedEdits: 0, newDocument: false },
+  edit_state: { fileName: '공문-수정.hwpx', unsavedEdits: 0, newDocument: false, state: 0 },
   create_document: { fileName: '제안서.hwpx', template: { fileName: '양식.hwpx', data: 'AA==', keepContent: false } },
 };
 

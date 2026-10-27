@@ -86,4 +86,30 @@ describe('SPEC-002 서버 편집 기록 (되돌리기 칸·저장하지 않은 �
     undoChecked(5);
     expect(log.unsavedEdits).toBe(1);
   });
+
+  it('편집·되돌리기 요청에 실을 "그 뒤의 상태 번호"는 실제로 기록·되돌린 뒤의 번호와 같다 (SPEC-006 #58)', () => {
+    const log = new EditLog<string>(2);
+    expect(log.state).toBe(0);
+    const recordChecked = (label: string) => {
+      const expected = log.stateAfterRecord();
+      log.record(label, label);
+      expect(log.state).toBe(expected);
+    };
+    const undoChecked = (steps: number) => {
+      const expected = log.stateAfterUndo(steps);
+      log.undo(steps);
+      expect(log.state).toBe(expected);
+    };
+    recordChecked('첫째');
+    recordChecked('둘째');
+    recordChecked('셋째');
+    undoChecked(1);
+    recordChecked('넷째');
+    // 되돌린 뒤 다른 편집: 순번은 같아도 번호는 새것
+    expect(log.depth).toBe(3);
+    expect(log.state).toBe(4);
+    // 칸(2)보다 많이 되돌리라고 해도 있는 만큼만
+    undoChecked(5);
+    expect(log.state).toBe(1);
+  });
 });

@@ -16,6 +16,7 @@ import { EditLog } from './edit-log.ts';
 import { log } from './log.ts';
 import { absolutePath } from './paths.ts';
 import { RELATIVE_TEMPLATE_PATH, requireAbsolutePath, resolveNewDocumentPath } from './save-path.ts';
+import { handleUserRequest } from './user-edit.ts';
 
 /** 이보다 큰 파일은 읽지 않는다 */
 export const MAX_FILE_BYTES = MAX_DOCUMENT_BYTES;
@@ -136,6 +137,11 @@ export interface CreateResult {
   warnings?: string[];
 }
 export const reloadLostEditsMessage = (count: number) => `뷰어를 새로고침해서 저장하지 않은 편집 ${count}개가 사라졌습니다.`;
+/** 사람이 화면에서 한 일(편집·⌘Z)을 다음 도구 결과에 한 번 알린다(SPEC-006 AC-9) */
+export const userChangesMessage = (changes: string[]) => `사용자가 화면에서 고침: ${changes.join(', ')}`;
+
+/** 편집·되돌리기를 부른 쪽. user = 뷰어에서 사람이(SPEC-006) */
+export type EditSource = 'claude' | 'user';
 
 
 /** 줄 안에서 뷰어에 요청하기(session.exclusive 가 넘긴다) */
@@ -174,6 +180,8 @@ export class DocumentSession {
   private current: OpenedDocument | undefined;
   /** 다음 도구 결과에 붙일 알림(새로고침으로 사라진 편집 등). takeNotices 로 꺼내면 비워진다 */
   private notices: string[] = [];
+  /** 지난 도구 결과 뒤로 사람이 화면에서 한 일(예: "b11 글자"). takeNotices 가 한 줄로 묶어 꺼낸다 */
+  private userChanges: string[] = [];
   /** 뷰어에 문서를 보내는 일(열기·새로고침 다시 띄우기)을 한 줄로 세운다. 보낸 순서 = 뷰어에 남는 순서 */
   private loads: Promise<void> = Promise.resolve();
 
@@ -187,6 +195,8 @@ export class DocumentSession {
       if (document === undefined) return;
       void this.enqueue(() => this.reload(document));
     });
+    // 뷰어가 보낸 사람 편집·⌘Z 도 같은 줄과 편집 기록으로(SPEC-006)
+    bridge.serveUserRequests((request) => handleUserRequest(this, request));
   }
 
   get document(): OpenedDocument | undefined {
@@ -210,7 +220,8 @@ export class DocumentSession {
 
   /** 쌓인 알림을 꺼낸다(도구 결과에 붙인다). 꺼내면 비워진다 */
   takeNotices(): string[] {
-    return this.notices.splice(0);
+    const changes = this.userChanges.splice(0);
+    return [...this.notices.splice(0), ...(changes.length === 0 ? [] : [userChangesMessage(changes)])];
   }
 
   /**
@@ -240,6 +251,7 @@ export class DocumentSession {
         fileName: document.fileName,
         unsavedEdits: document.edits.unsavedEdits,
         newDocument: document.location.kind === 'new',
+        state: document.edits.state,
       });
     } catch (error) {
       log(`뷰어에 편집 상태를 보내지 못했습니다: ${String(error)}`);
@@ -278,6 +290,8 @@ export class DocumentSession {
       if (!this.bridge.hasViewer()) await this.launchViewer();
       // 뷰어는 새 문서를 열며 이전 문서와 그 되돌리기 스냅샷을 닫는다(AC-12)
       const discarded = this.discardNotice();
+      // 이전 문서에서 사람이 고친 알림은 새 문서의 블록 id 와 헷갈리므로 버린다(편집을 버린 것은 discarded 가 알린다)
+      this.userChanges = [];
       const loaded = await this.load(fileName, bytes, discarded);
       const ids = BlockIdTable.assign(loaded.blocks);
       this.current = {
@@ -329,6 +343,7 @@ export class DocumentSession {
     return this.enqueue(async () => {
       if (!this.bridge.hasViewer()) await this.launchViewer();
       const discarded = this.discardNotice();
+      this.userChanges = [];
       const failure = template === undefined ? '새 문서를 만들 수 없습니다' : '문서를 열 수 없습니다';
       const created = await this.present(
         () => this.bridge.request('create_document', { fileName, ...(template === undefined ? {} : { template }) }),
@@ -389,23 +404,28 @@ export class DocumentSession {
    * 요청에 서버 편집 순번을 실어 보낸다: 앞 편집 결과를 못 받았으면(타임아웃 등 — 뷰어는 적용했을 수 있다) 뷰어가 어긋남으로 거부한다
    */
   async edit(
-    /** 지금 문서로 편집과 그 이름(되돌리기 결과에 보인다)을 만든다. 던지면(없는 id·거부) 뷰어에 보내지 않는다 */
-    prepare: (document: OpenedDocument) => { label: string; operation: EditOperation },
+    /**
+     * 지금 문서로 편집과 그 이름(되돌리기 결과에 보인다)을 만든다. 던지면(없는 id·거부) 뷰어에 보내지 않는다.
+     * notice 를 주면(사람 편집) 성공했을 때 다음 도구 결과 알림에 넣는다
+     */
+    prepare: (document: OpenedDocument) => { label: string; operation: EditOperation; notice?: string },
     updateIds: (ids: BlockIdTable) => void = () => undefined,
   ): Promise<EditOutcome> {
     return this.enqueue(async () => {
       const document = this.openedDocument();
-      const { label, operation } = prepare(document);
+      const { label, operation, notice } = prepare(document);
       const before = document.ids.clone();
       const { changed, unmarked, pageCount, changes } = await this.send('edit', {
         operation,
         depth: document.edits.depth,
         unsavedEdits: document.edits.unsavedAfterRecord(),
+        state: document.edits.stateAfterRecord(),
       });
       const { inserted, deleted } = changes === undefined ? { inserted: [], deleted: [] } : applyParagraphChanges(document.ids, changes);
       updateIds(document.ids);
       document.edits.record(label, before);
       document.pageCount = pageCount;
+      if (notice !== undefined) this.userChanges.push(notice);
       const { ids } = document;
       return {
         changed: changed.map(({ anchor, block }) => ({ id: ids.idAt(anchor), block })),
@@ -418,17 +438,24 @@ export class DocumentSession {
 
   /**
    * steps 만큼(있는 만큼만) 되돌린다: 뷰어가 스냅샷으로, 서버는 id 표를 그 편집 전으로.
-   * 되돌린 편집 이름(최근 것부터). 되돌릴 것이 없으면 빈 배열
+   * 되돌린 편집 이름(최근 것부터). 되돌릴 것이 없으면 빈 배열. 사람이(⌘Z) 되돌렸으면 다음 도구 결과에 알린다
    */
-  async undo(steps: number): Promise<string[]> {
+  async undo(
+    steps: number,
+    source: EditSource = 'claude',
+    /** 줄 차례에 지금 문서를 확인한다(사람 ⌘Z — 요청을 받은 뒤 문서가 바뀌었으면 던진다) */
+    check: (document: OpenedDocument) => void = () => undefined,
+  ): Promise<string[]> {
     return this.enqueue(async () => {
       const document = this.openedDocument();
+      check(document);
       const available = Math.min(steps, document.edits.editCount);
       if (available === 0) return [];
       const { undone, pageCount } = await this.send('undo', {
         steps: available,
         depth: document.edits.depth,
         unsavedEdits: document.edits.unsavedAfterUndo(available),
+        state: document.edits.stateAfterUndo(available),
       });
       document.pageCount = pageCount;
       // 뷰어가 되돌린 만큼만(뷰어 스냅샷이 서버 기록보다 적을 수 있다 — 새로고침 뒤 등)
@@ -437,6 +464,7 @@ export class DocumentSession {
       document.ids = taken.state;
       // 뷰어가 덜 되돌렸으면 요청에 실은 값이 틀리다 — 따로 맞춘다
       if (undone !== available) await this.pushEditState(document);
+      if (source === 'user') this.userChanges.push(`되돌림(${taken.labels.join(', ')})`);
       return taken.labels;
     });
   }
@@ -518,6 +546,8 @@ export class DocumentSession {
    */
   private async reload(document: OpenedDocument): Promise<void> {
     if (this.current !== document) return;
+    // 사람이 고친 것도 새로고침으로 사라졌다(사라진 편집 수 알림에 든다)
+    this.userChanges = [];
     const lost = document.edits.unsavedEdits;
     const { location } = document;
     if (location.kind === 'new') {
