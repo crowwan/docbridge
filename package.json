@@ -13,7 +13,8 @@
     "start": "node dist/server/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "e2e": "npm run build && playwright test"
+    "e2e": "npm run build && playwright test",
+    "demo": "npm run build && node scripts/demo/record-demo.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",
