@@ -55,31 +55,27 @@ export function decodeExport(data: string, byteLength: number, maxBytes = MAX_DO
   return bytes;
 }
 
-/** write: 파일 쓰기(테스트에서 쓰는 사이 일을 끼워 넣을 때 바꾼다) */
-export async function saveDocument(session: DocumentSession, args: SaveArgs, write = writeSave): Promise<SaveResult> {
-  const document = await session.documentForTool();
-  // 경로가 틀렸으면 내보내기(큰 문서는 0.5초)를 하지 않는다
-  const overwrite = args.overwrite ?? false;
-  const resolved = await resolveSavePath({ sourcePath: document.sourcePath, path: args.path, overwrite });
-  const exported = await session.requestViewer('export_hwpx', {});
-  if (session.document !== document) throw new Error('저장하는 사이 다른 문서가 열렸습니다. 다시 저장하세요.');
-  if (!exported.verified) throw verificationError(document, exported);
-  const bytes = decodeExport(exported.data, exported.byteLength);
-  // 기본 이름은 그사이 같은 이름이 생기면(동시 저장 등) 다음 번호로 쓴다
-  const path = await write({ path: resolved, overwrite, numbered: args.path === undefined }, bytes);
-  const warnings = exported.losses.map(lossWarning);
-  // 쓰는 사이 다른 문서를 열었으면 파일만 남기고, 새 문서의 마지막 파일·뷰어 상태는 건드리지 않는다
-  const current = session.document;
-  if (current !== document) {
-    warnings.push(`저장하는 사이 다른 문서(${current?.fileName ?? '없음'})를 열어, 열린 문서의 마지막 파일은 바꾸지 않았습니다.`);
-  } else {
-    session.recordSave(document, path, exported.blocks);
-    await session.syncViewerEditState();
-  }
-  return {
-    path,
-    bytes: bytes.length,
-    verified: { blockCount: exported.blocks.length },
-    ...(warnings.length === 0 ? {} : { warnings }),
-  };
+/**
+ * 저장은 열기·새로고침·편집·되돌리기와 같은 줄에 선다(session.exclusive): 내보낸 문서와 기록한 저장 상태가 같은 편집 시점이고,
+ * 저장하는 사이 다른 문서가 열리지 않는다. write 는 파일 쓰기(테스트에서 쓰는 사이 일을 끼워 넣을 때 바꾼다)
+ */
+export function saveDocument(session: DocumentSession, args: SaveArgs, write = writeSave): Promise<SaveResult> {
+  return session.exclusive(async (document, send) => {
+    // 경로가 틀렸으면 내보내기(큰 문서는 0.5초)를 하지 않는다
+    const overwrite = args.overwrite ?? false;
+    const resolved = await resolveSavePath({ sourcePath: document.sourcePath, path: args.path, overwrite });
+    const exported = await send('export_hwpx', {});
+    if (!exported.verified) throw verificationError(document, exported);
+    const bytes = decodeExport(exported.data, exported.byteLength);
+    // 기본 이름은 그사이 같은 이름이 생기면(동시 저장, 다른 프로그램) 다음 번호로 쓴다
+    const path = await write({ path: resolved, overwrite, numbered: args.path === undefined }, bytes);
+    await session.recordSave(document, path, exported.blocks);
+    const warnings = exported.losses.map(lossWarning);
+    return {
+      path,
+      bytes: bytes.length,
+      verified: { blockCount: exported.blocks.length },
+      ...(warnings.length === 0 ? {} : { warnings }),
+    };
+  });
 }

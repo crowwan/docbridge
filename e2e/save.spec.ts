@@ -1,5 +1,5 @@
 // 저장(save_document)과 새로고침 확인 창을 서버가 내준 실제 브라우저 뷰어로 확인한다.
-// 편집 도구(#19~#21) 대신 서버 편집 기록에 편집을 남기고 뷰어에 편집 상태(edit_state)를 보낸다 — 편집 도구가 하는 일과 같다.
+// 확인 창은 서버 편집 기록의 저장하지 않은 편집 수(edit_state)를 따른다. npm run e2e 가 먼저 빌드한다.
 import { copyFile, mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,6 +9,7 @@ import { expect, test, type Dialog, type Page } from '@playwright/test';
 import { extractBlocks } from '../src/core/blocks.ts';
 import { initRhwpForNode } from '../src/core/rhwp-node.ts';
 import { startBridge, type Bridge } from '../src/server/bridge.ts';
+import { replaceText, undo } from '../src/server/edit-tools.ts';
 import { saveDocument } from '../src/server/save-tool.ts';
 import { DocumentSession } from '../src/server/session.ts';
 
@@ -28,20 +29,12 @@ async function closeTab(page: Page): Promise<string[]> {
   return dialogs;
 }
 
-/** 브라우저는 사용자가 페이지를 한 번이라도 누른 뒤에만 확인 창을 띄운다 */
-const touch = (page: Page) => page.getByTestId('page-canvas-0').click();
-
 let bridge: Bridge;
 let session: DocumentSession;
 let source: string;
 
-/** 서버 편집 기록에 편집 하나를 남기고 뷰어에 알린다 */
-async function recordEdit(): Promise<void> {
-  const document = session.document;
-  if (document === undefined) throw new Error('열린 문서가 없습니다');
-  document.edits.record('replace_text', document.ids.clone());
-  await session.syncViewerEditState();
-}
+/** notice.hwpx b11 = "회신 기한: 2026. 11. 14.(금)까지 …" */
+const edit = () => replaceText(session, { id: 'b11', start: 13, end: 20 }, '11. 7.');
 
 test.beforeEach(async ({ page }) => {
   bridge = await startBridge({ port: 0, viewerDir });
@@ -50,7 +43,8 @@ test.beforeEach(async ({ page }) => {
   source = join(dir, '공문.hwpx');
   await copyFile(fixturePath('notice.hwpx'), source);
   await session.open(source);
-  await touch(page);
+  // 브라우저는 사용자가 페이지를 한 번이라도 누른 뒤에만 확인 창을 띄운다
+  await page.getByTestId('page-canvas-0').click();
 });
 
 test.afterEach(async () => {
@@ -58,8 +52,8 @@ test.afterEach(async () => {
 });
 
 test.describe('SPEC-002 새로고침 확인 창 (서버가 내주는 뷰어)', () => {
-  test('저장하지 않은 편집이 있으면 탭을 닫거나 새로고침할 때 브라우저 확인 창이 뜬다', async ({ page }) => {
-    await recordEdit();
+  test('replace_text 뒤 탭을 닫거나 새로고침하면 브라우저 확인 창이 뜬다', async ({ page }) => {
+    await edit();
 
     expect(await closeTab(page)).toEqual(['beforeunload']);
   });
@@ -68,19 +62,25 @@ test.describe('SPEC-002 새로고침 확인 창 (서버가 내주는 뷰어)', (
     expect(await closeTab(page)).toEqual([]);
   });
 
-  test('저장한 뒤 되돌려 저장한 파일과 달라지면 다시 확인 창이 뜬다', async ({ page }) => {
-    await recordEdit();
+  test('편집한 뒤 저장하면 확인 창 없이 닫힌다', async ({ page }) => {
+    await edit();
     await saveDocument(session, {});
-    session.document?.edits.undo(1);
-    await session.syncViewerEditState();
+
+    expect(await closeTab(page)).toEqual([]);
+  });
+
+  test('저장한 뒤 undo 해서 저장한 파일과 달라지면 다시 확인 창이 뜬다', async ({ page }) => {
+    await edit();
+    await saveDocument(session, {});
+    await undo(session, 1);
 
     expect(await closeTab(page)).toEqual(['beforeunload']);
   });
 });
 
 test.describe('SPEC-002 저장 (서버가 내주는 뷰어)', () => {
-  test('뷰어가 내보내 검증한 HWPX 를 원본 옆에 저장하고, 저장 뒤에는 확인 창 없이 닫힌다', async ({ page }) => {
-    await recordEdit();
+  test('뷰어가 내보내 검증한 HWPX 를 원본 옆에 저장하고 상태 줄이 저장한 파일 이름이 된다', async ({ page }) => {
+    await edit();
 
     const result = await saveDocument(session, {});
 
@@ -88,10 +88,10 @@ test.describe('SPEC-002 저장 (서버가 내주는 뷰어)', () => {
     expect(result.verified).toEqual({ blockCount: 14 });
     initRhwpForNode();
     const saved = new HwpDocument(new Uint8Array(await readFile(result.path)));
-    expect(extractBlocks(saved)).toHaveLength(14);
+    const texts = extractBlocks(saved).map((block) => (block.kind === 'paragraph' ? block.text : ''));
     saved.free();
+    expect(texts).toContain('회신 기한: 2026. 11. 7.(금)까지 참석 인원을 회신하여 주시기 바랍니다.');
     await expect(page.getByRole('status')).toHaveText('공문-수정.hwpx — 1쪽');
     await page.screenshot({ path: 'test-results/screens/save-status.png' });
-    expect(await closeTab(page)).toEqual([]);
   });
 });

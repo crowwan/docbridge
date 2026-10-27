@@ -69,6 +69,9 @@ export const discardedEditsMessage = (count: number) => `저장하지 않은 편
 export const reloadLostEditsMessage = (count: number) => `뷰어를 새로고침해서 저장하지 않은 편집 ${count}개가 사라졌습니다.`;
 
 
+/** 줄 안에서 뷰어에 요청하기(session.exclusive 가 넘긴다) */
+export type ViewerSend = <M extends ViewerMethod>(method: M, params: ViewerParams<M>) => Promise<ViewerResult<M>>;
+
 export interface SessionOptions {
   /** 기본 브라우저로 주소를 연다 (테스트에서는 가짜) */
   openBrowser: (url: string) => void;
@@ -141,30 +144,44 @@ export class DocumentSession {
   }
 
   /**
-   * 저장을 마쳤다: 저장 경로가 마지막 파일이 되고, 지금 id 표를 기준 표로 떠 두고, 저장하지 않은 편집 수를 0 으로.
-   * blocks 는 저장한 문서의 블록 위치(저장 전 검증으로 다시 연 파일과 같다고 확인한 것)
+   * 저장을 마쳤다(exclusive 안에서 부른다): 저장 경로가 마지막 파일이 되고, 지금 id 표를 기준 표로 떠 두고,
+   * 저장하지 않은 편집 수를 0 으로, 뷰어에 편집 상태를 보낸다. blocks 는 저장한 문서의 블록 위치(저장 전 검증으로 다시 연 파일과 같다고 확인한 것)
    */
-  recordSave(document: OpenedDocument, path: string, blocks: BlockPosition[]): void {
+  async recordSave(document: OpenedDocument, path: string, blocks: BlockPosition[]): Promise<void> {
     document.path = path;
     document.fileName = basename(path);
     document.blocks = blocks;
     document.blockCount = blocks.length;
     document.savedIds = document.ids.clone();
     document.edits.markSaved();
+    await this.pushEditState(document);
+  }
+
+  /** 뷰어에 지금 편집 상태를 보낸다(편집·되돌리기·저장은 스스로 보낸다. 테스트처럼 기록을 직접 바꿨을 때) */
+  syncViewerEditState(): Promise<void> {
+    return this.enqueue(async () => {
+      if (this.current !== undefined) await this.pushEditState(this.current);
+    });
   }
 
   /**
-   * 뷰어에 편집 상태(마지막 파일 이름·저장하지 않은 편집 수)를 보낸다. 저장·편집·되돌리기 뒤에 부른다.
+   * 뷰어에 편집 상태(마지막 파일 이름·저장하지 않은 편집 수)를 보낸다. 줄 안에서 부른다. 뷰어 확인 창은 이 값만 따른다.
    * 실패해도(뷰어가 끊김 등) 도구는 실패시키지 않는다 — 확인 창 상태만 어긋나고, 새 뷰어는 0 에서 시작한다
    */
-  async syncViewerEditState(): Promise<void> {
-    const document = this.current;
-    if (document === undefined) return;
+  private async pushEditState(document: OpenedDocument): Promise<void> {
     try {
-      await this.requestViewer('edit_state', { fileName: document.fileName, unsavedEdits: document.edits.unsavedEdits });
+      await this.send('edit_state', { fileName: document.fileName, unsavedEdits: document.edits.unsavedEdits });
     } catch (error) {
       log(`뷰어에 편집 상태를 보내지 못했습니다: ${String(error)}`);
     }
+  }
+
+  /**
+   * 열기·새로고침·편집·되돌리기와 겹치지 않게 줄에 세워 task 를 돌린다(저장). 뷰어와 열린 문서가 없으면 그 오류.
+   * task 안에서는 send 로 뷰어에 요청한다(requestViewer 는 줄을 기다려 막힌다)
+   */
+  exclusive<T>(task: (document: OpenedDocument, send: ViewerSend) => Promise<T>): Promise<T> {
+    return this.enqueue(async () => task(this.openedDocument(), (method, params) => this.send(method, params)));
   }
 
   /** 문서를 여는 중이거나 새로고침으로 다시 띄우는 중이면 끝날 때까지 기다린다 */
@@ -252,6 +269,7 @@ export class DocumentSession {
       updateIds(document.ids);
       document.edits.record(label, before);
       document.pageCount = pageCount;
+      await this.pushEditState(document);
       const { ids } = document;
       return {
         changed: changed.map(({ anchor, block }) => ({ id: ids.idAt(anchor), block })),
@@ -275,6 +293,7 @@ export class DocumentSession {
       const taken = document.edits.undo(undone);
       if (taken === undefined) return [];
       document.ids = taken.state;
+      await this.pushEditState(document);
       return taken.labels;
     });
   }
@@ -293,14 +312,6 @@ export class DocumentSession {
       if (error instanceof ViewerNotConnectedError) throw new Error(this.notConnectedMessage());
       throw error;
     }
-  }
-
-  /** 문서가 필요한 도구의 시작: 열기·새로고침을 기다린 뒤 뷰어와 열린 문서가 있는지 본다(없으면 requestViewer 와 같은 오류) */
-  async documentForTool(): Promise<OpenedDocument> {
-    await this.ready();
-    if (!this.bridge.hasViewer()) throw new Error(this.notConnectedMessage());
-    if (this.current === undefined) throw new Error(NO_DOCUMENT);
-    return this.current;
   }
 
   private notConnectedMessage(): string {
