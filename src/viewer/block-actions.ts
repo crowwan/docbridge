@@ -104,7 +104,13 @@ export function setupBlockActions(pagesEl: HTMLElement, host: BlockActionsHost):
   });
 
   document.addEventListener('pointermove', (event) => {
-    if (press !== undefined && dragging === undefined) {
+    if (press === undefined) return;
+    // 버튼을 뗀 것이 전달되지 않았으면(창 밖에서 뗌 등) 누른 채가 아니므로 그만둔다 — 다음에 어디서 떼든 옮기지 않는다
+    if ((event.buttons & 1) === 0) {
+      stopDrag();
+      return;
+    }
+    if (dragging === undefined) {
       const moved = Math.hypot(event.clientX - press.clientX, event.clientY - press.clientY);
       if (moved < cssPixels('--drag-threshold')) return;
       dragging = { anchor: press.spot.anchor, bands: host.bands(), drop: undefined };
@@ -119,6 +125,9 @@ export function setupBlockActions(pagesEl: HTMLElement, host: BlockActionsHost):
     stopDrag();
     if (edit !== undefined) host.send(edit);
   });
+
+  // 포인터를 잃으면(브라우저가 취소) 놓지 않고 그만둔다
+  document.addEventListener('pointercancel', stopDrag);
 
   // 오른쪽 클릭 메뉴
   /** 마지막으로 마우스가 올라가 있던 쪽 위 점 — 메뉴 키·Shift+F10 의 대상 블록 */

@@ -56,6 +56,18 @@ async function rightClick(page: Page, id: string): Promise<void> {
   await expect(menu(page)).toBeVisible();
 }
 
+/**
+ * 앞서 편집이 끼어들지 않았는지 결정적으로 본다: 확실한 편집 하나(b10 위로)를 한 뒤 편집 수가 1 이고
+ * 개요가 그 편집만 반영했는지. 앞서 move_blocks 가 나갔다면 같은 줄에서 먼저 처리돼 편집 수가 2 가 된다
+ */
+async function expectOnlyNextEditApplies(page: Page): Promise<void> {
+  await rightClick(page, 'b10');
+  await item(page, '위로').click();
+  // 편집 수 1 은 끼어든 편집 하나만으로도 잠깐 맞으므로, 개요가 이 편집만 반영했는지와 그 뒤 편집 수를 함께 본다
+  await expect.poll(() => outline().then((entries) => entries.slice(7, 11))).toEqual(['b8 가.', 'b10 나.', 'b9 다.', 'b11 3.']);
+  expect(sessions.editCount).toBe(1);
+}
+
 test.describe('SPEC-006 끌어 옮기기와 오른쪽 클릭 메뉴 (서버가 내주는 뷰어)', () => {
   test('AC-4 문단을 끌어 놓으면 옮겨지고 번호가 다시 매겨진다. 끄는 동안 놓일 자리에 가로선이 보인다', async ({ page }) => {
     await sessions.open(fixturePath('notice.hwpx'));
@@ -82,9 +94,9 @@ test.describe('SPEC-006 끌어 옮기기와 오른쪽 클릭 메뉴 (서버가 �
 
   test('끄는 동안 Esc 면 놓아도 바뀌지 않고, 제자리(바로 앞·뒤)에 놓으면 편집이 없다', async ({ page }) => {
     await sessions.open(fixturePath('notice.hwpx'));
-    const before = await outline();
     const from = center(await boxOf(page, 'b11'));
     const target = await boxOf(page, 'b6');
+    const next = await boxOf(page, 'b12');
 
     await page.mouse.move(from.x, from.y);
     await page.mouse.down();
@@ -94,16 +106,40 @@ test.describe('SPEC-006 끌어 옮기기와 오른쪽 클릭 메뉴 (서버가 �
     await expect(page.getByTestId('drop-line')).toHaveCount(0);
     await page.mouse.up();
 
-    // 제자리: b11 을 조금만 아래로(자기 아래 절반)
+    // 제자리: 문턱을 확실히 넘겨 바로 뒤 블록(b12 표) 위 절반 = b11 바로 뒤 틈으로 끈다. 끌기 중이지만 가로선은 없다
     await page.mouse.move(from.x, from.y);
     await page.mouse.down();
-    await page.mouse.move(from.x, from.y + 4, { steps: 4 });
+    await page.mouse.move(next.x + 20, next.y + 3, { steps: 8 });
+    await expect(page.locator('body')).toHaveClass(/dragging/);
     await expect(page.getByTestId('drop-line')).toHaveCount(0);
     await page.mouse.up();
 
-    await page.getByRole('heading', { name: 'docbridge' }).click();
-    expect(sessions.editCount).toBe(0);
-    expect(await outline()).toEqual(before);
+    await expectOnlyNextEditApplies(page);
+  });
+
+  test('끄는 중 버튼을 뗀 것이 전달되지 않았거나(버튼 안 눌린 채 움직임) 포인터가 취소되면 끌기를 그만두고 옮기지 않는다', async ({ page }) => {
+    await sessions.open(fixturePath('notice.hwpx'));
+    const from = center(await boxOf(page, 'b11'));
+    const target = await boxOf(page, 'b6');
+
+    for (const lost of ['released', 'cancelled'] as const) {
+      await page.mouse.move(from.x, from.y);
+      await page.mouse.down();
+      await page.mouse.move(target.x + 20, target.y + 2, { steps: 8 });
+      await expect(page.getByTestId('drop-line')).toBeVisible();
+      await page.evaluate((kind) => {
+        const event =
+          kind === 'released'
+            ? new PointerEvent('pointermove', { buttons: 0, bubbles: true })
+            : new PointerEvent('pointercancel', { bubbles: true });
+        document.dispatchEvent(event);
+      }, lost);
+      await expect(page.getByTestId('drop-line')).toHaveCount(0);
+      await expect(page.locator('body')).not.toHaveClass(/dragging/);
+      await page.mouse.up();
+    }
+
+    await expectOnlyNextEditApplies(page);
   });
 
   test('AC-5 오른쪽 클릭 메뉴로 지우기', async ({ page }) => {
