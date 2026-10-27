@@ -107,14 +107,9 @@ export async function deleteBlocks(session: DocumentSession, ids: string[]): Pro
 }
 
 /** 옮긴 뒤 블록: 자동 번호 문단이면 옮긴 뒤 번호 */
-export interface MovedItem {
-  id: string;
-  number?: string;
-  /** 앞 40자 */
-  text: string;
-}
+export type MovedItem = ChangedItem & { number?: string };
 
-export interface MoveResult {
+export interface MoveBlocksResult {
   /** 옮긴 블록 id(문서 순서). 고른 블록과 같은 문단에 걸린 블록도 담는다 */
   moved: string[];
   /** 옮긴 블록과 자동 번호가 바뀐 문단의 블록(문서 순서) */
@@ -143,7 +138,7 @@ const moveLabel = (ids: string[]) => `move_blocks ${ids.length <= 2 ? ids.join('
 export async function moveBlocks(
   session: DocumentSession,
   { ids, before, after }: { ids: string[]; before?: string; after?: string },
-): Promise<MoveResult> {
+): Promise<MoveBlocksResult> {
   const { referenceId: reference, where } = referenceOf({ before, after });
   let plan: MovePlan | undefined;
   const chosen = new Set(ids);
