@@ -179,6 +179,22 @@ describe('SPEC-002 문단 옮기기 (기술 검증)', () => {
     expect(() => doc.importParagraphBlock(viaHwpx, request)).toThrow('opaque HWPX paraHead import is not supported');
   });
 
+  it('되돌릴 문단 모양은 사본이 아니라 원본 문서에서 읽는다 (PR #24 리뷰)', () => {
+    const doc = openFixture('notice.hwpx');
+    const reply = paragraphIndex(doc, '회신 기한');
+    const related = paragraphIndex(doc, '관련:');
+    const shape = paraShapeId(doc, reply);
+    // 왕복하며 문단 모양 번호가 달라진 사본을 흉내낸다: 사본의 그 문단만 다른 모양 번호
+    const shiftedCopy = (d: HwpDocument) => {
+      const copy = new HwpDocument(d.exportHwp());
+      copy.setParaShapeId(S, reply, paraShapeId(d, 0) === shape ? 1 : 0);
+      return copy;
+    };
+
+    expect(moveParagraphs(doc, S, reply, reply + 1, related, [shiftedCopy]).ok).toBe(true);
+    expect(paraShapeId(doc, related)).toBe(shape);
+  });
+
   it('사본의 문단 수나 옮길 문단 글자가 원본과 다르면 다음 사본으로, 모두 다르면 아무것도 바꾸지 않고 거부한다 (PR #24 리뷰)', () => {
     const doc = openFixture('notice.hwpx');
     const before = paragraphTexts(doc);

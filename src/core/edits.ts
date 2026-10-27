@@ -368,7 +368,8 @@ export function moveParagraphs(
         reject(found);
         continue;
       }
-      const shapes = Array.from({ length: size }, (_, i) => paraShapeIdOf(source, section, start + i));
+      // 되돌릴 문단 모양 번호는 원본 문서의 것이다(사본은 왕복하며 모양 표 번호가 다를 수 있다)
+      const shapes = Array.from({ length: size }, (_, i) => paraShapeIdOf(doc, section, start + i));
       doc.importParagraphBlock(source, importRequest(section, start, end, before, false));
       const originalStart = before <= start ? start + size : start;
       for (let p = originalStart + size - 1; p >= originalStart; p -= 1) doc.deleteParagraph(section, p);
