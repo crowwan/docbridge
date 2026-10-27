@@ -1,9 +1,9 @@
 ---
 id: SPEC-005
 title: 여러 자리 한 번에 바꾸기
-status: draft          # draft | approved | in-progress | done | dropped
+status: in-progress        # draft | approved | in-progress | done | dropped
 milestone: v0.2
-issue:
+issue: "#54"
 prototype:
 updated: 2026-10-27
 ---
@@ -80,3 +80,5 @@ SPEC-002 의 `replace_text` 는 한 번에 한 자리(블록 하나·칸 하나)
 | 날짜 | 내용 |
 |---|---|
 | 2026-10-27 | 초안 (v0.1.0 QA 에서 "24년 → 26년" 이 한 자리씩 바뀌던 문제) |
+| 2026-10-27 | 스펙 리뷰함에서 승인 |
+| 2026-10-27 | 이슈 분해 (#54) |

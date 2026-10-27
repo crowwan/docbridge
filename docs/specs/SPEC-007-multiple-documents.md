@@ -1,9 +1,9 @@
 ---
 id: SPEC-007
 title: 여러 문서 동시에 열기와 문서 사이 복사
-status: draft          # draft | approved | in-progress | done | dropped
+status: in-progress        # draft | approved | in-progress | done | dropped
 milestone: v0.3
-issue:
+issue: "#61"
 prototype:
 updated: 2026-10-27
 ---
@@ -95,3 +95,5 @@ updated: 2026-10-27
 | 날짜 | 내용 |
 |---|---|
 | 2026-10-27 | 초안 |
+| 2026-10-27 | 스펙 리뷰함에서 승인 |
+| 2026-10-27 | 이슈 분해 (#61) |
