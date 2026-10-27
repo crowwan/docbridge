@@ -753,4 +753,24 @@ describe('SPEC-002 move_blocks (편집 공용 경로)', () => {
     };
     expect(() => editor.edit(operation, editor.depth)).toThrow('b9: 뷰어 문서에 이 블록이 없습니다. get_outline 을 다시 부르세요.');
   });
+
+  it('옮길 범위에 서버가 모르는 뷰어 블록이 있으면 같이 옮기지 않고 어긋났다고 거부한다 (PR #28 재리뷰)', () => {
+    const editor = new DocumentEditor(openFixture('notice.hwpx'));
+    const before = JSON.stringify(editor.blocks);
+    // 문단 1 에는 글자(b2)와 누름틀(b3)이 있는데 서버는 글자만 안다
+    const operation: EditOperation = {
+      kind: 'move_blocks',
+      section: 0,
+      start: 1,
+      end: 2,
+      before: 5,
+      blocks: [{ id: 'b2', anchor: { section: 0, paragraph: 1, part: 'text' } }],
+    };
+
+    expect(() => editor.edit(operation, editor.depth)).toThrow(
+      '옮길 범위의 블록이 서버와 뷰어에서 다릅니다(뷰어에만 있는 블록: 문단 1 field:0). open_document 로 문서를 다시 열어 주세요.',
+    );
+    expect(JSON.stringify(editor.blocks)).toBe(before);
+    expect(editor.depth).toBe(0);
+  });
 });

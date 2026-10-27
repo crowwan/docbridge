@@ -4,7 +4,7 @@
 // 대상 블록은 서버가 붙인 위치(anchor)로 지금 블록 목록에서 찾고, 범위·칸 검사는 블록 글자를 가진 여기서 한다.
 import type { HwpDocument } from '@rhwp/core';
 import { z } from 'zod';
-import { blockIndexByAnchor, fieldOrdinal } from './block-ids.ts';
+import { anchorsOf, blockIndexByAnchor, fieldOrdinal } from './block-ids.ts';
 import { anchoredTargetSchema, blockAnchorSchema, type AnchoredTarget, type Block, type FieldBlock, type TableBlock } from './block-schema.ts';
 import { deleteBlocks } from './delete-blocks.ts';
 import { insertParagraphNear, listFields, moveParagraphs, replaceCellText, replaceFieldText, replaceParagraphText } from './edits.ts';
@@ -167,6 +167,15 @@ function moveBlocks(doc: HwpDocument, blocks: Block[], { section, start, end, be
   for (const { id, anchor } of moving) {
     const inRange = anchor.section === section && start <= anchor.paragraph && anchor.paragraph < end;
     if (indexOf(anchor) === undefined || !inRange) throw new Error(`${id}: 뷰어 문서에 이 블록이 없습니다. get_outline 을 다시 부르세요.`);
+  }
+  // 거꾸로: 범위 안 뷰어 블록이 모두 서버가 아는 블록이어야 한다(아니면 서버 id 표에 없는 블록을 조용히 같이 옮긴다)
+  const known = new Set(moving.map(({ anchor }) => `${anchor.paragraph}:${anchor.part}`));
+  const viewerOnly = anchorsOf(blocks).filter(
+    (anchor) => anchor.section === section && start <= anchor.paragraph && anchor.paragraph < end && !known.has(`${anchor.paragraph}:${anchor.part}`),
+  );
+  if (viewerOnly.length > 0) {
+    const where = viewerOnly.map(({ paragraph, part }) => `문단 ${paragraph} ${part}`).join(', ');
+    throw new Error(`옮길 범위의 블록이 서버와 뷰어에서 다릅니다(뷰어에만 있는 블록: ${where}). open_document 로 문서를 다시 열어 주세요.`);
   }
   const result = moveParagraphs(doc, section, start, end, before);
   if (!result.ok) {
