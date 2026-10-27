@@ -43,7 +43,7 @@ export function fieldOrdinal(anchor: BlockAnchor): number | undefined {
 }
 
 /** 블록 목록의 각 블록 위치. 누름틀은 같은 문단 안에서 몇 번째인지로 가른다 */
-function anchorsOf(blocks: BlockPosition[]): BlockAnchor[] {
+export function anchorsOf(blocks: BlockPosition[]): BlockAnchor[] {
   const fieldCount = new Map<string, number>();
   return blocks.map((block) => {
     const at = `${block.section}:${block.paragraph}`;
@@ -76,6 +76,11 @@ export class BlockIdTable {
   /** 문단·표 블록 위치의 id. 누름틀은 같은 문단 안 순서가 필요해 label 로 붙인다 */
   idOf(position: TextBlockPosition): string | undefined {
     return this.idsByKey().get(anchorKey(anchorOf(position, 0)));
+  }
+
+  /** 위치(누름틀 포함)의 id */
+  idAt(anchor: BlockAnchor): string | undefined {
+    return this.idsByKey().get(anchorKey(anchor));
   }
 
   private idsByKey(): Map<string, string> {

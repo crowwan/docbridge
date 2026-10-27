@@ -5,9 +5,12 @@ import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, extname, join, resolve } from 'node:path';
 import { BlockIdTable, type BlockPosition } from '../core/block-ids.ts';
+import type { Block } from '../core/block-schema.ts';
+import type { EditOperation } from '../core/edit-operations.ts';
 import type { LoadDocumentResult, ViewerMethod, ViewerParams, ViewerResult } from '../shared/protocol.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { ViewerNotConnectedError, type Bridge } from './bridge.ts';
+import { EditLog } from './edit-log.ts';
 import { log } from './log.ts';
 
 const MB = 1024 * 1024;
@@ -29,6 +32,20 @@ export interface OpenedDocument {
   /** 열 때 뷰어가 준 블록 위치. 새로고침 때 파일이 바뀌었는지 가린다 */
   blocks: BlockPosition[];
   ids: BlockIdTable;
+  /** 편집 기록: 되돌리기 칸(편집 전 id 표 사본)과 저장하지 않은 편집 수. 뷰어 스냅샷과 같은 순서로 쌓인다 */
+  edits: EditLog<BlockIdTable>;
+}
+
+/** 편집 뒤 바뀐 블록과 그 id */
+export interface EditedBlock {
+  id: string | undefined;
+  block: Block;
+}
+
+export interface EditOutcome {
+  changed: EditedBlock[];
+  /** 바뀌었지만 화면에 표시하지 못한 블록 id(빈 문단 등) */
+  unmarked: string[];
 }
 
 const samePositions = (a: BlockPosition[], b: BlockPosition[]) => JSON.stringify(a) === JSON.stringify(b);
@@ -38,7 +55,12 @@ export interface OpenResult {
   pageCount: number;
   blockCount: number;
   viewerUrl: string;
+  /** 이전 문서에서 저장하지 않은 편집을 버렸으면 그 안내 */
+  warnings?: string[];
 }
+
+export const discardedEditsMessage = (count: number) => `저장하지 않은 편집 ${count}개를 버렸습니다`;
+
 
 export interface SessionOptions {
   /** 기본 브라우저로 주소를 연다 (테스트에서는 가짜) */
@@ -89,6 +111,21 @@ export class DocumentSession {
     return this.current;
   }
 
+  /** 되돌릴 수 있는 편집 수(최대 20). 열린 문서가 없으면 0 */
+  get editCount(): number {
+    return this.current?.edits.editCount ?? 0;
+  }
+
+  /** 마지막으로 열거나 저장한 파일과 지금 문서 사이의 편집 수(저장 때 0). 열린 문서가 없으면 0 */
+  get unsavedEdits(): number {
+    return this.current?.edits.unsavedEdits ?? 0;
+  }
+
+  /** 저장하지 않은 편집이 있는지 */
+  get dirty(): boolean {
+    return this.current?.edits.dirty ?? false;
+  }
+
   /** 문서를 여는 중이거나 새로고침으로 다시 띄우는 중이면 끝날 때까지 기다린다 */
   ready(): Promise<void> {
     return this.loads;
@@ -111,7 +148,9 @@ export class DocumentSession {
     const fileName = basename(path);
     return this.enqueue(async () => {
       if (!this.bridge.hasViewer()) await this.launchViewer();
-      const loaded = await this.load(fileName, bytes);
+      // 뷰어는 새 문서를 열며 이전 문서와 그 되돌리기 스냅샷을 닫는다(AC-12)
+      const discarded = this.unsavedEdits;
+      const loaded = await this.load(fileName, bytes, discarded);
       this.current = {
         path,
         fileName,
@@ -119,8 +158,15 @@ export class DocumentSession {
         blockCount: loaded.blocks.length,
         blocks: loaded.blocks,
         ids: BlockIdTable.assign(loaded.blocks),
+        edits: new EditLog(),
       };
-      return { fileName, pageCount: loaded.pageCount, blockCount: loaded.blocks.length, viewerUrl: this.bridge.viewerUrl };
+      return {
+        fileName,
+        pageCount: loaded.pageCount,
+        blockCount: loaded.blocks.length,
+        viewerUrl: this.bridge.viewerUrl,
+        ...(discarded === 0 ? {} : { warnings: [discardedEditsMessage(discarded)] }),
+      };
     });
   }
 
@@ -138,9 +184,65 @@ export class DocumentSession {
     paramsFor: (document: OpenedDocument) => ViewerParams<M>,
   ): Promise<ViewerResult<M>> {
     await this.ready();
+    const document = this.openedDocument();
+    return this.send(method, paramsFor(document));
+  }
+
+  /**
+   * 편집 공용 경로(SPEC-002). 편집은 줄에 세워 하나씩 한다(편집 전 id 표 사본과 뷰어 스냅샷이 같은 순서로 쌓여야 한다).
+   * 뷰어가 스냅샷 → 편집 → 다시 그리기 → 블록 다시 뽑기 → 바뀐 블록 표시를 하고, 성공하면 서버는
+   * updateIds 로 id 표를 편집에 맞춰 옮기고(넣기·지우기·옮기기, #20·#21) 편집 전 id 표를 되돌리기 칸에 쌓는다.
+   * 뷰어가 실패하면(스냅샷으로 되돌림) id 표·기록은 그대로다. 결과는 바뀐 블록과 그 id(새 블록은 updateIds 가 준 id).
+   * 요청에 서버 편집 순번을 실어 보낸다: 앞 편집 결과를 못 받았으면(타임아웃 등 — 뷰어는 적용했을 수 있다) 뷰어가 어긋남으로 거부한다
+   */
+  async edit(
+    label: string,
+    operationFor: (document: OpenedDocument) => EditOperation,
+    updateIds: (ids: BlockIdTable) => void = () => undefined,
+  ): Promise<EditOutcome> {
+    return this.enqueue(async () => {
+      const document = this.openedDocument();
+      const operation = operationFor(document);
+      const before = document.ids.clone();
+      const { changed, unmarked, pageCount } = await this.send('edit', { operation, depth: document.edits.depth });
+      updateIds(document.ids);
+      document.edits.record(label, before);
+      document.pageCount = pageCount;
+      const { ids } = document;
+      return {
+        changed: changed.map(({ anchor, block }) => ({ id: ids.idAt(anchor), block })),
+        unmarked: unmarked.flatMap((anchor) => ids.idAt(anchor) ?? []),
+      };
+    });
+  }
+
+  /**
+   * steps 만큼(있는 만큼만) 되돌린다: 뷰어가 스냅샷으로, 서버는 id 표를 그 편집 전으로.
+   * 되돌린 편집 이름(최근 것부터). 되돌릴 것이 없으면 빈 배열
+   */
+  async undo(steps: number): Promise<string[]> {
+    return this.enqueue(async () => {
+      const document = this.openedDocument();
+      const available = Math.min(steps, document.edits.editCount);
+      if (available === 0) return [];
+      const { undone, pageCount } = await this.send('undo', { steps: available, depth: document.edits.depth });
+      document.pageCount = pageCount;
+      // 뷰어가 되돌린 만큼만(뷰어 스냅샷이 서버 기록보다 적을 수 있다 — 새로고침 뒤 등)
+      const taken = document.edits.undo(undone);
+      if (taken === undefined) return [];
+      document.ids = taken.state;
+      return taken.labels;
+    });
+  }
+
+  /** 뷰어가 붙어 있고 열린 문서가 있으면 그 문서. 아니면 미연결(마지막 파일)·문서 없음 오류 */
+  private openedDocument(): OpenedDocument {
     if (!this.bridge.hasViewer()) throw new Error(this.notConnectedMessage());
     if (this.current === undefined) throw new Error(NO_DOCUMENT);
-    const params = paramsFor(this.current);
+    return this.current;
+  }
+
+  private async send<M extends ViewerMethod>(method: M, params: ViewerParams<M>): Promise<ViewerResult<M>> {
     try {
       return await this.bridge.request(method, params);
     } catch (error) {
@@ -153,7 +255,8 @@ export class DocumentSession {
     return this.current === undefined ? VIEWER_NOT_CONNECTED : `${VIEWER_NOT_CONNECTED} 마지막 파일: ${this.current.path}`;
   }
 
-  private async load(fileName: string, bytes: Uint8Array): Promise<LoadDocumentResult> {
+  /** discarded: 이 문서를 띄우며 버리는 저장하지 않은 편집 수. 열지 못해도 이전 문서는 닫히므로 오류에 붙여 알린다 */
+  private async load(fileName: string, bytes: Uint8Array, discarded = 0): Promise<LoadDocumentResult> {
     const data = Buffer.from(bytes).toString('base64');
     try {
       return await this.bridge.request('load_document', { fileName, data });
@@ -162,7 +265,8 @@ export class DocumentSession {
       // 뷰어는 이전 문서를 닫고 오류 화면을 보여준다. 서버도 열린 문서를 비워 맞춘다
       this.current = undefined;
       // 뷰어(rhwp)가 문서를 읽지 못한 이유
-      throw new Error(`문서를 열 수 없습니다: ${errorMessage(error)}`);
+      const lost = discarded === 0 ? '' : ` (${discardedEditsMessage(discarded)})`;
+      throw new Error(`문서를 열 수 없습니다: ${errorMessage(error)}${lost}`);
     }
   }
 

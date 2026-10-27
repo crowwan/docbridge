@@ -56,12 +56,13 @@ const count = (value: number) => value.toLocaleString('en-US');
 export const unknownIdsMessage = (ids: string[]) =>
   `없는 블록 id 입니다: ${ids.join(', ')}. get_outline 을 다시 불러 지금 블록 id 를 확인하세요.`;
 
-function preview(text: string): string {
+/** 앞 40자(줄바꿈은 띄어쓰기로). 더 길면 끝에 … */
+export function preview(text: string): string {
   const chars = [...text.replace(/\s*\n\s*/g, ' ')];
   return chars.length > PREVIEW_CHARS ? `${chars.slice(0, PREVIEW_CHARS).join('')}…` : chars.join('');
 }
 
-function outlineItem({ id, block }: LabeledBlock): OutlineItem {
+export function outlineItem({ id, block }: LabeledBlock): OutlineItem {
   switch (block.kind) {
     case 'paragraph':
       return {

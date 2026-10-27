@@ -2,6 +2,9 @@
 import { WebSocket } from 'ws';
 import { answerRequest, requestMessageSchema, type LoadDocumentParams, type RequestMessage, type ViewerResult } from '../src/shared/protocol.ts';
 
+/** serve 처리 함수가 이것을 돌려주면 응답하지 않는다(뷰어가 처리했지만 응답이 오지 않는 경우 — 타임아웃 재현) */
+export const NO_RESPONSE = Symbol('응답 안 함');
+
 export class FakeViewer {
   private readonly ws: WebSocket;
   private readonly received: RequestMessage[] = [];
@@ -16,8 +19,15 @@ export class FakeViewer {
     ws.on('message', (data) => {
       const request = requestMessageSchema.parse(JSON.parse(String(data)));
       this.history.push(request);
-      if (this.handler !== undefined) {
-        const response = answerRequest(String(data), this.handler);
+      const handler = this.handler;
+      if (handler !== undefined) {
+        let silent = false;
+        const response = answerRequest(String(data), (message) => {
+          const result = handler(message);
+          silent = result === NO_RESPONSE;
+          return result;
+        });
+        if (silent) return;
         if (response !== undefined) ws.send(JSON.stringify(response));
         return;
       }

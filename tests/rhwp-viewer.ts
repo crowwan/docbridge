@@ -1,42 +1,63 @@
 // 테스트용 뷰어 요청 처리: 브라우저 뷰어처럼 rhwp 로 문서를 열고 블록을 뽑아 들고 있다가 요청에 답한다.
 // 렌더링은 하지 않는다. Node 의 글자 폭 근사 때문에 쪽 나눔은 브라우저와 다를 수 있다(ADR 001).
+// 편집·되돌리기는 뷰어와 같은 공용 경로(core/document-editor.ts)를 쓴다.
 import { HwpDocument } from '@rhwp/core';
-import { blockPositionSchema, type Block } from '../src/core/block-schema.ts';
-import { extractBlocks } from '../src/core/blocks.ts';
+import { blockPositionSchema } from '../src/core/block-schema.ts';
+import { DocumentEditor } from '../src/core/document-editor.ts';
 import { findInBlocks } from '../src/core/find-text.ts';
-import { highlightTargets } from '../src/core/highlight-targets.ts';
+import { blockBoxes, highlightTargets } from '../src/core/highlight-targets.ts';
+import type { BlockAnchor } from '../src/core/block-ids.ts';
 import { initRhwpForNode } from '../src/core/rhwp-node.ts';
 import type { RequestMessage } from '../src/shared/protocol.ts';
 
-export function rhwpViewerHandler(): (request: RequestMessage) => unknown {
+export interface RhwpViewer {
+  handle: (request: RequestMessage) => unknown;
+  /** 지금 열린 문서(테스트가 글자 모양 등을 직접 읽는다) */
+  editor: () => DocumentEditor;
+}
+
+export function rhwpViewer(): RhwpViewer {
   initRhwpForNode();
-  let blocks: Block[] | undefined;
-  let doc: HwpDocument | undefined;
+  let editor: DocumentEditor | undefined;
   const opened = () => {
-    if (blocks === undefined) throw new Error('뷰어에 열린 문서가 없습니다');
-    return blocks;
+    if (editor === undefined) throw new Error('뷰어에 열린 문서가 없습니다');
+    return editor;
   };
-  return (request) => {
+  const handle = (request: RequestMessage): unknown => {
     switch (request.method) {
       case 'load_document': {
-        doc?.free();
-        doc = new HwpDocument(new Uint8Array(Buffer.from(request.params.data, 'base64')));
-        blocks = extractBlocks(doc);
-        return { pageCount: doc.pageCount(), blocks: blocks.map((block) => blockPositionSchema.parse(block)) };
+        editor?.dispose();
+        editor?.doc.free();
+        editor = undefined;
+        editor = new DocumentEditor(new HwpDocument(new Uint8Array(Buffer.from(request.params.data, 'base64'))));
+        return { pageCount: editor.doc.pageCount(), blocks: editor.blocks.map((block) => blockPositionSchema.parse(block)) };
       }
       case 'get_blocks':
-        return opened();
+        return opened().blocks;
       case 'find_text':
-        return findInBlocks(opened(), request.params.query);
+        return findInBlocks(opened().blocks, request.params.query);
       case 'highlight': {
         // 그리지는 않고, 뷰어와 같은 함수로 대상을 사각형으로 바꿔 검사한 뒤 뷰어와 같은 결과를 준다
-        const open = doc;
-        if (open === undefined) throw new Error('뷰어에 열린 문서가 없습니다');
-        const { pages, warnings } = highlightTargets(open, opened(), request.params.targets);
+        const { pages, warnings } = highlightTargets(opened().doc, opened().blocks, request.params.targets);
         return { pages, ...(warnings.length === 0 ? {} : { warnings }) };
       }
       case 'clear_highlight':
         return {};
+      case 'edit': {
+        // 그리지는 않고, 뷰어와 같은 함수로 표시 자리를 구해 표시하지 못한 블록을 돌려준다
+        let unmarked: BlockAnchor[] = [];
+        const editor = opened();
+        const changed = editor.edit(request.params.operation, request.params.depth, (changedBlocks, blocks) => {
+          unmarked = blockBoxes(editor.doc, blocks, changedBlocks.map(({ anchor }) => anchor)).unmarked;
+        });
+        return { changed, unmarked, pageCount: editor.doc.pageCount() };
+      }
+      case 'undo':
+        return { undone: opened().undo(request.params.steps, request.params.depth), pageCount: opened().doc.pageCount() };
     }
   };
+  return { handle, editor: opened };
 }
+
+/** 요청 처리 함수만 쓰는 테스트용 */
+export const rhwpViewerHandler = () => rhwpViewer().handle;

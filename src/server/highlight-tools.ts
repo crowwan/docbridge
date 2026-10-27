@@ -14,13 +14,21 @@ export interface HighlightResult {
   warnings?: string[];
 }
 
-function anchored(ids: BlockIdTable, targets: TextTarget[]): AnchoredTarget[] {
+/** 대상의 블록 id 를 id 표의 위치로 바꾼다. 없는 id 가 있으면 모두 모아 던진다(뷰어에 보내기 전에) */
+export function anchored(ids: BlockIdTable, targets: TextTarget[]): AnchoredTarget[] {
   const unknown = targets.filter((target) => ids.anchor(target.id) === undefined).map((target) => target.id);
   if (unknown.length > 0) throw new Error(unknownIdsMessage([...new Set(unknown)]));
   return targets.flatMap((target) => {
     const anchor = ids.anchor(target.id);
     return anchor === undefined ? [] : [{ ...target, anchor }];
   });
+}
+
+/** 대상 하나의 블록 id 를 id 표 위치로 바꾼다. 없는 id 면 던진다 */
+export function anchoredTarget(ids: BlockIdTable, target: TextTarget): AnchoredTarget {
+  const anchor = ids.anchor(target.id);
+  if (anchor === undefined) throw new Error(unknownIdsMessage([target.id]));
+  return { ...target, anchor };
 }
 
 export async function highlight(session: DocumentSession, targets: TextTarget[], note?: string): Promise<HighlightResult> {

@@ -224,15 +224,18 @@ interface BodyParagraph {
   heading: Heading | undefined;
 }
 
-/** 본문 문단·표·누름틀을 문서 순서대로 돌려준다. 글자가 없는 문단은 블록으로 내보내지 않는다. */
-export function extractBlocks(doc: HwpDocument): Block[] {
+/**
+ * 본문 문단·표·누름틀을 문서 순서대로 돌려준다. 글자가 없는 문단은 블록으로 내보내지 않는다.
+ * keepEmpty 가 참인 문단은 비어 있어도 문단 블록으로 남긴다(편집으로 비운 문단은 id 가 있어 다시 채울 수 있어야 한다, SPEC-002)
+ */
+export function extractBlocks(doc: HwpDocument, keepEmpty: (section: number, paragraph: number) => boolean = () => false): Block[] {
   const tables = tablesByParagraph(doc);
   const fields = fieldsByParagraph(doc);
   const body: BodyParagraph[] = [];
   for (let section = 0; section < doc.getSectionCount(); section += 1) {
     for (let paragraph = 0; paragraph < doc.getParagraphCount(section); paragraph += 1) {
       const text = paragraphText(doc, section, paragraph);
-      if (text.trim().length === 0) {
+      if (text.trim().length === 0 && !keepEmpty(section, paragraph)) {
         body.push({ section, paragraph, block: undefined, heading: undefined });
         continue;
       }
