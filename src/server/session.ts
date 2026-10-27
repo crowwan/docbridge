@@ -290,6 +290,8 @@ export class DocumentSession {
       if (!this.bridge.hasViewer()) await this.launchViewer();
       // 뷰어는 새 문서를 열며 이전 문서와 그 되돌리기 스냅샷을 닫는다(AC-12)
       const discarded = this.discardNotice();
+      // 이전 문서에서 사람이 고친 알림은 새 문서의 블록 id 와 헷갈리므로 버린다(편집을 버린 것은 discarded 가 알린다)
+      this.userChanges = [];
       const loaded = await this.load(fileName, bytes, discarded);
       const ids = BlockIdTable.assign(loaded.blocks);
       this.current = {
@@ -341,6 +343,7 @@ export class DocumentSession {
     return this.enqueue(async () => {
       if (!this.bridge.hasViewer()) await this.launchViewer();
       const discarded = this.discardNotice();
+      this.userChanges = [];
       const failure = template === undefined ? '새 문서를 만들 수 없습니다' : '문서를 열 수 없습니다';
       const created = await this.present(
         () => this.bridge.request('create_document', { fileName, ...(template === undefined ? {} : { template }) }),
@@ -437,9 +440,15 @@ export class DocumentSession {
    * steps 만큼(있는 만큼만) 되돌린다: 뷰어가 스냅샷으로, 서버는 id 표를 그 편집 전으로.
    * 되돌린 편집 이름(최근 것부터). 되돌릴 것이 없으면 빈 배열. 사람이(⌘Z) 되돌렸으면 다음 도구 결과에 알린다
    */
-  async undo(steps: number, source: EditSource = 'claude'): Promise<string[]> {
+  async undo(
+    steps: number,
+    source: EditSource = 'claude',
+    /** 줄 차례에 지금 문서를 확인한다(사람 ⌘Z — 요청을 받은 뒤 문서가 바뀌었으면 던진다) */
+    check: (document: OpenedDocument) => void = () => undefined,
+  ): Promise<string[]> {
     return this.enqueue(async () => {
       const document = this.openedDocument();
+      check(document);
       const available = Math.min(steps, document.edits.editCount);
       if (available === 0) return [];
       const { undone, pageCount } = await this.send('undo', {
@@ -537,6 +546,8 @@ export class DocumentSession {
    */
   private async reload(document: OpenedDocument): Promise<void> {
     if (this.current !== document) return;
+    // 사람이 고친 것도 새로고침으로 사라졌다(사라진 편집 수 알림에 든다)
+    this.userChanges = [];
     const lost = document.edits.unsavedEdits;
     const { location } = document;
     if (location.kind === 'new') {

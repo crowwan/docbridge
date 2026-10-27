@@ -1,5 +1,7 @@
 import { once } from 'node:events';
+import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { WebSocket } from 'ws';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -63,11 +65,13 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
   /** 뷰어가 보고 있는 문서의 상태 번호로 사람 편집을 보낸다 */
   const userEdit = (edit: UserEdit, state = serverState()) => viewer.userRequest('user_edit', { edit, state });
   /**
-   * 뷰어 편집 응답 붙잡기: holdNextEdit() 뒤 오는 edit 요청은 뷰어가 적용만 하고 응답은 release() 때 보낸다.
-   * 뷰어는 적용했지만 서버는 아직 기록하지 않은 사이를 시간에 기대지 않고 만든다
+   * 뷰어 응답 붙잡기: holdNext(method) 뒤 오는 그 요청은 뷰어가 처리만 하고 응답은 release() 때 보낸다.
+   * 뷰어는 적용(또는 문서를 바꿈)했지만 서버는 아직 기록하지 않은 사이를 시간에 기대지 않고 만든다
    */
-  let holding: ((held: { request: RequestMessage; release: () => void }) => void) | undefined;
-  const holdNextEdit = () => new Promise<{ request: RequestMessage; release: () => void }>((resolve) => (holding = resolve));
+  let holding: { method: RequestMessage['method']; resolve: (held: { request: RequestMessage; release: () => void }) => void } | undefined;
+  const holdNext = (method: RequestMessage['method']) =>
+    new Promise<{ request: RequestMessage; release: () => void }>((resolve) => (holding = { method, resolve }));
+  const holdNextEdit = () => holdNext('edit');
   const succeeded = (response: UserResponseMessage) => {
     if (!response.ok) throw new Error(response.error);
     return response.result;
@@ -88,9 +92,9 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
     viewer.serve((request) => {
       const result = rhwp.handle(request);
       const hold = holding;
-      if (request.method !== 'edit' || hold === undefined) return result;
+      if (hold === undefined || request.method !== hold.method) return result;
       holding = undefined;
-      hold({ request, release: () => viewer.respondWith(request.id, result) });
+      hold.resolve({ request, release: () => viewer.respondWith(request.id, result) });
       return NO_RESPONSE;
     });
     await json('open_document', { path: fixturePath('notice.hwpx') });
@@ -174,6 +178,80 @@ describe('SPEC-006 뷰어 → 서버 사람 편집 요청과 공용 되돌리기
     expect(await readText('b1')).toBe('라마바구청');
     expect(await readText('b11')).toBe(B11_AFTER);
     expect(session.editCount).toBe(2);
+  });
+
+  it('문서를 바꾸기 전 화면에서 보낸 사람 편집은 새 문서에 적용하지 않고 거부한다 (open_document — 새 문서도 상태 번호 0)', async () => {
+    const held = holdNext('load_document');
+    // 같은 파일을 다시 열어 블록 위치가 같다 — 위치·번호만 보면 새 문서에 그대로 적용된다
+    const opening = json('open_document', { path: fixturePath('notice.hwpx') });
+    const { release } = await held;
+
+    // 뷰어는 열기 응답 전, 이전 문서 화면(상태 0)에서 고쳤다
+    const user = userEdit(replaceB11(), 0);
+    release();
+    await opening;
+
+    expect(failure(await user)).toBe(STALE_USER_EDIT);
+    expect(await readText('b11')).toBe(B11_BEFORE);
+    expect(session.editCount).toBe(0);
+    expect((await outline()).notices).toEqual([]);
+  });
+
+  it('문서를 바꾸기 전 화면에서 보낸 사람 편집은 새로 만든 문서에도 적용하지 않고 거부한다 (create_document)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'docbridge-user-edit-'));
+    const held = holdNext('create_document');
+    const creating = json('create_document', { path: join(dir, '새 문서.hwpx') });
+    const { release } = await held;
+
+    // 새 문서의 첫 문단도 이전 문서 b1 과 같은 위치다
+    const user = userEdit({ kind: 'replace_text', target: { anchor: anchorOf('b1') }, text: '이전 문서에서 고친 글자' }, 0);
+    release();
+    await creating;
+
+    expect(failure(await user)).toBe(STALE_USER_EDIT);
+    expect(await readText('b1')).toBe('');
+    expect(session.editCount).toBe(0);
+  });
+
+  it('문서를 바꾸기 전 화면에서 누른 ⌘Z 는 새 문서에 쓰지 않고 거부한다', async () => {
+    const held = holdNext('load_document');
+    const opening = json('open_document', { path: fixturePath('notice.hwpx') });
+    const { release } = await held;
+
+    const undo = viewer.userRequest('user_undo', {});
+    release();
+    await opening;
+
+    expect(failure(await undo)).toBe(STALE_USER_EDIT);
+    expect(requests('undo')).toEqual([]);
+  });
+
+  it('문서를 바꾸면 이전 문서에서 사람이 고친 알림은 버린다(새 문서의 블록 id 와 헷갈리지 않게)', async () => {
+    succeeded(await userEdit(replaceB11()));
+
+    const opened = await call('open_document', { path: fixturePath('notice.hwpx') });
+
+    expect(opened.content.slice(1)).toEqual([]);
+    expect((await outline()).notices).toEqual([]);
+  });
+
+  it('뷰어를 새로고침하면 사람이 고친 알림 대신 사라진 편집 수만 알린다', async () => {
+    succeeded(await userEdit(replaceB11()));
+
+    const newer = await FakeViewer.connect(bridge.viewerUrl);
+    sockets.push(newer);
+    newer.serve(rhwpViewer().handle);
+    await session.ready();
+
+    expect((await outline()).notices).toEqual(['뷰어를 새로고침해서 저장하지 않은 편집 1개가 사라졌습니다.']);
+  });
+
+  it('사람 편집 지우기에 같은 블록 위치가 두 번 와도 한 번만 지운다(Claude delete_blocks 와 같게)', async () => {
+    succeeded(await userEdit({ kind: 'delete_blocks', targets: [anchorOf('b4'), anchorOf('b4')] }));
+
+    const last = requests('edit').at(-1)?.params;
+    expect(last !== undefined && 'operation' in last && last.operation.kind === 'delete_blocks' ? last.operation.targets.map(({ id }) => id) : []).toEqual(['b4']);
+    expect((await outline()).notices).toEqual(['사용자가 화면에서 고침: b4 지움']);
   });
 
   it('되돌린 뒤 다른 편집으로 편집 순번이 같아져도 상태 번호가 다르면 거부한다', async () => {

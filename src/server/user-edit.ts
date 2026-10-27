@@ -8,7 +8,7 @@ import { targetLabel } from '../core/text-targets.ts';
 import type { UserEdit, UserRequestMessage, UserResult } from '../shared/protocol.ts';
 import { NOTHING_TO_UNDO } from './edit-tools.ts';
 import { planMove } from './move-plan.ts';
-import type { DocumentSession } from './session.ts';
+import type { DocumentSession, OpenedDocument } from './session.ts';
 
 export const STALE_USER_EDIT = '그사이 문서가 바뀌어 적용하지 못했습니다. 다시 고쳐 주세요.';
 export const UNKNOWN_VIEWER_BLOCK = '뷰어 화면의 블록을 찾지 못했습니다. 뷰어 탭을 새로고침하세요.';
@@ -34,7 +34,9 @@ function prepareUserEdit(ids: BlockIdTable, edit: UserEdit): { label: string; op
       };
     }
     case 'delete_blocks': {
-      const targets = edit.targets.map((anchor) => ({ id: idAt(ids, anchor), anchor }));
+      // 같은 블록이 두 번 와도 한 번만(Claude delete_blocks 와 같게)
+      const byId = new Map(edit.targets.map((anchor) => [idAt(ids, anchor), anchor]));
+      const targets = [...byId].map(([id, anchor]) => ({ id, anchor }));
       assertDeletable(targets);
       const names = targets.map(({ id }) => id);
       return { label: `delete_blocks ${names.join(', ')}`, operation: { kind: 'delete_blocks', targets }, notice: `${names.join('·')} 지움` };
@@ -52,34 +54,55 @@ function prepareUserEdit(ids: BlockIdTable, edit: UserEdit): { label: string; op
 }
 
 /**
- * 사람 편집 하나를 편집 공용 경로로 한다. state 는 뷰어가 보고 있던 문서의 상태 번호 — 줄 차례가 왔을 때 서버 번호와 다르면
- * (그사이 Claude 편집·되돌리기가 끼어 문서가 바뀜) 블록 위치가 어긋났을 수 있어 뷰어에 보내지 않고 거부한다.
+ * 줄 차례가 온 문서가 요청을 받은 순간의 문서와 다르면(그사이 open·create·새로고침으로 문서가 바뀜) 거부한다.
+ * 상태 번호는 문서마다 0 부터라 번호만으로는 문서가 바뀐 것을 가리지 못한다(PR #71 리뷰).
+ * 뷰어는 문서를 바꾼 뒤에야 응답하고 한 연결 안에서는 순서가 지켜지므로, 이전 문서 화면에서 보낸 요청은 서버 문서가 바뀌기 전에 도착한다
+ */
+function assertSameDocument(current: OpenedDocument, received: OpenedDocument | undefined): void {
+  if (current !== received) throw new Error(STALE_USER_EDIT);
+}
+
+/**
+ * 사람 편집 하나를 편집 공용 경로로 한다. received 는 요청을 받은 순간의 문서, state 는 뷰어가 보고 있던 문서의 상태 번호 —
+ * 줄 차례가 왔을 때 문서가 다르거나 서버 번호와 다르면(그사이 Claude 편집·되돌리기가 끼어 문서가 바뀜) 블록 위치가 어긋났을 수 있어
+ * 뷰어에 보내지 않고 거부한다(replace_all 과 같은 판정).
  * 편집 순번(depth)이 아니라 상태 번호로 보는 것은, 되돌린 뒤 다른 편집을 하면 순번은 같아도 문서가 다르기 때문이다.
  * 뷰어 번호는 서버가 편집 요청에 실어 보낸 것이라, 뷰어가 적용했지만 서버가 아직 기록하지 않은 편집 뒤의 사람 편집도
  * (줄에서 그 기록 뒤에 차례가 오므로) 맞게 받는다
  */
-export async function applyUserEdit(session: DocumentSession, edit: UserEdit, state: number): Promise<void> {
+export async function applyUserEdit(
+  session: DocumentSession,
+  edit: UserEdit,
+  state: number,
+  received: OpenedDocument | undefined,
+): Promise<void> {
   await session.edit((document) => {
+    assertSameDocument(document, received);
     if (document.edits.state !== state) throw new Error(STALE_USER_EDIT);
     const { label, operation, notice } = prepareUserEdit(document.ids, edit);
     return { label: `${label}${USER_EDIT_MARK}`, operation, notice };
   });
 }
 
-/** ⌘Z: 공용 되돌리기 줄에서 마지막 편집 하나(사람·Claude 상관없이). 없으면 Claude undo 와 같은 문구로 거부한다 */
-export async function undoFromViewer(session: DocumentSession): Promise<UserResult<'user_undo'>> {
-  const undone = await session.undo(1, 'user');
+/**
+ * ⌘Z: 공용 되돌리기 줄에서 마지막 편집 하나(사람·Claude 상관없이). 없으면 Claude undo 와 같은 문구로 거부한다.
+ * 요청을 받은 뒤 문서가 바뀌었으면 새 문서는 되돌리지 않는다
+ */
+export async function undoFromViewer(session: DocumentSession, received: OpenedDocument | undefined): Promise<UserResult<'user_undo'>> {
+  const undone = await session.undo(1, 'user', (document) => assertSameDocument(document, received));
   if (undone.length === 0) throw new Error(NOTHING_TO_UNDO);
   return { undone };
 }
 
 /** 뷰어 요청 처리(bridge.serveUserRequests 에 넘긴다) */
 export async function handleUserRequest(session: DocumentSession, request: UserRequestMessage): Promise<unknown> {
+  // 받은 순간의 문서(첫 await 전 — bridge 가 메시지를 받은 그 차례에 부른다)
+  const received = session.document;
   switch (request.method) {
     case 'user_edit':
-      await applyUserEdit(session, request.params.edit, request.params.state);
+      await applyUserEdit(session, request.params.edit, request.params.state, received);
       return {};
     case 'user_undo':
-      return undoFromViewer(session);
+      return undoFromViewer(session, received);
   }
 }
