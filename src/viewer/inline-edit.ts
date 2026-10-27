@@ -1,6 +1,7 @@
 // 더블클릭으로 글자 고치기(SPEC-006): 마우스 올림 테두리와 블록 위 입력칸. 자리 찾기·바뀐 범위는 core/edit-spot.ts,
 // 서버에 보내기는 main.ts(host.commit). 입력칸은 Enter·바깥 클릭이면 적용, Esc 면 취소, 줄바꿈은 받지 않는다.
-// 입력칸이 열린 동안 Claude 편집이 오면 닫지 않고(다시 그린 쪽에 다시 붙인다) 블록 위치를 따라간다(follow).
+// 입력칸이 열린 동안 Claude 편집이 오면 닫지 않고 블록 위치를 따라가 그 블록 새 자리로 옮긴다(follow).
+// 따라갈 자리가 없으면(그 문단이 지워짐·되돌리기) 바로 닫고, 고친 것이 있으면 적용 거부 문구를 보인다.
 import { followEdit, type EditSpot, type Point } from '../core/edit-spot.ts';
 import type { SelectionRect } from '../core/highlight-rects.ts';
 import type { ParagraphChanges } from '../core/paragraph-changes.ts';
@@ -8,22 +9,24 @@ import type { ParagraphChanges } from '../core/paragraph-changes.ts';
 export interface InlineEditHost {
   /** 쪽(0부터) 위 점(쪽 px, 배율 1)의 고칠 자리와 테두리 사각형. 문서가 없거나 고칠 수 없는 자리면 undefined */
   spotAt(pageIndex: number, point: Point): { spot: EditSpot; box: SelectionRect } | undefined;
+  /** 지금 문서에서 자리의 사각형(입력칸을 다시 둘 곳). 블록이 없으면 undefined */
+  boxOf(spot: EditSpot): SelectionRect | undefined;
   /** 지금 그려진 쪽 요소들 */
   pageEls(): HTMLElement[];
   zoom: number;
   /**
    * 적용: 입력칸을 열 때의 자리(Claude 편집을 따라 옮긴 위치, 그 블록 문단이 지워지거나 되돌려졌으면 undefined)와 입력칸 글자.
-   * 고친 것이 없으면 부르지 않는다
+   * caret = 적용 직전 커서(text 안 글자 위치) — 같은 글자가 이어지는 곳에서 고친 자리를 잡는다. 고친 것이 없으면 부르지 않는다
    */
-  commit(spot: EditSpot | undefined, text: string): void;
+  commit(spot: EditSpot | undefined, text: string, caret: number): void;
 }
 
 export interface InlineEdit {
-  /** 쪽을 다시 그린 뒤: 열린 입력칸을 새 쪽 요소에 다시 붙이고 마우스 올림 테두리는 지운다 */
+  /** 쪽을 다시 그린 뒤: 열린 입력칸을 새 쪽 요소에 다시 붙이고 마우스 올림 테두리는 지운다(자리는 followEdit 이 다시 잡는다) */
   reattach(): void;
-  /** 입력칸이 열린 동안 적용된 편집을 따라간다(changes 가 없으면 위치 그대로) */
+  /** 입력칸이 열린 동안 적용된 편집을 따라가(changes 가 없으면 블록 위치 그대로) 그 블록 새 자리로 옮긴다. 자리가 없으면 닫는다 */
   followEdit(changes: ParagraphChanges | undefined): void;
-  /** 입력칸이 열린 동안 되돌리기가 적용됐다 — 위치를 따라갈 수 없어 적용할 때 거부한다 */
+  /** 입력칸이 열린 동안 되돌리기가 적용됐다 — 위치를 따라갈 수 없어 닫는다(고친 것이 있으면 거부 문구) */
   loseSpot(): void;
   /** 적용하지 않고 닫는다(문서를 바꿈) */
   cancel(): void;
@@ -38,6 +41,8 @@ interface Editing {
 
 /** 글자 위치(유니코드 글자) → 입력칸 위치(UTF-16) */
 const utf16Index = (text: string, chars: number) => [...text].slice(0, chars).join('').length;
+/** 입력칸 커서(UTF-16) → 글자 위치 */
+const caretChars = (textarea: HTMLTextAreaElement) => [...textarea.value.slice(0, textarea.selectionEnd)].length;
 
 export function setupInlineEdit(pagesEl: HTMLElement, host: InlineEditHost): InlineEdit {
   let editing: Editing | undefined;
@@ -77,7 +82,35 @@ export function setupInlineEdit(pagesEl: HTMLElement, host: InlineEditHost): Inl
   const apply = () => {
     const closing = close();
     if (closing === undefined || closing.textarea.value === closing.original) return;
-    host.commit(closing.spot, closing.textarea.value);
+    host.commit(closing.spot, closing.textarea.value, caretChars(closing.textarea));
+  };
+
+  /** 입력칸을 쪽 위 사각형 자리에 둔다 */
+  const placeEditor = (textarea: HTMLTextAreaElement, box: SelectionRect) => {
+    textarea.style.left = `${box.x * host.zoom}px`;
+    textarea.style.top = `${box.y * host.zoom}px`;
+    textarea.style.width = `${box.width * host.zoom}px`;
+    textarea.style.minHeight = `${box.height * host.zoom}px`;
+    fitHeight(textarea);
+  };
+
+  /** 지금 자리로 입력칸을 옮긴다. 자리(블록·쪽)가 없으면 적용하듯 닫는다 — 자리가 없어 host 가 거부 문구를 보인다 */
+  const relocate = () => {
+    if (editing === undefined) return;
+    const box = editing.spot === undefined ? undefined : host.boxOf(editing.spot);
+    const pageEl = box === undefined ? undefined : host.pageEls()[box.pageIndex];
+    if (box === undefined || pageEl === undefined) {
+      editing.spot = undefined;
+      apply();
+      return;
+    }
+    const { textarea } = editing;
+    const { selectionStart, selectionEnd } = textarea;
+    editing.pageIndex = box.pageIndex;
+    pageEl.append(textarea);
+    placeEditor(textarea, box);
+    textarea.focus();
+    textarea.setSelectionRange(selectionStart, selectionEnd);
   };
 
   const open = (pageIndex: number, spot: EditSpot, box: SelectionRect) => {
@@ -88,11 +121,7 @@ export function setupInlineEdit(pagesEl: HTMLElement, host: InlineEditHost): Inl
     textarea.rows = 1;
     textarea.value = spot.text;
     host.pageEls()[pageIndex]?.append(textarea);
-    textarea.style.left = `${box.x * host.zoom}px`;
-    textarea.style.top = `${box.y * host.zoom}px`;
-    textarea.style.width = `${box.width * host.zoom}px`;
-    textarea.style.minHeight = `${box.height * host.zoom}px`;
-    fitHeight(textarea);
+    placeEditor(textarea, box);
     const caret = utf16Index(spot.text, spot.caret);
     textarea.focus();
     textarea.setSelectionRange(caret, caret);
@@ -176,10 +205,14 @@ export function setupInlineEdit(pagesEl: HTMLElement, host: InlineEditHost): Inl
       textarea.setSelectionRange(selectionStart, selectionEnd);
     },
     followEdit(changes) {
-      if (editing?.spot !== undefined) editing.spot = followEdit(editing.spot, changes);
+      if (editing?.spot === undefined) return;
+      editing.spot = followEdit(editing.spot, changes);
+      relocate();
     },
     loseSpot() {
-      if (editing !== undefined) editing.spot = undefined;
+      if (editing === undefined) return;
+      editing.spot = undefined;
+      relocate();
     },
     cancel() {
       close();

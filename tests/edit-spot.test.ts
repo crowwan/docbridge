@@ -11,6 +11,7 @@ import {
   editSpotAt,
   followEdit,
   replaceEditAt,
+  spotBox,
   type EditSpot,
   type Hit,
 } from '../src/core/edit-spot.ts';
@@ -259,6 +260,56 @@ describe('SPEC-006 입력칸 글자 → 사람 편집(replace_text 바뀐 범위
       kind: 'replace_text',
       target: { anchor: line.anchor, start: at, end: at },
       text: '.',
+    });
+  });
+});
+
+describe('SPEC-006 입력칸을 다시 둘 자리(편집 뒤 블록 새 자리)', () => {
+  it('문단은 첫 글자 사각형, 표는 그 칸 사각형, 빈 문단은 커서 줄 자리이고 블록이 없으면 없다', () => {
+    const doc = tableFieldDocument();
+    const blocks = extractBlocks(doc);
+    const paragraph = anchorWhere(blocks, paragraphAt(0));
+    const table = anchorWhere(blocks, isTable);
+
+    expect(spotBox(doc, blocks, { anchor: paragraph, text: '앞 문단', caret: 0 })).toEqual(boxOf(doc, blocks, paragraph));
+    expect(spotBox(doc, blocks, { anchor: table, cell: { row: 0, col: 1 }, text: '', caret: 0 })).toEqual(cellBox(doc, 0, table.paragraph, 0, 1));
+    expect(spotBox(doc, blocks, { anchor: { ...paragraph, paragraph: 99 }, text: '', caret: 0 })).toBeUndefined();
+    doc.free();
+  });
+
+  it('빈 문단 블록은 커서 줄의 단 폭이다', () => {
+    const doc = createBlankDocument();
+    const blocks = extractBlocks(doc);
+    const box = spotBox(doc, blocks, { anchor: anchorWhere(blocks, paragraphAt(0)), text: '', caret: 0 });
+
+    expect(box?.pageIndex).toBe(0);
+    expect(box?.width).toBeGreaterThan(100);
+    doc.free();
+  });
+});
+
+describe('SPEC-006 같은 글자가 이어지는 곳은 입력칸 커서로 바뀐 자리를 정한다', () => {
+  // "가" + 누름틀(값 "가나")
+  const doc = createBlankDocument();
+  doc.insertText(0, 0, 0, '가');
+  doc.insertClickHereField(0, 0, 1, '', '', '값', true);
+  const fieldId = z.array(z.object({ fieldId: z.number() })).parse(JSON.parse(doc.getFieldList()))[0]?.fieldId ?? 0;
+  doc.setFieldValue(fieldId, '가나');
+  const blocks = extractBlocks(doc);
+  const paragraph = blocks.find(paragraphAt(0));
+  if (paragraph?.kind !== 'paragraph') throw new Error('문단이 없다');
+  const line: EditSpot = { anchor: anchorWhere(blocks, paragraphAt(0)), text: paragraph.text, caret: 0 };
+
+  it('누름틀 값 밖 "가" 를 지우면(커서 0) 누름틀 값은 그대로 두고 문단 글자를 지운다', () => {
+    expect(paragraph.text).toBe('가가나');
+    expect(replaceEditAt(blocks, line, '가나', 0)).toEqual({ kind: 'replace_text', target: { anchor: line.anchor, start: 0, end: 1 }, text: '' });
+  });
+
+  it('누름틀 값 안 "가" 를 지우면(커서 1) 누름틀 값 편집이다', () => {
+    expect(replaceEditAt(blocks, line, '가나', 1)).toEqual({
+      kind: 'replace_text',
+      target: { anchor: anchorWhere(blocks, isField), start: 0, end: 1 },
+      text: '',
     });
   });
 });

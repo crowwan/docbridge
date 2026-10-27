@@ -45,6 +45,20 @@ describe('SPEC-006 입력 전후를 비교해 바뀐 범위만 구한다', () =>
     expect(changedRange('𠀀😀가', '𠀀😁가')).toEqual({ start: 1, end: 2, text: '😁' });
   });
 
+  it('입력칸 커서(적용 직전 글자 위치)를 주면 같은 글자가 이어져도 사람이 고친 자리로 잡는다', () => {
+    // "가가나" 의 첫 "가" 를 지우면 커서는 0, 둘째 "가" 를 지우면 1
+    expect(changedRange('가가나', '가나', 0)).toEqual({ start: 0, end: 1, text: '' });
+    expect(changedRange('가가나', '가나', 1)).toEqual({ start: 1, end: 2, text: '' });
+    // "aa" 맨 앞에 "a" 를 넣으면 커서는 1
+    expect(changedRange('aa', 'aaa', 1)).toEqual({ start: 0, end: 0, text: 'a' });
+    expect(changedRange('aa', 'aaa', 3)).toEqual({ start: 2, end: 2, text: 'a' });
+  });
+
+  it('커서가 바뀐 자리 밖이어도(고친 뒤 커서를 옮김) 바뀐 범위는 맞는 글자를 만든다', () => {
+    expect(changedRange('가나다', '가라다', 0)).toEqual({ start: 1, end: 2, text: '라' });
+    expect(changedRange('가나다', '가라다', 3)).toEqual({ start: 1, end: 2, text: '라' });
+  });
+
   it('빈 글자를 채우거나 모두 지울 수 있다', () => {
     expect(changedRange('', '새 글자')).toEqual({ start: 0, end: 0, text: '새 글자' });
     expect(changedRange('지울 글자', '')).toEqual({ start: 0, end: 5, text: '' });

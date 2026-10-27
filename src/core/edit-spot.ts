@@ -13,7 +13,8 @@ import { parseJson } from './json.ts';
 import { relocate, TEXT_PART, type ParagraphChanges } from './paragraph-changes.ts';
 import type { UserEdit } from '../shared/protocol.ts';
 
-export const BLOCK_CHANGED_WHILE_EDITING = 'Claude 가 이 문단을 바꿔서 적용하지 못했습니다. 다시 고쳐 주세요.';
+// 바꾼 쪽은 대개 Claude 지만, 방금 적용한 내 편집이 응답 전에 돌아온 것일 수도 있어 주체를 적지 않는다
+export const BLOCK_CHANGED_WHILE_EDITING = '그사이 이 문단이 바뀌어 적용하지 못했습니다. 다시 고쳐 주세요.';
 export const CROSSES_FIELD_IN_VIEWER = '누름틀 값과 그 바깥 글자를 한 번에 고칠 수 없습니다. 누름틀 값은 값 위를 더블클릭해 따로 고치세요.';
 
 /** 점이 블록 사각형 밖이어도 이만큼(쪽 px)은 그 블록으로 본다 — 바뀐 블록 테두리(--edit-mark-offset)만큼 */
@@ -165,6 +166,27 @@ export function editSpotAt(doc: HwpDocument, blocks: Block[], pageIndex: number,
   return box === undefined ? undefined : { spot: { anchor, text: block.text, caret: offset }, box };
 }
 
+const cursorRectSchema = hitSchema.shape.cursorRect;
+
+/**
+ * 지금 블록 목록에서 자리의 사각형(입력칸을 다시 둘 곳): 문단·누름틀은 첫 글자 사각형, 표는 그 칸, 빈 문단은 커서 줄의 단 폭.
+ * 블록·칸이 없으면 undefined
+ */
+export function spotBox(doc: HwpDocument, blocks: Block[], spot: EditSpot): SelectionRect | undefined {
+  const index = blockIndexByAnchor(blocks)(spot.anchor);
+  const block = index === undefined ? undefined : blocks[index];
+  if (block === undefined) return undefined;
+  if (block.kind === 'table') {
+    const cellIndex = block.cells.findIndex((cell) => cell.row === spot.cell?.row && cell.col === spot.cell.col);
+    const box = tableCellBoxes(doc, block).find((candidate) => candidate.cellIndex === cellIndex);
+    return box === undefined ? undefined : { pageIndex: box.pageIndex, x: box.x, y: box.y, width: box.width, height: box.height };
+  }
+  if (block.kind === 'paragraph' && block.text.length === 0) {
+    return emptyLineBox(doc, parseJson(cursorRectSchema, doc.getCursorRect(block.section, block.paragraph, 0)));
+  }
+  return boxesOf(doc, blocks, spot.anchor)[0];
+}
+
 /** 지금 블록 목록에서 자리의 글자(문단 글자·칸 글자·누름틀 값). 블록·칸이 없으면 undefined */
 function spotText(blocks: Block[], spot: EditSpot): string | undefined {
   const index = blockIndexByAnchor(blocks)(spot.anchor);
@@ -195,10 +217,11 @@ export function followEdit(spot: EditSpot, changes: ParagraphChanges | undefined
  * 입력칸 글자 → 사람 편집(replace_text, 바뀐 범위만). 입력칸을 열 때 글자와 같으면(고친 것이 없으면) undefined.
  * 고쳤는데 그사이 그 블록(칸·누름틀) 글자가 바뀌었으면(입력칸이 열린 동안 Claude 편집, AC-8) 던진다.
  * 문단·칸 입력칸에서 바뀐 범위가 누름틀 값 안에만 있으면 그 누름틀 값 편집으로 보내고, 값과 바깥에 걸치면 던진다
- * (서버 replace_text 는 걸친 문단 범위를 거부한다 — #69)
+ * (서버 replace_text 는 걸친 문단 범위를 거부한다 — #69).
+ * caret = 적용 직전 입력칸 커서(after 안 글자 위치) — 같은 글자가 이어지는 곳에서 사람이 고친 자리를 잡는다(chars.ts changedRange)
  */
-export function replaceEditAt(blocks: Block[], spot: EditSpot, after: string): UserEdit | undefined {
-  const range = changedRange(spot.text, after);
+export function replaceEditAt(blocks: Block[], spot: EditSpot, after: string, caret?: number): UserEdit | undefined {
+  const range = changedRange(spot.text, after, caret);
   if (range === undefined) return undefined;
   if (spotText(blocks, spot) !== spot.text) throw new Error(BLOCK_CHANGED_WHILE_EDITING);
   const { start, end, text } = range;

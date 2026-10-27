@@ -14,7 +14,7 @@ import wasmUrl from '@rhwp/core/rhwp_bg.wasm?url';
 import type { BlockAnchor } from '../core/block-ids.ts';
 import { blockPositionSchema, type Block } from '../core/block-schema.ts';
 import { DocumentEditor } from '../core/document-editor.ts';
-import { BLOCK_CHANGED_WHILE_EDITING, editSpotAt, replaceEditAt, type EditSpot } from '../core/edit-spot.ts';
+import { BLOCK_CHANGED_WHILE_EDITING, editSpotAt, replaceEditAt, spotBox, type EditSpot } from '../core/edit-spot.ts';
 import type { EditOperation } from '../core/edit-operations.ts';
 import { findInBlocks } from '../core/find-text.ts';
 import { selectionRects, type SelectionRect } from '../core/highlight-rects.ts';
@@ -529,8 +529,9 @@ function undoEdits(steps: number, depth: number, unsaved: number): ViewerResult<
   const undone = editor.undo(steps, depth);
   if (undone === steps) unsavedEdits = unsaved;
   if (undone > 0) {
-    inlineEdit?.loseSpot();
     redraw(editor.doc, 'keep');
+    // 되돌리기는 블록 위치를 따라갈 수 없어 열린 입력칸을 닫는다(고친 것이 있으면 거부 문구)
+    inlineEdit?.loseSpot();
   }
   return { undone, pageCount: editor.doc.pageCount() };
 }
@@ -561,10 +562,10 @@ async function requestUserEdit(edit: UserEdit): Promise<void> {
  * 더블클릭 입력칸 적용: 바뀐 범위만 user_edit 로 보낸다. 입력칸이 열린 동안 Claude 가 그 블록을 바꿨거나(AC-8)
  * 누름틀 값과 바깥에 걸치면 보내지 않고, 서버가 거부하면 그 문구를 뷰어 아래 알림으로 보여 준다
  */
-function commitInlineEdit(spot: EditSpot | undefined, text: string): void {
+function commitInlineEdit(spot: EditSpot | undefined, text: string, caret: number): void {
   try {
     if (spot === undefined) throw new Error(BLOCK_CHANGED_WHILE_EDITING);
-    const edit = replaceEditAt(openedBlocks(), spot, text);
+    const edit = replaceEditAt(openedBlocks(), spot, text, caret);
     if (edit !== undefined) requestUserEdit(edit).catch(reportEditFailure);
   } catch (error) {
     reportEditFailure(error);
@@ -581,6 +582,7 @@ const inlineEdit =
     ? undefined
     : setupInlineEdit(pagesEl, {
         spotAt: (pageIndex, point) => (currentEditor === undefined ? undefined : editSpotAt(currentEditor.doc, currentEditor.blocks, pageIndex, point)),
+        boxOf: (spot) => (currentEditor === undefined ? undefined : spotBox(currentEditor.doc, currentEditor.blocks, spot)),
         pageEls: () => currentPageEls,
         zoom: ZOOM,
         commit: commitInlineEdit,

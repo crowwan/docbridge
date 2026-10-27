@@ -67,8 +67,8 @@ src/
   shared/      서버 ↔ 뷰어 요청/응답 프로토콜(protocol.ts: 메서드별 입력·결과 스키마·요청 id·타임아웃·TextTarget, 뷰어 → 서버 user_request(user_edit·user_undo)/user_response, 사람 편집 서버 마감 USER_REQUEST_DEADLINE_MS·뷰어 타임아웃 문구 userRequestTimeoutMessage), 오류 문구(errors.ts),
                파일 크기 상한(limits.ts: 열기·저장 50MB), base64(base64.ts: 뷰어·테스트 뷰어 공용)
   core/        rhwp 어댑터 — 블록 모양 zod 스키마(block-schema.ts), 블록 추출(blocks.ts), 블록 id 대응표(block-ids.ts),
-               글자 위치 단위(chars.ts: 유니코드 글자 = rhwp 글자 위치, changedRange = 입력 전후의 바뀐 범위만),
-               뷰어에서 고칠 자리(edit-spot.ts: 점 → rhwp hitTest → 본문 블록 blockAtHit(#60 도 씀)·고칠 자리와 테두리 editSpotAt·입력칸 글자 → 사람 편집 replaceEditAt(누름틀 걸침)·입력 중 블록 위치 따라가기 followEdit — SPEC-006), 글자 찾기(find-text.ts: findReplaceable = replace_all 일치, 누름틀 값에 걸친 것 뺌), 누름틀 값 자리(field-spans.ts: 문단·칸 글자 안 누름틀 값 [start, end) 와 걸침 판정 — 서버 replace_all·뷰어 replace_text 공용),
+               글자 위치 단위(chars.ts: 유니코드 글자 = rhwp 글자 위치, changedRange = 입력 전후의 바뀐 범위만, 입력칸 커서로 같은 글자 이어짐 가르기),
+               뷰어에서 고칠 자리(edit-spot.ts: 점 → rhwp hitTest → 본문 블록 blockAtHit(#60 도 씀)·고칠 자리와 테두리 editSpotAt·입력칸 글자 → 사람 편집 replaceEditAt(누름틀 걸침)·입력 중 블록 위치 따라가기 followEdit·입력칸 다시 둘 자리 spotBox — SPEC-006), 글자 찾기(find-text.ts: findReplaceable = replace_all 일치, 누름틀 값에 걸친 것 뺌), 누름틀 값 자리(field-spans.ts: 문단·칸 글자 안 누름틀 값 [start, end) 와 걸침 판정 — 서버 replace_all·뷰어 replace_text 공용),
                하이라이트 사각형(highlight-rects.ts: 줄 끝 보정), 하이라이트 대상 → 사각형(highlight-targets.ts: 요청당 한 번 도는 highlightTargets, 뷰어·테스트 뷰어 공용), note 자리(note-placement.ts: 위 → 쪽 바깥 여백 → 아래, 쪽 글자 사각형과 겹침 판정),
                편집 어댑터(edits.ts: 옮기기·첫 글자 모양 바꾸기·칸·누름틀·문단 넣기), 되돌리기(edit-history.ts: 스냅샷 20칸 + id 표 사본, 칸은 bounded-stack.ts — 서버 edit-log.ts 와 공용),
                편집 종류와 적용(edit-operations.ts: kind 판별 유니언 — 새 편집은 스키마 + applyEdit case 하나), 지우기(delete-blocks.ts: 문단째·표만·거부 판정),
