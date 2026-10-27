@@ -17,15 +17,20 @@ export interface CharRange {
 const sameCell = (a: TextPlace['cell'], b: TextPlace['cell']) =>
   a === undefined || b === undefined ? a === b : a.controlIndex === b.controlIndex && a.row === b.row && a.col === b.col;
 
+/** 글자 블록 안 누름틀 값 자리와 그 누름틀 이름(거부 문구에 쓴다) */
+export interface FieldRange extends CharRange {
+  name: string;
+}
+
 /** 그 글자 블록 안 누름틀 값 자리(블록 추출이 붙인 span) */
-export function fieldSpansIn(blocks: Block[], place: TextPlace): CharRange[] {
+export function fieldSpansIn(blocks: Block[], place: TextPlace): FieldRange[] {
   return blocks.flatMap((block) =>
     block.kind === 'field' &&
     block.section === place.section &&
     block.paragraph === place.paragraph &&
     block.span !== undefined &&
     sameCell(block.span.cell, place.cell)
-      ? [block.span]
+      ? [{ name: block.name, start: block.span.start, end: block.span.end }]
       : [],
   );
 }

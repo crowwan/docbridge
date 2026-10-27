@@ -13,7 +13,7 @@ import { anchored, anchoredTarget } from './highlight-tools.ts';
 import { planMove, type MovePlan } from './move-plan.ts';
 import { labeledBlocks } from './read-tools.ts';
 import { outlineItem, preview } from './reading.ts';
-import { NO_DOCUMENT, type DocumentSession, type EditedBlock } from './session.ts';
+import { NO_DOCUMENT, type DocumentSession, type EditedBlock, type OpenedDocument } from './session.ts';
 
 export const NOTHING_TO_UNDO = '되돌릴 편집이 없습니다.';
 
@@ -112,10 +112,16 @@ export async function replaceAll(
   session: DocumentSession,
   { find, text, ids }: { find: string; text: string; ids?: string[] | undefined },
 ): Promise<ReplaceAllResult> {
-  const blocks: Block[] = await session.requestViewer('get_blocks', {});
-  const document = session.document;
-  if (document === undefined) throw new Error(NO_DOCUMENT);
-  const state = document.edits.state;
+  // 문서와 상태 번호는 블록 읽기를 보내는 순간에 잡는다. 뷰어는 요청을 순서대로 처리하므로 그때까지 기록된 편집만 블록에 든다.
+  // 응답을 받은 뒤에 읽으면, 블록 읽기 뒤에 보낸 편집의 기록이 먼저 끝나 "편집 전 블록 + 편집 뒤 번호" 가 짝지어질 수 있다(PR #69 리뷰).
+  // 여기서 잡으면 틀려도 다시 부르라고 하는 쪽으로만 틀린다
+  let sent: { document: OpenedDocument; state: number } | undefined;
+  const blocks: Block[] = await session.requestWithDocument('get_blocks', (opened) => {
+    sent = { document: opened, state: opened.edits.state };
+    return {};
+  });
+  if (sent === undefined) throw new Error(NO_DOCUMENT);
+  const { document, state } = sent;
   // 없는 id 는 일치 0개보다 먼저 알린다
   if (ids !== undefined) anchored(document.ids, ids.map((id) => ({ id })));
   const scope = ids === undefined ? undefined : new Set(ids);

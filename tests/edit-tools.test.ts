@@ -446,10 +446,26 @@ describe('SPEC-002 편집 도구 (replace_text · move_blocks · undo)', () => {
       expect(requests('edit')).toHaveLength(0);
     });
 
-    it('일치를 찾은 뒤 바꾸기 전에 다른 편집이 끼면 바꾸지 않고 다시 부르라고 한다', async () => {
-      // 요청은 한 줄로 간다: replace_all 의 블록 읽기 → replace_text 편집 → replace_all 편집
+    it('일치를 찾은 뒤 바꾸기 전에 다른 편집이 끼면 바꾸지 않고 다시 부르라고 한다(블록 응답이 끼어든 편집 뒤에 와도)', async () => {
+      // 뷰어는 replace_all 의 블록 읽기를 편집 전 문서로 처리하지만 응답은 붙잡아 두고,
+      // 그사이 replace_text 편집이 끝난 뒤에 돌려준다 → 서버는 "편집 전 블록 + 편집 뒤 기록" 을 받는다(시간에 기대지 않는 재현)
+      let held: { id: number; blocks: unknown } | undefined;
+      let blocksRead = () => {};
+      const blocksArrived = new Promise<void>((resolve) => {
+        blocksRead = resolve;
+      });
+      viewer.serve((request) => {
+        if (request.method !== 'get_blocks' || held !== undefined) return rhwp.handle(request);
+        held = { id: request.id, blocks: rhwp.handle(request) };
+        blocksRead();
+        return NO_RESPONSE;
+      });
+
       const all = replaceAll(session, { find: '회신', text: '답장' });
+      await blocksArrived;
       await replaceText(session, { id: 'b11', start: 0, end: 0 }, '재');
+      if (held === undefined) throw new Error('블록 읽기 요청이 오지 않았다');
+      viewer.respondWith(held.id, held.blocks);
 
       await expect(all).rejects.toThrow(REPLACE_ALL_STALE);
       expect(await readText('b11')).toBe('재회신 기한: 2026. 11. 14.(금)까지 참석 인원을 회신하여 주시기 바랍니다.');

@@ -348,17 +348,17 @@ describe('SPEC-005 문단 자리와 누름틀 값 (PR #67 리뷰)', () => {
   }
 
   it.each([
-    ['문단 범위가 누름틀 값 앞에서 값 안으로 걸치면', [{ id: 'b6', start: 4, end: 7 }], 'b6 4~7'],
-    ['문단 범위가 누름틀 값을 덮으면', [{ id: 'b6', start: 5, end: 8 }], 'b6 5~8'],
-    ['문단 전체를 바꾸면(누름틀 값이 든 문단)', [{ id: 'b6' }], 'b6 0~8'],
-    ['누름틀 값 안에 문단 위치로 넣으면', [{ id: 'b6', start: 6, end: 6 }], 'b6 6~6'],
-    ['여러 자리 중 하나라도 걸치면', [{ id: 'b6', start: 0, end: 1 }, { id: 'b6', start: 7, end: 8 }], 'b6 7~8'],
+    ['문단 범위가 누름틀 값 앞에서 값 안으로 걸치면', [{ id: 'b6', start: 4, end: 7 }], 'b6 4~7 (누름틀 "신청인" 값 5~8)'],
+    ['문단 범위가 누름틀 값을 덮으면', [{ id: 'b6', start: 5, end: 8 }], 'b6 5~8 (누름틀 "신청인" 값 5~8)'],
+    ['문단 전체를 바꾸면(누름틀 값이 든 문단)', [{ id: 'b6' }], 'b6 0~8 (누름틀 "신청인" 값 5~8)'],
+    ['누름틀 값 안에 문단 위치로 넣으면', [{ id: 'b6', start: 6, end: 6 }], 'b6 6~6 (누름틀 "신청인" 값 5~8)'],
+    ['여러 자리 중 하나라도 걸치면', [{ id: 'b6', start: 0, end: 1 }, { id: 'b6', start: 7, end: 8 }], 'b6 7~8 (누름틀 "신청인" 값 5~8)'],
   ])('%s 아무것도 바꾸지 않고 누름틀 블록으로 바꾸라고 한다', (_case, spots, where) => {
     const editor = filledEditor();
     const before = JSON.stringify(editor.blocks);
 
     expect(() => editor.edit(replaceMany(editor, spots, 'X'), editor.depth)).toThrow(
-      `바꿀 자리가 누름틀 값에 걸칩니다: ${where}. 누름틀 값은 누름틀 블록 id 로 바꾸세요.`,
+      `바꿀 자리가 누름틀 값에 걸칩니다: ${where}. 누름틀 값은 그 누름틀 블록(get_outline 의 kind field) id 로 바꾸세요.`,
     );
     expect(JSON.stringify(editor.blocks)).toBe(before);
     expect(editor.undo(1, editor.depth)).toBe(0);
@@ -375,7 +375,7 @@ describe('SPEC-005 문단 자리와 누름틀 값 (PR #67 리뷰)', () => {
     const before = JSON.stringify(editor.blocks);
 
     expect(() => editor.edit(replace(editor, 'b12', '-', { cell: { row: 1, col: 1 }, start: 1, end: 4 }), editor.depth)).toThrow(
-      '바꿀 자리가 누름틀 값에 걸칩니다: b12 칸(1,1) 1~4. 누름틀 값은 누름틀 블록 id 로 바꾸세요.',
+      '바꿀 자리가 누름틀 값에 걸칩니다: b12 칸(1,1) 1~4 (누름틀 "칸 누름틀" 값 0~2). 누름틀 값은 그 누름틀 블록(get_outline 의 kind field) id 로 바꾸세요.',
     );
     expect(JSON.stringify(editor.blocks)).toBe(before);
 

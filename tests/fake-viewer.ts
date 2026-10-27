@@ -70,6 +70,11 @@ export class FakeViewer {
     this.ws.send(JSON.stringify({ type: 'response', id, ok: true, result }));
   }
 
+  /** 아무 결과로 응답한다(붙잡아 둔 요청에 나중에 답할 때) */
+  respondWith(id: number, result: unknown): void {
+    this.ws.send(JSON.stringify({ type: 'response', id, ok: true, result }));
+  }
+
   fail(id: number, error: string): void {
     this.ws.send(JSON.stringify({ type: 'response', id, ok: false, error }));
   }

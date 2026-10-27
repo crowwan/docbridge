@@ -16,7 +16,7 @@ import {
 } from './block-schema.ts';
 import { insertTableParagraph } from './create-document.ts';
 import { deleteBlocks } from './delete-blocks.ts';
-import { crossesField, fieldSpansIn, type CharRange, type TextPlace } from './field-spans.ts';
+import { crossesField, fieldSpansIn, type CharRange, type FieldRange, type TextPlace } from './field-spans.ts';
 import { isCellStep } from './fields.ts';
 import { insertParagraphNear, listFields, moveParagraphs, replaceCellText, replaceFieldText, replaceParagraphText } from './edits.ts';
 import { noParagraphChanges, positionKey, TEXT_PART, type ParagraphChanges, type ParagraphPosition } from './paragraph-changes.ts';
@@ -165,17 +165,17 @@ interface ReplaceSpot {
 /** 블록 종류마다 정하는 범위와 적용 */
 type SpotRange = Pick<ReplaceSpot, 'start' | 'end' | 'apply'>;
 
-export const crossesFieldMessage = (target: AnchoredTarget, start: number, end: number) =>
-  `바꿀 자리가 누름틀 값에 걸칩니다: ${targetLabel(target)} ${start}~${end}. 누름틀 값은 누름틀 블록 id 로 바꾸세요.`;
+// 뷰어는 서버 id 표가 없어 누름틀 블록 id 대신 이름을 쓴다(get_outline 의 같은 name 누름틀)
+export const crossesFieldMessage = (target: AnchoredTarget, { start, end }: CharRange, field: FieldRange) =>
+  `바꿀 자리가 누름틀 값에 걸칩니다: ${targetLabel(target)} ${start}~${end} (누름틀 "${field.name}" 값 ${field.start}~${field.end}). 누름틀 값은 그 누름틀 블록(get_outline 의 kind field) id 로 바꾸세요.`;
 
 /**
  * 문단·칸 글자 자리가 그 안 누름틀 값에 걸치면 던진다(PR #67 리뷰). 걸친 채 바꾸면 누름틀이 망가지고,
  * 같은 편집의 누름틀 값 자리가 바뀐 값에 편집 전 위치로 적용된다. 걸치지 않으면 문단 글자를 먼저 바꿔도 값 안 위치는 그대로다
  */
 function assertOutsideFields(blocks: Block[], place: TextPlace, target: AnchoredTarget, { start, end }: CharRange): void {
-  if (fieldSpansIn(blocks, place).some((field) => crossesField({ start, end }, field))) {
-    throw new Error(crossesFieldMessage(target, start, end));
-  }
+  const crossed = fieldSpansIn(blocks, place).find((field) => crossesField({ start, end }, field));
+  if (crossed !== undefined) throw new Error(crossesFieldMessage(target, { start, end }, crossed));
 }
 
 function paragraphSpot(blocks: Block[], block: ParagraphBlock, target: AnchoredTarget): SpotRange {
