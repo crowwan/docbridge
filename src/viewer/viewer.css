@@ -173,3 +173,64 @@ body {
   color: var(--muted);
   overflow-wrap: anywhere;
 }
+
+/* 끌어 옮기기: 놓일 자리 가로선(쪽 위, 선 가운데가 블록 사이) */
+.drop-line {
+  position: absolute;
+  z-index: 1;
+  height: var(--drop-line-width);
+  background: var(--drop-line);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+body.dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+/* 끄는 동안은 놓일 자리 가로선 하나만 보이게 마우스 올림 테두리를 숨긴다 */
+body.dragging .edit-hover {
+  display: none;
+}
+
+/* 오른쪽 클릭 메뉴: 떠 있는 요소라 그림자만(PATTERNS X12) */
+.block-menu {
+  position: fixed;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  min-width: var(--menu-min-width);
+  padding: var(--space-1);
+  border-radius: var(--radius);
+  background: var(--menu-bg);
+  box-shadow: var(--page-shadow);
+}
+
+.block-menu-item {
+  padding: var(--space-2) var(--space-4);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.block-menu-item:hover,
+.block-menu-item:focus {
+  background: var(--menu-item-active-bg);
+  outline: none;
+}
+
+.block-menu-item:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+.block-menu-item[aria-disabled='true'] {
+  background: transparent;
+  color: var(--menu-disabled-fg);
+  cursor: default;
+}
