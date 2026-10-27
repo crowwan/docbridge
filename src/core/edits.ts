@@ -7,12 +7,9 @@
 // 글자 위치는 모두 유니코드 글자 단위(rhwp 와 같다, chars.ts).
 import { HwpDocument } from '@rhwp/core';
 import { z } from 'zod';
+import { parseJson } from './json.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { charLength, sliceChars } from './chars.ts';
-
-function parse<T>(schema: z.ZodType<T>, json: string): T {
-  return schema.parse(JSON.parse(json));
-}
 
 /** 문단 하나(본문 또는 칸 안)의 글자를 넣고 지우는 손잡이 */
 interface TextSpot {
@@ -176,7 +173,7 @@ const fieldListSchema = z.array(
 export type FieldInfo = z.infer<typeof fieldListSchema>[number];
 
 export function listFields(doc: HwpDocument): FieldInfo[] {
-  return parse(fieldListSchema, doc.getFieldList()).filter((field) => field.fieldType === 'clickhere');
+  return parseJson(fieldListSchema, doc.getFieldList()).filter((field) => field.fieldType === 'clickhere');
 }
 
 /**
@@ -233,14 +230,14 @@ const paraShapeSchema = z.object({ paraShapeId: z.number() });
 const charPropsSchema = z.looseObject({ charShapeId: z.number() });
 
 const paraShapeIdOf = (doc: HwpDocument, section: number, paragraph: number) =>
-  parse(paraShapeSchema, doc.getParaPropertiesAt(section, paragraph)).paraShapeId;
+  parseJson(paraShapeSchema, doc.getParaPropertiesAt(section, paragraph)).paraShapeId;
 
 /**
  * 글자 모양 비교용: 보이는 속성 JSON. 글자 모양 id 와 테두리·배경 id 는 뺀다(테두리·배경은 값으로 들어 있다).
  * 문단을 옮기면 rhwp 가 글자 모양·테두리를 같은 값의 새 id 로 다시 매기기 때문이다(ADR 002)
  */
 export function charLook(doc: HwpDocument, section: number, paragraph: number, offset: number): string {
-  const { charShapeId: _id, borderFillId: _border, ...look } = parse(charPropsSchema, doc.getCharPropertiesAt(section, paragraph, offset));
+  const { charShapeId: _id, borderFillId: _border, ...look } = parseJson(charPropsSchema, doc.getCharPropertiesAt(section, paragraph, offset));
   return JSON.stringify(look);
 }
 

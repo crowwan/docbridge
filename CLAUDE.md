@@ -21,7 +21,7 @@
 ## 스택
 
 - Web (TS, Node 24). 로컬 MCP 서버(stdio, `@modelcontextprotocol/sdk`) + 같은 프로세스의 127.0.0.1 HTTP·WebSocket(`ws`, 기본 포트 7790) + 브라우저 뷰어(Vite, `@rhwp/core` 0.8.7 고정 직접 사용) — 결정과 측정값: `docs/decisions/001-stack-and-rhwp.md`, 편집·저장 방식: `docs/decisions/002-edit-and-save.md`
-- `any`·타입 단언(`as`) 금지(`as const` 는 허용). rhwp 가 돌려주는 JSON 문자열은 zod 스키마로 읽는다
+- `any`·타입 단언(`as`) 금지(`as const` 는 허용). rhwp 가 돌려주는 JSON 문자열은 zod 스키마로 읽는다(`src/core/json.ts` parseJson). 오류 문구 꺼내기는 `src/shared/errors.ts` errorMessage
 - 상대 import 는 `.ts` 확장자까지 쓴다(Node 가 TS 를 바로 실행하고, 빌드 때 `.js` 로 바뀐다)
 - stdout 은 MCP 전용. 서버 로그는 `src/server/log.ts`(stderr)로만 쓴다
 - 포트 3000 금지: 서버 7790, 뷰어 개발 서버 7791, E2E 개발 서버 7792
