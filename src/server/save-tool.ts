@@ -3,6 +3,7 @@
 import type { ContentLoss } from '../core/hwpx-export.ts';
 import { base64Length, MAX_DOCUMENT_BYTES, tooLargeMessage } from '../shared/limits.ts';
 import type { ViewerResult } from '../shared/protocol.ts';
+import { realFilePath } from './paths.ts';
 import { newDocumentTakenMessage, protectedSource, resolveNewDocumentSavePath, resolveSavePath, writeSave } from './save-path.ts';
 import type { DocumentSession, OpenedDocument } from './session.ts';
 
@@ -70,6 +71,8 @@ export function saveDocument(session: DocumentSession, args: SaveArgs, write = w
       location.kind === 'file'
         ? await resolveSavePath({ sourcePath: location.sourcePath, path: args.path, overwrite })
         : await resolveNewDocumentSavePath({ savePath: location.savePath, path: args.path, overwrite });
+    // 열린 다른 문서의 파일이면 쓰지 않는다(SPEC-007 — 같은 파일 다시 열기·새로고침이 그 문서로 간다)
+    session.assertNotOpenElsewhere(await realFilePath(resolved), resolved);
     const exported = await send('export_hwpx', {});
     if (!exported.verified) throw verificationError(document, exported);
     const bytes = decodeExport(exported.data, exported.byteLength);
@@ -86,7 +89,7 @@ export function saveDocument(session: DocumentSession, args: SaveArgs, write = w
       },
       bytes,
     );
-    await session.recordSave(document, path, exported.blocks);
+    await session.recordSave(document, path, exported.blocks, await realFilePath(path));
     const warnings = exported.losses.map(lossWarning);
     return {
       path,
