@@ -15,7 +15,7 @@
 ## 현재 상태
 
 - 마일스톤: v0.1
-- 진행 중 스펙: SPEC-001 연결과 묻기 (in-progress, #3)
+- 진행 중 스펙: SPEC-001 연결과 묻기 (in-progress, #3), SPEC-002 말로 고치기와 저장 (in-progress, #17)
 - Projects 보드: #6 (https://github.com/users/crowwan/projects/6)
 
 ## 스택
