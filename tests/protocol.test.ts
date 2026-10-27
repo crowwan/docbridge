@@ -88,7 +88,8 @@ const sampleParams: { [M in ViewerMethod]: ViewerParams<M> } = {
   },
   undo: { steps: 1, depth: 1, unsavedEdits: 0 },
   export_hwpx: {},
-  edit_state: { fileName: '공문-수정.hwpx', unsavedEdits: 0 },
+  edit_state: { fileName: '공문-수정.hwpx', unsavedEdits: 0, newDocument: false },
+  create_document: { fileName: '제안서.hwpx', template: { fileName: '양식.hwpx', data: 'AA==', keepContent: false } },
 };
 
 describe('SPEC-001 뷰어의 요청 처리', () => {

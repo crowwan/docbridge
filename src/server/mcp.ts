@@ -46,6 +46,23 @@ export function createMcpServer(session: DocumentSession): McpServer {
   );
 
   server.registerTool(
+    'create_document',
+    {
+      description:
+        '새 한글 문서를 만들어 뷰어에 띄운다(아직 파일은 없다 — save_document 로 저장). template 이 없으면 빈 A4 문서, 있으면 그 양식(.hwp/.hwpx, 읽기만 함)의 스타일·쪽 설정·머리말·꼬리말을 쓰고 본문(표·그림 포함)은 비운다(keep_content: true 면 본문도 남김). 열린 문서를 대신한다(저장하지 않은 편집은 버리고 warnings 로 알림). path 는 처음 저장할 자리로 절대 경로나 ~ 로 시작해야 하고(상대 경로 거부), 이미 있는 파일이면 거부한다. 확장자가 없으면 .hwpx. 결과 { path, pageCount, blockCount, firstBlock, styles: [{ name, englishName, outlineLevel? }], template?: { fileName, removedObjects, keptObjects } | { fileName, keptContent }, viewerUrl, warnings? } — firstBlock 은 첫 블록 id. 빈 문서·비운 양식이면 비어 있는 첫 문단이라 replace_text 로 채우고(보통 제목) 그 뒤로 insert_paragraph 한다(첫 문단 앞에는 넣을 수 없다). keep_content: true 면 양식 본문의 첫 블록이라 글자가 있거나 표·누름틀일 수 있으니 get_outline 으로 보고 쓴다. 채우기는 기존 편집 도구(replace_text·insert_paragraph·delete_blocks·move_blocks·undo)로 한다. 한 번도 저장하지 않은 새 문서는 뷰어를 새로고침하면 사라진다',
+      inputSchema: {
+        path: z.string().describe('처음 저장할 경로(절대 경로 또는 ~/…, 예: ~/Downloads/제안서.hwpx). 없는 파일이어야 한다'),
+        template: z.string().optional().describe('양식으로 쓸 .hwp/.hwpx 파일 경로(절대 경로 또는 ~/…). 없으면 빈 문서'),
+        keep_content: z.boolean().optional().describe('양식 본문을 남긴다(기본 false: 비움)'),
+      },
+    },
+    ({ path, template, keep_content }) =>
+      toolResult(() =>
+        session.create({ path, ...(template === undefined ? {} : { template }), ...(keep_content === undefined ? {} : { keepContent: keep_content }) }),
+      ),
+  );
+
+  server.registerTool(
     'get_outline',
     {
       description: `열린 문서의 블록 목록(본문 문단·표·누름틀, 문서 순서). 블록마다 id, kind(paragraph·table·field), page(쪽), text(앞 40자), 자동 번호면 number, 개요 문단이면 outlineLevel, 누름틀이면 name. 한 번에 ${OUTLINE_LIMIT}블록까지이고 넘으면 more.next 의 from 으로 이어 받는다. 머리말·꼬리말·각주는 없다`,
@@ -209,9 +226,9 @@ export function createMcpServer(session: DocumentSession): McpServer {
     'save_document',
     {
       description:
-        '열린 문서를 HWPX 로 저장한다(원본이 .hwp 여도). path 가 없으면 원본 옆 <이름>-수정.hwpx(있으면 -수정-2 …). 상대 경로는 원본 폴더 기준, ~/ 는 홈, 확장자가 없으면 .hwpx 를 붙인다. 원본(.hwpx 일 때만)과 이미 있는 파일은 path 에 그 경로를 주고 overwrite: true 일 때만 덮어쓴다(원본을 덮어쓰려면 path 에 원본 경로 + overwrite: true. path 가 없으면 overwrite 는 무시하고 늘 새 이름). 저장 전에 내보낸 파일을 다시 열어 블록 글자를 비교하고, 다르면 파일을 쓰지 않고 달라진 블록 id 를 오류로 돌려준다. 결과 { path, bytes, verified: { blockCount }, warnings? } — warnings 는 내보내며 빠진 내용이라 사용자에게 알린다. 저장하면 이 파일이 마지막 파일(뷰어 새로고침 때 다시 읽는 파일)이 된다',
+        '열린 문서를 HWPX 로 저장한다(원본이 .hwp 여도). path 가 없으면 원본 옆 <이름>-수정.hwpx(있으면 -수정-2 …). 상대 경로는 원본 폴더 기준, ~/ 는 홈, 확장자가 없으면 .hwpx 를 붙인다. 원본(.hwpx 일 때만)과 이미 있는 파일은 path 에 그 경로를 주고 overwrite: true 일 때만 덮어쓴다(원본을 덮어쓰려면 path 에 원본 경로 + overwrite: true. path 가 없으면 overwrite 는 무시하고 늘 새 이름). 저장 전에 내보낸 파일을 다시 열어 블록 글자를 비교하고, 다르면 파일을 쓰지 않고 달라진 블록 id 를 오류로 돌려준다. 결과 { path, bytes, verified: { blockCount }, warnings? } — warnings 는 내보내며 빠진 내용이라 사용자에게 알린다. 저장하면 이 파일이 마지막 파일(뷰어 새로고침 때 다시 읽는 파일)이 된다. create_document 로 만든 새 문서를 처음 저장할 때는 path 가 없으면 create_document 의 path 에 저장하고(이미 파일이 생겼으면 거부), 상대 경로는 그 폴더 기준이다. 처음 저장한 파일은 그 뒤로 원본처럼 쓴다',
       inputSchema: {
-        path: z.string().optional().describe('저장할 경로(.hwpx). 없으면 원본 옆 <이름>-수정.hwpx'),
+        path: z.string().optional().describe('저장할 경로(.hwpx). 없으면 원본 옆 <이름>-수정.hwpx(저장 전 새 문서는 create_document 의 path)'),
         overwrite: z.boolean().optional().describe('path 의 파일(원본 .hwpx 나 이미 있는 파일)을 덮어쓴다(기본 false). path 가 없으면 무시'),
       },
     },

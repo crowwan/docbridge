@@ -5,6 +5,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { HwpDocument, initSync, type InitOutput } from '@rhwp/core';
+import { blankDocument } from './create-document.ts';
 
 let wasm: InitOutput | undefined;
 
@@ -34,7 +35,5 @@ export function openDocumentFile(path: string): HwpDocument {
 
 export function createBlankDocument(): HwpDocument {
   initRhwpForNode();
-  const doc = HwpDocument.createEmpty();
-  doc.createBlankDocument();
-  return doc;
+  return blankDocument();
 }

@@ -220,7 +220,7 @@ describe('SPEC-002 저장 (save_document)', () => {
     expect(error).toBe(`${VERIFY_FAILED} 다시 연 문서와 다른 블록: ${edited}.`);
     expect(await readdir(dir)).toEqual(['공문.hwpx']);
     expect(session.unsavedEdits).toBe(1);
-    expect(opened().path).toBe(source);
+    expect(opened().location).toMatchObject({ path: source });
   });
 
   it('내보낸 HWPX 를 다시 열지 못하면 파일을 쓰지 않고 그 이유를 돌려준다', async () => {
@@ -276,7 +276,7 @@ describe('SPEC-002 저장 (save_document)', () => {
     const { path } = await save();
 
     expect(session.unsavedEdits).toBe(0);
-    expect(viewer.editStates).toEqual([{ fileName: '공문-수정.hwpx', unsavedEdits: 0 }]);
+    expect(viewer.editStates).toEqual([{ fileName: '공문-수정.hwpx', unsavedEdits: 0, newDocument: false }]);
     expect(viewer.unsavedEdits()).toBe(0);
     const disconnected = once(bridge.events, 'disconnected');
     sockets.at(-1)?.close();
@@ -321,7 +321,7 @@ describe('SPEC-002 저장 (save_document)', () => {
     expect(result).toMatchObject({ path: join(dir, '공문-수정.hwpx') });
     expect(result.warnings).toBeUndefined();
     expect(blockTexts(new Uint8Array(await readFile(result.path)))).toContain('저장할 글자');
-    expect(opened().path).toBe(other);
+    expect(opened().location).toMatchObject({ path: other });
     expect(viewer.editStates.map((state) => state.fileName)).toEqual(['공문-수정.hwpx']);
     expect(viewer.unsavedEdits()).toBe(0);
   });
@@ -334,7 +334,7 @@ describe('SPEC-002 저장 (save_document)', () => {
 
     expect(await saveError()).toMatch(/^저장하지 못했습니다: .*EACCES/);
 
-    expect(opened().path).toBe(source);
+    expect(opened().location).toMatchObject({ path: source });
     expect(session.unsavedEdits).toBe(1);
     expect(viewer.editStates).toEqual([]);
     expect(viewer.unsavedEdits()).toBe(1);
@@ -371,7 +371,7 @@ describe('SPEC-002 새로고침과 저장하지 않은 편집', () => {
     await refresh();
 
     const after = await outline();
-    expect(opened().path).toBe(join(dir, '공문-수정.hwpx'));
+    expect(opened().location).toMatchObject({ path: join(dir, '공문-수정.hwpx') });
     expect(after.blocks).toEqual(atSave.blocks);
     expect(after.blocks.map((b) => b.text)).toContain('저장한 글자');
     expect(after.notices).toEqual(['뷰어를 새로고침해서 저장하지 않은 편집 2개가 사라졌습니다.']);
