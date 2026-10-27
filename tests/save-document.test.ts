@@ -452,6 +452,26 @@ describe('SPEC-002 새로고침과 저장하지 않은 편집', () => {
     expect((await outline()).notices).toEqual(['뷰어를 새로고침해서 저장하지 않은 편집 1개가 사라졌습니다.']);
   });
 
+  it('새로고침 때 마지막 파일을 뷰어가 읽지 못해 문서를 비워도 사라진 편집 수를 알린다', async () => {
+    await connectRhwp();
+    await openCopy('notice.hwpx', '공문.hwpx');
+    await replaceFirst('저장 안 한 글자');
+
+    const disconnected = once(bridge.events, 'disconnected');
+    sockets.at(-1)?.close();
+    await disconnected;
+    const broken = await FakeViewer.connect(bridge.viewerUrl);
+    sockets.push(broken);
+    broken.serve(() => {
+      throw new Error('손상된 파일입니다');
+    });
+    await session.ready();
+
+    expect(session.document).toBeUndefined();
+    const result = await call('get_outline');
+    expect(result.content.slice(1).map((c) => c.text)).toEqual(['뷰어를 새로고침해서 저장하지 않은 편집 1개가 사라졌습니다.']);
+  });
+
   it('저장한 뒤 편집이 없으면 새로고침해도 알림이 없다', async () => {
     await connectRhwp();
     await openCopy('notice.hwpx', '공문.hwpx');

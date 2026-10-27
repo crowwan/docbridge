@@ -362,7 +362,7 @@ export class DocumentSession {
   private async reload(document: OpenedDocument): Promise<void> {
     if (this.current !== document) return;
     const lost = document.edits.unsavedEdits;
-    // 알림은 편집이 정말 사라졌을 때(다시 띄우기 성공, 또는 파일이 없어 문서를 비움) 한 번만. 띄우다 끊기면 다음 새로고침이 다시 센다
+    // 알림은 편집이 정말 사라졌을 때(다시 띄우기 성공, 또는 파일이 없거나 읽지 못해 문서를 비움) 한 번만. 띄우다 끊기면 다음 새로고침이 다시 센다
     const notifyLost = () => {
       if (lost > 0) this.notices.push(reloadLostEditsMessage(lost));
     };
@@ -395,6 +395,8 @@ export class DocumentSession {
       notifyLost();
     } catch (error) {
       log(`새로고침한 뷰어에 문서를 다시 띄우지 못했습니다: ${String(error)}`);
+      // 뷰어(rhwp)가 읽지 못해 문서를 비웠으면 편집도 끝내 사라졌다. 연결이 끊긴 것이면(문서는 그대로) 다음 새로고침이 센다
+      if (this.current === undefined) notifyLost();
     }
   }
 }
