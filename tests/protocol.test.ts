@@ -82,7 +82,7 @@ const sampleParams: { [M in ViewerMethod]: ViewerParams<M> } = {
   clear_highlight: {},
   list_styles: {},
   edit: {
-    operation: { kind: 'replace_text', target: { id: 'b1', anchor: { section: 0, paragraph: 0, part: 'text' } }, text: '새 글자' },
+    operation: { kind: 'replace_text', targets: [{ id: 'b1', anchor: { section: 0, paragraph: 0, part: 'text' } }], text: '새 글자' },
     depth: 0,
     unsavedEdits: 1,
   },

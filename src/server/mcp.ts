@@ -6,7 +6,8 @@ import { errorMessage } from '../shared/errors.ts';
 import { NOTE_MAX_CHARS, textTargetSchema } from '../shared/protocol.ts';
 import { UNDO_LIMIT } from '../core/edit-history.ts';
 import { MAX_TABLE_SIZE } from '../core/create-document.ts';
-import { deleteBlocks, insertParagraph, insertTable, moveBlocks, NOTHING_TO_UNDO, replaceText, undo } from './edit-tools.ts';
+import { MAX_REPLACE_TARGETS } from '../core/edit-operations.ts';
+import { deleteBlocks, insertParagraph, insertTable, moveBlocks, NOTHING_TO_UNDO, replaceText, targetsOf, undo } from './edit-tools.ts';
 import { clearHighlight, highlight } from './highlight-tools.ts';
 import { findText, getOutline, readBlockContents } from './read-tools.ts';
 import { saveDocument } from './save-tool.ts';
@@ -124,13 +125,18 @@ export function createMcpServer(session: DocumentSession): McpServer {
     'replace_text',
     {
       description:
-        '열린 문서의 글자를 바꾼다(바로 적용, undo 로 되돌림). target 은 find_text 일치나 { id, cell?: { row, col }, start?, end? } — start·end 가 없으면 블록 글자 전체(표는 cell 로 칸을 골라야 하고 칸 글자 전체, 누름틀은 값 전체이고 start·end 는 값 안 위치). 위치는 read_blocks 의 text(표는 칸 text) 안 유니코드 글자 위치(0부터, end 미포함). text 가 비면 범위를 지우고, start = end 면 그 자리에 넣는다. 줄바꿈이 든 text 는 받지 않는다. 바뀐 글자는 바뀌는 자리 첫 글자의 글자 모양을 따른다. 칸 범위가 칸 안 여러 문단에 걸치면 그 문단들이 합쳐진다. 뷰어는 다시 그려지고 바뀐 블록에 초록 테두리가 남는다. 결과 { changed: [{ id, cell?, text }], warnings? } — changed 는 대상과 같은 문단에 걸린 블록 모두(누름틀 값을 바꾸면 그 문단도 바뀐다. 다음 편집은 read_blocks·find_text 로 새 위치를 얻어서), text 는 바뀐 뒤 블록(칸) 앞 40자, warnings 는 뷰어에 표시하지 못한 블록. "편집 기록이 어긋났습니다" 오류가 나면 open_document 로 문서를 다시 연다',
+        `열린 문서의 글자를 바꾼다(바로 적용, undo 로 되돌림). 자리 하나는 target, 여럿은 targets(${MAX_REPLACE_TARGETS} 곳까지)로 주고 둘 중 하나만 준다. targets 는 모두 같은 text 로 한 편집(undo 한 번)에 바뀌고, 위치는 모두 편집 전 문서 기준이다(find_text 결과를 그대로 넘기면 된다. 같은 블록 앞 자리 길이가 바뀌어도 docbridge 가 맞춘다). 같은 블록·칸에서 자리가 겹치거나(같은 위치에 넣기 둘 포함) 하나라도 틀리면 아무것도 바꾸지 않는다. 자리(target·targets 항목)는 find_text 일치나 { id, cell?: { row, col }, start?, end? } — start·end 가 없으면 블록 글자 전체(표는 cell 로 칸을 골라야 하고 칸 글자 전체, 누름틀은 값 전체이고 start·end 는 값 안 위치). 위치는 read_blocks 의 text(표는 칸 text) 안 유니코드 글자 위치(0부터, end 미포함). text 가 비면 범위를 지우고, start = end 면 그 자리에 넣는다. 줄바꿈이 든 text 는 받지 않는다. 바뀐 글자는 바뀌는 자리 첫 글자의 글자 모양을 따른다. 칸 범위가 칸 안 여러 문단에 걸치면 그 문단들이 합쳐진다. 뷰어는 다시 그려지고 바뀐 블록에 모두 초록 테두리가 남는다. 결과 { changed: [{ id, cell?, text }], warnings? } — changed 는 대상과 같은 문단에 걸린 블록 모두(누름틀 값을 바꾸면 그 문단도 바뀐다. 다음 편집은 read_blocks·find_text 로 새 위치를 얻어서), 표 칸은 바꾼 칸마다 하나, text 는 바뀐 뒤 블록(칸) 앞 40자, warnings 는 뷰어에 표시하지 못한 블록. "편집 기록이 어긋났습니다" 오류가 나면 open_document 로 문서를 다시 연다`,
       inputSchema: {
-        target: textTargetSchema.describe('바꿀 자리. 블록 하나(또는 칸 하나) 안이어야 한다'),
-        text: z.string().describe('새 글자(빈 글자면 지우기, 줄바꿈 없이)'),
+        target: textTargetSchema.optional().describe('바꿀 자리 하나. 블록 하나(또는 칸 하나) 안이어야 한다. targets 와 함께 주지 않는다'),
+        targets: z
+          .array(textTargetSchema)
+          .min(1)
+          .optional()
+          .describe(`바꿀 자리 여럿(${MAX_REPLACE_TARGETS} 곳까지, 한 편집). 위치는 모두 편집 전 문서 기준. target 과 함께 주지 않는다`),
+        text: z.string().describe('새 글자(모든 자리에 같은 글자. 빈 글자면 지우기, 줄바꿈 없이)'),
       },
     },
-    ({ target, text }) => toolResult(() => replaceText(session, target, text)),
+    ({ target, targets, text }) => toolResult(() => replaceText(session, targetsOf({ target, targets }), text)),
   );
 
   server.registerTool(
