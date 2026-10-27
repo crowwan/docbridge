@@ -65,7 +65,7 @@ function partRank(anchor: BlockAnchor): number {
   if (anchor.part === 'text') return 0;
   const field = fieldOrdinal(anchor);
   if (field !== undefined) return 1_000_000 + field;
-  return 1 + Number(/^table:(\d+)$/.exec(anchor.part)?.[1] ?? 0);
+  return 1 + (tableControlIndex(anchor) ?? 0);
 }
 
 export class BlockIdTable {
