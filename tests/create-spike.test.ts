@@ -24,7 +24,12 @@ import { openFixture } from './fixtures.ts';
 const S = 0;
 
 const paraPropsSchema = z.looseObject({ paraShapeId: z.number(), headType: z.string(), alignment: z.string() });
-const charPropsSchema = z.looseObject({ fontSize: z.number(), bold: z.boolean() });
+const charPropsSchema = z.looseObject({ fontSize: z.number(), bold: z.boolean(), textColor: z.string() });
+/** 양식·앞 문단의 직접 글자 서식(22pt 굵게 빨강) */
+const LOUD = JSON.stringify({ bold: true, fontSize: 2200, textColor: '#ff0000' });
+const NORMAL_LOOK = { fontSize: 1000, bold: false, textColor: '#000000' };
+const paragraphTexts = (doc: HwpDocument) =>
+  Array.from({ length: doc.getParagraphCount(S) }, (_, p) => doc.getTextRange(S, p, 0, doc.getParagraphLength(S, p)));
 const styleAtSchema = z.object({ id: z.number(), name: z.string() });
 const tablePropsSchema = z.looseObject({ repeatHeader: z.boolean() });
 const cellWidthSchema = z.looseObject({ width: z.number() });
@@ -94,6 +99,14 @@ describe('SPEC-003 빈 문서 템플릿 (기술 검증)', () => {
     expect(paragraphStyles(doc).some(({ name }) => name === '옛 문단')).toBe(true);
   });
 
+  it('스타일 종류 값의 글자 스타일 비트가 켜진 스타일(다른 비트가 섞인 109 등)은 문단 스타일 목록에서 뺀다', () => {
+    const doc = createBlankDocument();
+    doc.createStyle(JSON.stringify({ name: '옛 글자', englishName: 'OldChar', type: 109, nextStyleId: 0 }));
+
+    expect(paragraphStyles(doc).some(({ name }) => name === '옛 글자')).toBe(false);
+    expect(() => styleIdByName(doc, '옛 글자')).toThrow('없는 스타일입니다: 옛 글자');
+  });
+
   it('빈 문서는 구역·단 정의가 든 빈 문단 하나라 블록이 없고, 첫 문단을 빈 문단 블록으로 남기면 채울 수 있다', () => {
     const doc = createBlankDocument();
     expect(doc.getParagraphCount(S)).toBe(1);
@@ -157,6 +170,33 @@ describe('SPEC-003 제목 스타일 (기술 검증)', () => {
     const reopened = expectSaveVerified(doc);
     expect(styleAt(reopened, 0)).toBe('제목');
     expect(charProps(reopened, 0, 0)).toMatchObject({ fontSize: TITLE_STYLE.fontSize, bold: true });
+  });
+});
+
+describe('SPEC-003 제목 스타일 실패·중복 (기술 검증)', () => {
+  it('모양을 정하지 못하면 만든 제목 스타일을 지우고, 다음 호출은 모양이 있는 제목 스타일을 만든다', () => {
+    const doc = createBlankDocument();
+    const before = paragraphStyles(doc).length;
+    const update = doc.updateStyleShapes.bind(doc);
+    doc.updateStyleShapes = () => false;
+
+    expect(() => ensureTitleStyle(doc)).toThrow('제목 스타일의 모양을 정하지 못했습니다.');
+    expect(paragraphStyles(doc)).toHaveLength(before);
+
+    doc.updateStyleShapes = update;
+    const id = ensureTitleStyle(doc);
+    replaceParagraphText(doc, S, 0, '제안서');
+    applyParagraphStyle(doc, S, 0, id);
+    expect(charProps(doc, 0, 0)).toMatchObject({ fontSize: TITLE_STYLE.fontSize, bold: true });
+  });
+
+  it('영문 이름이 Title 인 스타일이 다른 한글 이름으로 있으면 그것을 쓰고 새로 만들지 않는다', () => {
+    const doc = createBlankDocument();
+    const existing = doc.createStyle(JSON.stringify({ name: '표제', englishName: 'Title', type: 0, nextStyleId: 1 }));
+    const before = paragraphStyles(doc).length;
+
+    expect(ensureTitleStyle(doc)).toBe(existing);
+    expect(paragraphStyles(doc)).toHaveLength(before);
   });
 });
 
@@ -304,6 +344,45 @@ describe('SPEC-003 표 만들기 (기술 검증)', () => {
     expect(() => insertTableParagraph(doc, S, 0, 'before', { rows: 1, cols: 1 })).toThrow('구역 첫 문단 앞에는 표를 넣을 수 없습니다');
   });
 
+  it('rhwp 가 표 아래 빈 문단을 붙이지 않으면 뒤 문단을 지우지 않는다', () => {
+    const doc = outlineDocument();
+    const create = doc.createTable.bind(doc);
+    // 표 아래 빈 문단을 붙이지 않는 rhwp 를 흉내낸다
+    doc.createTable = (section, paragraph, offset, rows, cols) => {
+      const result = create(section, paragraph, offset, rows, cols);
+      doc.deleteParagraph(section, paragraph + 1);
+      return result;
+    };
+
+    insertTableParagraph(doc, S, 1, 'after', { rows: 1, cols: 1 });
+
+    expect(paragraphTexts(doc)).toEqual(['제목', '배경', '', '목표']);
+  });
+
+  it('표가 예상한 문단에 들어가지 않으면 거부하고 넣은 문단·표를 되돌린다', () => {
+    const doc = outlineDocument();
+    const before = paragraphTexts(doc);
+    const create = doc.createTable.bind(doc);
+    doc.createTable = (section, paragraph, offset, rows, cols) => {
+      create(section, paragraph, offset, rows, cols);
+      return JSON.stringify({ ok: true, paraIdx: paragraph + 5, controlIdx: 0 });
+    };
+
+    expect(() => insertTableParagraph(doc, S, 1, 'after', { rows: 1, cols: 1 })).toThrow('표가 예상한 문단');
+    expect(paragraphTexts(doc)).toEqual(before);
+    expect(extractBlocks(doc).some((b) => b.kind === 'table')).toBe(false);
+  });
+
+  it('앞 문단 끝 글자의 직접 서식이 표 문단·칸 글자로 번지지 않는다', () => {
+    const doc = outlineDocument();
+    doc.applyCharFormat(S, 1, 0, doc.getParagraphLength(S, 1), LOUD);
+
+    const table = insertTableParagraph(doc, S, 1, 'after', { rows: 2, cols: 1, cells: [['머리'], ['칸']], header: true });
+
+    expect(cellCharProps(doc, table, 1)).toMatchObject(NORMAL_LOOK);
+    expect(cellCharProps(doc, table, 0)).toMatchObject({ ...NORMAL_LOOK, bold: true });
+  });
+
   it('행·열이 1~50 밖이거나 cells 크기가 다르면 거부한다', () => {
     const doc = outlineDocument();
     const count = doc.getParagraphCount(S);
@@ -353,6 +432,24 @@ describe('SPEC-003 양식 본문 비우기 (기술 검증)', () => {
     const reopened = expectSaveVerified(doc);
     expect(headerText(reopened, true)).toMatchObject({ exists: true, text: '가나다구청 보고서' });
     expect(headerText(reopened, false)).toMatchObject({ exists: true, text: '대외비' });
+  });
+
+  it('비운 첫 문단은 양식의 직접 글자 서식을 버리고 바탕글 글자 모양이 되어, 제목은 20pt 로 이어 넣는 문단은 바탕글로 나온다', () => {
+    // 한컴 양식처럼 구역 첫 문단이 스타일 밖 글자 모양(22pt 굵게 빨강)을 가진 빈 문단이다(로컬 한컴 문서는 첫 문단 글자 모양이 바탕글 것과 달랐다)
+    const doc = createBlankDocument();
+    doc.insertText(S, 0, 0, '표지');
+    doc.applyCharFormat(S, 0, 0, 2, LOUD);
+    const loud = parseJson(z.looseObject({ charShapeId: z.number() }), doc.getCharPropertiesAt(S, 0, 0)).charShapeId;
+    doc.deleteText(S, 0, 0, 2);
+    doc.setCharShapeId(S, 0, 0, 0, loud);
+    insertParagraphNear(doc, S, 0, 'after', '양식 본문');
+
+    clearTemplateBody(doc);
+    replaceParagraphText(doc, S, 0, '새 제목');
+    expect(charProps(doc, 0, 0)).toMatchObject(NORMAL_LOOK);
+
+    applyParagraphStyle(doc, S, 0, ensureTitleStyle(doc));
+    expect(charProps(doc, 0, 0)).toMatchObject({ fontSize: TITLE_STYLE.fontSize, bold: true, textColor: '#000000' });
   });
 
   it('본문 첫 문단 안의 표·누름틀도 지운다', () => {

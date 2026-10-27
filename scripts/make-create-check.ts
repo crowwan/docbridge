@@ -160,7 +160,7 @@ const files: CheckFile[] = [
 
 for (const path of (process.env.DOCBRIDGE_CREATE_TEMPLATES ?? '').split(',').filter((p) => p.length > 0)) {
   files.push({
-    file: `0${files.length + 1}-선택-한컴양식(${basename(path).replace(/\.hwpx?$/, '')})-제안서.hwpx`,
+    file: `${String(files.length + 1).padStart(2, '0')}-선택-한컴양식(${basename(path).replace(/\.hwpx?$/, '')})-제안서.hwpx`,
     source: '로컬 한컴 문서(레포에 넣지 않음)',
     start: () => {
       const doc = openDocumentFile(path);
@@ -209,6 +209,11 @@ const readme: string[] = [
   '- 열 때 "손상", "변조", "복구" 같은 경고가 뜨는지 (뜨면 문구를 그대로 알려주세요)',
   '- 각 파일 "확인할 것" 이 맞는지',
   '- 비교: python-hwpx 로 만든 ~/Downloads/DocBridge_도입제안서_v0.1.hwpx 와 보이는 모양이 어떻게 다른지(그쪽은 모두 바탕글 + 직접 서식, 번호는 글자)',
+  '',
+  '판 기록 (아직 한글에서 열어 보기 전이면 마지막 판만 보면 된다)',
+  '- 1판: PR #40 첫 판',
+  '- 2판 (PR #40 리뷰 반영): 03~07(양식에서 만든 파일)은 비운 첫 문단의 글자 모양을 양식 것(표지 큰 글씨 등)이 아니라',
+  '  바탕글 것으로 맞췄다. 제목은 제목 스타일 20pt, 본문은 양식의 바탕글·본문 크기로 나와야 한다. 00~02 는 1판과 같다',
   '',
   '■ 00-기준-빈문서(편집없음).hwpx',
   '  rhwp 빈 문서 템플릿을 아무것도 하지 않고 HWPX 로 저장한 것. 다른 파일에서 경고가 나면 이것도 열어 보고 알려주세요',

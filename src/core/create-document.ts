@@ -2,20 +2,31 @@
 // rhwp 기본 동작이 스펙과 다른 곳만 바로잡는다(ADR 002 원칙 그대로):
 // - createBlankDocument 의 스타일에는 "제목"이 없다 → "제목" 스타일이 없는 문서에 docbridge 제목 스타일을 하나 더한다
 // - applyStyle 은 문단에 직접 문단 모양이 있으면 그 모양을 그대로 둔다(개요 번호가 안 붙는다) → 스타일의 문단 모양으로 맞춘다
-// - createTable 은 표 문단·칸 문단·표 아래 빈 문단에 넣는 자리 문단 모양을 물려준다(개요 문단 뒤면 모두 개요 번호를 받는다)
-//   → 새 문단을 바탕글로 맞춘 뒤 표를 넣고, rhwp 가 덧붙인 표 아래 빈 문단은 지운다
+// - createTable 은 표 문단·칸 문단·표 아래 빈 문단에 넣는 자리 문단 모양·글자 모양을 물려준다
+//   (개요 문단 뒤면 모두 개요 번호를, 굵은 문단 뒤면 칸 글자가 굵게) → 새 문단을 바탕글 모양으로 맞춘 뒤 표를 넣고,
+//   rhwp 가 덧붙인 표 아래 빈 문단은 지운다
 // - 양식 본문 비우기: 구역 첫 문단(구역·단 정의)과 머리말·꼬리말·쪽 번호 위치가 든 문단은 남기고 글자·다른 개체를 지운다
 import type { HwpDocument } from '@rhwp/core';
 import { z } from 'zod';
+import { BODY_LIST, bodyParagraphLocator } from './body-paragraphs.ts';
 import { charLength } from './chars.ts';
+import { paraShapeIdOf } from './edits.ts';
 import { parseJson } from './json.ts';
 
 const S_FIRST = 0;
 const NORMAL_STYLE = 0;
 
 const styleListSchema = z.array(
-  z.object({ id: z.number(), name: z.string(), englishName: z.string(), type: z.number(), paraShapeId: z.number() }),
+  z.object({
+    id: z.number(),
+    name: z.string(),
+    englishName: z.string(),
+    type: z.number(),
+    paraShapeId: z.number(),
+    charShapeId: z.number(),
+  }),
 );
+type StyleEntry = z.infer<typeof styleListSchema>[number];
 const styleDetailSchema = z.object({
   paraProps: z.looseObject({ headType: z.string(), paraLevel: z.number() }),
 });
@@ -28,37 +39,36 @@ export interface ParagraphStyle {
   outlineLevel?: number;
 }
 
-/** rhwp getStyleList 의 type: 0 문단, 1 글자. 한컴 HWP 5 바이너리 일부는 다른 비트가 섞여 문단 스타일도 4·108 로 온다(로컬 한컴 문서 2개) */
-const CHARACTER_STYLE = 1;
+/**
+ * rhwp getStyleList 의 type 은 HWP 스타일 속성 바이트 그대로다. 문단 0 / 글자 1 인데, 한컴 HWP 5 바이너리 일부는
+ * 다른 비트가 섞여 문단 스타일도 4·108 로 온다(로컬 한컴 문서 2개). 그래서 글자 스타일 비트(가장 낮은 비트)만 본다
+ */
+const CHARACTER_STYLE_BIT = 0b1;
+const isParagraphStyle = ({ type }: StyleEntry) => (type & CHARACTER_STYLE_BIT) === 0;
+
+/** 문단 스타일 목록(글자 스타일 빼고). getStyleList 한 번만 읽는다 */
+const paragraphStyleEntries = (doc: HwpDocument): StyleEntry[] => parseJson(styleListSchema, doc.getStyleList()).filter(isParagraphStyle);
+
+const styleEntry = (doc: HwpDocument, styleId: number): StyleEntry | undefined =>
+  parseJson(styleListSchema, doc.getStyleList()).find(({ id }) => id === styleId);
 
 /**
  * 문서의 문단 스타일(글자 스타일 빼고). 개요 번호 여부는 스타일 이름이 아니라 스타일 문단 모양의 headType 으로 본다
  * (한컴 공문 양식은 "개요 1" 을 번호 없는 모양으로 바꿔 쓰기도 한다 — 로컬 한컴 기안문)
  */
 export function paragraphStyles(doc: HwpDocument): ParagraphStyle[] {
-  return parseJson(styleListSchema, doc.getStyleList())
-    .filter(({ type }) => type !== CHARACTER_STYLE)
-    .map(({ id, name, englishName }) => {
-      const { paraProps } = parseJson(styleDetailSchema, doc.getStyleDetail(id));
-      return paraProps.headType === 'Outline'
-        ? { id, name, englishName, outlineLevel: paraProps.paraLevel + 1 }
-        : { id, name, englishName };
-    });
+  return paragraphStyleEntries(doc).map(({ id, name, englishName }) => {
+    const { paraProps } = parseJson(styleDetailSchema, doc.getStyleDetail(id));
+    return paraProps.headType === 'Outline' ? { id, name, englishName, outlineLevel: paraProps.paraLevel + 1 } : { id, name, englishName };
+  });
 }
 
 /** 스타일 이름(한글 이름 또는 영문 이름) → id. 없으면 던진다 */
 export function styleIdByName(doc: HwpDocument, name: string): number {
-  const found = paragraphStyles(doc).find((style) => style.name === name || style.englishName === name);
+  const found = paragraphStyleEntries(doc).find((style) => style.name === name || style.englishName === name);
   if (found === undefined) throw new Error(`없는 스타일입니다: ${name}. list_styles 로 목록을 보세요.`);
   return found.id;
 }
-
-const styleParaShapeId = (doc: HwpDocument, styleId: number): number | undefined =>
-  parseJson(styleListSchema, doc.getStyleList()).find(({ id }) => id === styleId)?.paraShapeId;
-
-const paraShapeIdSchema = z.looseObject({ paraShapeId: z.number() });
-const paraShapeIdAt = (doc: HwpDocument, section: number, paragraph: number) =>
-  parseJson(paraShapeIdSchema, doc.getParaPropertiesAt(section, paragraph)).paraShapeId;
 
 /**
  * 본문 문단에 문단 스타일을 건다. 문단 모양은 스타일 것으로 맞추고(직접 문단 모양은 버린다),
@@ -66,23 +76,40 @@ const paraShapeIdAt = (doc: HwpDocument, section: number, paragraph: number) =>
  */
 export function applyParagraphStyle(doc: HwpDocument, section: number, paragraph: number, styleId: number): void {
   doc.applyStyle(section, paragraph, styleId);
-  const shape = styleParaShapeId(doc, styleId);
+  const shape = styleEntry(doc, styleId)?.paraShapeId;
   // rhwp applyStyle 은 문단 모양이 옛 스타일 것과 다르면(직접 문단 모양) 그대로 둔다 → 개요 스타일이어도 번호가 안 붙는다
-  if (shape !== undefined && paraShapeIdAt(doc, section, paragraph) !== shape) doc.setParaShapeId(section, paragraph, shape);
+  if (shape !== undefined && paraShapeIdOf(doc, section, paragraph) !== shape) doc.setParaShapeId(section, paragraph, shape);
+}
+
+/**
+ * 문단을 스타일 모양 그대로로: 스타일을 걸고 글자 모양도 직접 서식 없이 스타일 글자 모양으로 덮는다.
+ * 비운 양식 첫 문단·표를 담을 새 문단처럼 글자가 없거나 버릴 글자 서식만 있는 문단에 쓴다
+ * (applyStyle 은 스타일 밖 글자 모양을 직접 서식으로 보고 남긴다. 빈 문단도 setCharShapeId(0, 0) 이 그 뒤에 넣는 글자 모양이 된다)
+ */
+function resetToStyle(doc: HwpDocument, section: number, paragraph: number, styleId: number): void {
+  applyParagraphStyle(doc, section, paragraph, styleId);
+  const charShape = styleEntry(doc, styleId)?.charShapeId;
+  if (charShape !== undefined) doc.setCharShapeId(section, paragraph, 0, doc.getParagraphLength(section, paragraph), charShape);
 }
 
 /** docbridge 가 "제목" 스타일이 없는 문서에 더하는 제목 스타일(빈 문서 템플릿에는 "제목"이 없다). 가운데 정렬, 20pt 굵게, 다음 문단은 본문 */
 export const TITLE_STYLE = { name: '제목', englishName: 'Title', fontSize: 2000 } as const;
 
-/** 제목 스타일이 없으면 만든다. 스타일 id 를 돌려준다 */
+/** 제목 스타일(한글 이름 "제목" 또는 영문 이름 "Title")이 없으면 만든다. 스타일 id 를 돌려준다 */
 export function ensureTitleStyle(doc: HwpDocument): number {
-  const existing = paragraphStyles(doc).find(({ name }) => name === TITLE_STYLE.name);
+  const styles = paragraphStyleEntries(doc);
+  const existing = styles.find(({ name, englishName }) => name === TITLE_STYLE.name || englishName === TITLE_STYLE.englishName);
   if (existing !== undefined) return existing.id;
-  const body = paragraphStyles(doc).find(({ englishName }) => englishName === 'Body')?.id ?? NORMAL_STYLE;
+  const body = styles.find(({ englishName }) => englishName === 'Body')?.id ?? NORMAL_STYLE;
   const id = doc.createStyle(JSON.stringify({ name: TITLE_STYLE.name, englishName: TITLE_STYLE.englishName, type: 0, nextStyleId: body }));
-  if (!doc.updateStyleShapes(id, JSON.stringify({ fontSize: TITLE_STYLE.fontSize, bold: true }), JSON.stringify({ alignment: 'center' }))) {
-    throw new Error('제목 스타일의 모양을 정하지 못했습니다.');
+  let shaped = false;
+  try {
+    shaped = doc.updateStyleShapes(id, JSON.stringify({ fontSize: TITLE_STYLE.fontSize, bold: true }), JSON.stringify({ alignment: 'center' }));
+  } finally {
+    // 모양 없는 "제목" 이 남으면 다음 호출이 그것을 정상 제목 스타일로 돌려준다
+    if (!shaped) doc.deleteStyle(id);
   }
+  if (!shaped) throw new Error('제목 스타일의 모양을 정하지 못했습니다.');
   return id;
 }
 
@@ -107,10 +134,17 @@ function assertTableSpec({ rows, cols, cells }: TableSpec): void {
 
 const createdTableSchema = z.object({ paraIdx: z.number(), controlIdx: z.number() });
 const cellPropsSchema = z.looseObject({ isHeader: z.boolean() });
+const controlPositionsSchema = z.array(z.number());
+
+/** 글자도 컨트롤도 없는 문단인지(rhwp 가 표 아래 덧붙인 빈 문단 확인용) */
+const isBareParagraph = (doc: HwpDocument, section: number, paragraph: number) =>
+  doc.getParagraphLength(section, paragraph) === 0 &&
+  parseJson(controlPositionsSchema, doc.getControlTextPositions(section, paragraph)).length === 0;
 
 /**
  * 기준 문단 뒤(after)·앞(before)에 새 문단을 만들고 rows×cols 표를 넣는다. 표가 든 문단 번호와 컨트롤 번호를 돌려준다.
- * 표 너비는 쪽 본문 너비를 열 수로 똑같이 나눈 것(rhwp createTable 기본값)이다. 새로 생기는 문단은 표가 든 문단 하나다
+ * 표 너비는 쪽 본문 너비를 열 수로 똑같이 나눈 것(rhwp createTable 기본값)이다. 새로 생기는 문단은 표가 든 문단 하나다.
+ * 중간에 실패하면 넣은 문단·표를 스냅샷으로 되돌리고 던진다
  */
 export function insertTableParagraph(
   doc: HwpDocument,
@@ -121,14 +155,29 @@ export function insertTableParagraph(
 ): { paragraph: number; controlIndex: number } {
   assertTableSpec(spec);
   if (where === 'before' && reference === S_FIRST) throw new Error('구역 첫 문단 앞에는 표를 넣을 수 없습니다. 첫 문단 뒤에 넣으세요.');
-  const at = where === 'before' ? reference : reference + 1;
+  const snapshot = doc.saveSnapshot();
+  try {
+    const table = insertTable(doc, section, where === 'before' ? reference : reference + 1, spec);
+    doc.discardSnapshot(snapshot);
+    return table;
+  } catch (error) {
+    doc.restoreSnapshot(snapshot);
+    doc.discardSnapshot(snapshot);
+    throw error;
+  }
+}
+
+function insertTable(doc: HwpDocument, section: number, at: number, spec: TableSpec): { paragraph: number; controlIndex: number } {
   doc.insertParagraph(section, at);
-  // 새 문단은 앞 문단 모양(개요 등)을 물려받고, 표 문단·칸 문단·표 아래 빈 문단이 그것을 다시 물려받는다 → 바탕글로
-  applyParagraphStyle(doc, section, at, NORMAL_STYLE);
-  // 빈 문단에 넣으면 rhwp 는 그 문단을 표 문단으로 바꾸고 표 아래에 빈 문단 하나를 더한다
+  // 새 문단은 앞 문단의 문단 모양(개요 등)·끝 글자 모양(굵게 등)을 물려받고, 표 문단·칸·표 아래 빈 문단이
+  // 그것을 다시 물려받는다 → 바탕글 모양 그대로로
+  resetToStyle(doc, section, at, NORMAL_STYLE);
+  const countBefore = doc.getParagraphCount(section);
+  // 빈 문단에 넣으면 rhwp 는 그 문단을 표 문단으로 바꾸고 표 아래에 빈 문단 하나를 더한다(0.8.7)
   const created = parseJson(createdTableSchema, doc.createTable(section, at, 0, spec.rows, spec.cols));
   if (created.paraIdx !== at) throw new Error(`표가 예상한 문단(${at})이 아니라 ${created.paraIdx} 에 들어갔습니다.`);
-  doc.deleteParagraph(section, at + 1);
+  // 덧붙인 빈 문단이 확실할 때만 지운다(문단이 하나 늘었고 표 바로 뒤가 글자·컨트롤 없는 문단). 아니면 사용자 문단일 수 있어 둔다
+  if (doc.getParagraphCount(section) === countBefore + 1 && isBareParagraph(doc, section, at + 1)) doc.deleteParagraph(section, at + 1);
   const table = { paragraph: created.paraIdx, controlIndex: created.controlIdx };
   if (spec.cells !== undefined) fillCells(doc, section, table, spec.cells);
   if (spec.header === true) markHeaderRow(doc, section, table, spec.cols);
@@ -185,28 +234,20 @@ export interface ClearedBody {
   keptObjects: Record<string, number>;
 }
 
-/** 본문 컨트롤(목록 0)과 그 구역 안 문단 번호 */
+/** 본문 컨트롤과 그 구역 안 문단 번호(para 는 getControls 의 문서 전체 문단 번호 그대로) */
 interface BodyControl extends ControlInfo {
   section: number;
   paragraph: number;
 }
 
-/**
- * 본문 문단 컨트롤을 구역마다 모은다. getControls 는 본문을 목록 0 하나로 보고 문단 번호를 구역을 이어 센다
- * (blocks.ts tablesByParagraph 와 같은 방법 — 구역마다 다른 목록이 아니다, 여러 구역 한컴 문서로 확인)
- */
+/** 본문 문단 컨트롤을 구역마다 모은다 */
 function bodyControlsBySection(doc: HwpDocument): BodyControl[][] {
-  const starts: number[] = [];
-  let total = 0;
-  for (let section = 0; section < doc.getSectionCount(); section += 1) {
-    starts.push(total);
-    total += doc.getParagraphCount(section);
-  }
-  const bySection: BodyControl[][] = starts.map(() => []);
+  const locate = bodyParagraphLocator(doc);
+  const bySection: BodyControl[][] = Array.from({ length: doc.getSectionCount() }, () => []);
   for (const control of parseJson(controlListSchema, doc.getControls())) {
-    if (control.list !== 0) continue;
-    const section = starts.findLastIndex((start) => start <= control.para);
-    bySection[section]?.push({ ...control, section, paragraph: control.para - (starts[section] ?? 0) });
+    if (control.list !== BODY_LIST) continue;
+    const position = locate(control.para);
+    bySection[position.section]?.push({ ...control, ...position });
   }
   return bySection;
 }
@@ -218,7 +259,7 @@ const nameOf = ({ userDesc, ctrlId }: ControlInfo) => userDesc || ctrlId || '누
 
 /**
  * 양식 문서의 본문을 비운다. 스타일·쪽 설정·머리말·꼬리말은 문서 정의·구역 첫 문단에 있어 그대로 남는다.
- * - 남길 개체(KEEP_CONTROLS)가 든 문단과 구역 첫 문단: 다른 개체와 글자를 지우고 바탕글로 맞춘다
+ * - 남길 개체(KEEP_CONTROLS)가 든 문단과 구역 첫 문단: 다른 개체와 글자를 지우고 바탕글 모양(문단·글자)으로 맞춘다
  * - 그 밖의 문단: 남길 문단 사이의 이어진 문단을 deleteRange 한 번으로 지운다(든 표·그림·글상자도 같이).
  *   문단마다 deleteParagraph 하면 지울 때마다 다시 조판해 74쪽 문서에서 13초가 걸렸다
  */
@@ -246,11 +287,12 @@ export function clearTemplateBody(doc: HwpDocument): ClearedBody {
       const removable = remaining
         .filter((control) => control.paragraph === paragraph && !KEEP_CONTROLS.has(control.ctrlId))
         .sort((x, y) => y.controlIndex - x.controlIndex);
-      // 컨트롤 번호가 밀리지 않게 큰 번호부터. 본문 목록(0) 안 문단 번호는 구역을 이어 센 번호(control.para)다
+      // 컨트롤 번호가 밀리지 않게 큰 번호부터. 본문 목록 안 문단 번호는 구역을 이어 센 번호(control.para)다
       for (const control of removable) doc.deleteControlAt(control.list, control.para, control.controlIndex);
       const length = doc.getParagraphLength(section, paragraph);
       if (length > 0) doc.deleteText(section, paragraph, 0, length);
-      applyParagraphStyle(doc, section, paragraph, NORMAL_STYLE);
+      // 양식 첫 문단의 글자 모양(표지 큰 글씨 등)이 남으면 그 뒤에 쓰는 제목·문단이 그 모양을 따른다
+      resetToStyle(doc, section, paragraph, NORMAL_STYLE);
       result.keptParagraphs.push({ section, paragraph });
     }
   }
