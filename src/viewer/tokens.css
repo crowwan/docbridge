@@ -14,13 +14,13 @@
   /* note: 문서(흰 종이·검은 글자)와 섞이지 않는 진한 꼬리표 */
   --note-bg: #151515;
   --note-fg: #ffffff;
-  /* 마우스 올림 테두리·입력칸 테두리: 개인 DS border-strong(gray-300). 고칠 수 있는 블록을 옅게 알린다 — 초록(바뀐 블록)·노랑(근거)과 뜻이 겹치지 않는 회색 */
+  /* 마우스 올림 테두리: 개인 DS border-strong(gray-300). 고칠 수 있는 블록을 옅게 알린다 — 초록(바뀐 블록)·노랑(근거)과 뜻이 겹치지 않는 회색 */
   --edit-hover: #cccccc;
   /* 입력칸 포커스 링: 개인 DS ring(brand-500). 화면에서 누를 수 있는 것은 입력칸뿐이라 여기에만 쓴다 */
   --focus-ring: #2e6bff;
-  /* 실패 알림(토스트): note 와 같은 진한 면 + 개인 DS error-500 왼쪽 선(오류는 색 + 선 + 문장, PATTERNS F5) */
-  --toast-bg: #151515;
-  --toast-fg: #ffffff;
+  /* 실패 알림(토스트): note 와 같은 진한 면(note 토큰을 따른다) + 개인 DS error-500 왼쪽 선(오류는 색 + 선 + 문장, PATTERNS F5) */
+  --toast-bg: var(--note-bg);
+  --toast-fg: var(--note-fg);
   --danger: #e5484d;
 
   /* 글자 */

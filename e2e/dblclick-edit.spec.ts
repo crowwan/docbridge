@@ -10,7 +10,7 @@ import { z } from 'zod';
 import { BLOCK_CHANGED_WHILE_EDITING, CROSSES_FIELD_IN_VIEWER } from '../src/core/edit-spot.ts';
 import { openDocumentFile } from '../src/core/rhwp-node.ts';
 import { startBridge, type Bridge } from '../src/server/bridge.ts';
-import { replaceText } from '../src/server/edit-tools.ts';
+import { deleteBlocks, insertParagraph, replaceText, undo } from '../src/server/edit-tools.ts';
 import { clearHighlight, highlight } from '../src/server/highlight-tools.ts';
 import { readBlockContents } from '../src/server/read-tools.ts';
 import { saveDocument } from '../src/server/save-tool.ts';
@@ -69,12 +69,17 @@ async function editB7(page: Page): Promise<void> {
   await expect.poll(() => blockText('b7')).toMatch(/!$/);
 }
 
-/** b11 의 "2026" 과 "바랍니다" 를 굵게 한 notice.hwpx 사본(부분 서식이 남는지 본다) */
-async function boldCopy(): Promise<string> {
+const B11_LENGTH = [...B11_BEFORE].length;
+
+/** b11 의 글자 범위들([start, end))을 굵게 한 notice.hwpx 사본(부분 서식이 남는지 본다). 기본은 "2026" 과 "바랍니다" */
+async function boldCopy(
+  ranges: Array<[number, number]> = [
+    [7, 11],
+    [B11_LENGTH - 5, B11_LENGTH - 1],
+  ],
+): Promise<string> {
   const doc = openDocumentFile(fixturePath('notice.hwpx'));
-  doc.applyCharFormat(0, 10, 7, 11, JSON.stringify({ bold: true }));
-  const end = [...B11_BEFORE].length;
-  doc.applyCharFormat(0, 10, end - 5, end - 1, JSON.stringify({ bold: true }));
+  for (const [start, end] of ranges) doc.applyCharFormat(0, 10, start, end, JSON.stringify({ bold: true }));
   const path = join(await mkdtemp(join(tmpdir(), 'docbridge-e2e-dblclick-')), '굵게.hwpx');
   await writeFile(path, doc.exportHwpx());
   doc.free();
@@ -113,6 +118,40 @@ test.describe('SPEC-006 더블클릭으로 글자 고치기 (서버가 내주는
     expect([boldAt(7), boldAt(10), boldAt(end - 5), boldAt(end - 2)]).toEqual([true, true, true, true]);
     expect(boldAt(17)).toBe(false);
     doc.free();
+  });
+
+  test('같은 글자가 이어지는 곳에서는 커서 자리의 글자를 지운다(굵은 첫 "1" 을 지우면 보통 "1" 이 남는다)', async ({ page }) => {
+    // "11. 14." 의 첫 "1"(13) 만 굵게
+    await sessions.open(await boldCopy([[13, 14]]));
+
+    await doubleClick(page, { id: 'b11' });
+    // 커서를 첫 "1" 바로 뒤(14)에 두고 확인한 뒤 지운다. Home 은 감긴 화면 줄 처음이고 macOS 는 ⌘Home 이 글 처음이 아니라
+    // 키로 옮기지 않는다
+    await editBox(page).evaluate((textarea: HTMLTextAreaElement) => textarea.setSelectionRange(14, 14));
+    expect(await editBox(page).evaluate((textarea: HTMLTextAreaElement) => [textarea.selectionStart, textarea.selectionEnd])).toEqual([14, 14]);
+    await page.keyboard.press('Backspace');
+    await page.keyboard.press('Enter');
+
+    const after = B11_BEFORE.replace('11.', '1.');
+    await expect.poll(() => blockText('b11')).toBe(after);
+    const saved = await saveDocument(sessions.get(), {});
+    const doc = new HwpDocument(new Uint8Array(await readFile(saved.path)));
+    expect(boldSchema.parse(JSON.parse(doc.getCharPropertiesAt(0, 10, 13))).bold).toBe(false);
+    doc.free();
+  });
+
+  test('한글 조합 중 Enter 는 조합만 끝내고 적용하지 않는다', async ({ page }) => {
+    await sessions.open(fixturePath('notice.hwpx'));
+
+    await doubleClick(page, { id: 'b11' });
+    await editBox(page).fill(B11_AFTER);
+    await editBox(page).dispatchEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true });
+    await expect(editBox(page)).toBeVisible();
+    await expect(editBox(page)).toHaveValue(B11_AFTER);
+
+    await page.keyboard.press('Enter');
+    await expect.poll(() => blockText('b11')).toBe(B11_AFTER);
+    expect(sessions.editCount).toBe(1);
   });
 
   test('AC-2 Esc 면 취소하고, 같은 글자로 Enter 해도 편집이 생기지 않는다', async ({ page }) => {
@@ -200,6 +239,9 @@ test.describe('SPEC-006 더블클릭으로 글자 고치기 (서버가 내주는
     expect(sessions.editCount).toBe(1);
     await page.clock.runFor(3000);
     await expect(page.getByRole('alert')).toBeHidden();
+    // 알림 칸은 비울 뿐 화면 읽기 도구가 볼 수 있게 남는다
+    await expect(page.getByRole('alert')).toBeAttached();
+    await expect(page.getByRole('alert')).toHaveText('');
   });
 
   test('AC-8 입력칸이 열린 동안 Claude 가 같은 블록을 바꾸면(서버 기록 전이어도) 사람 적용은 거부되고 알림이 보인다', async ({ page }) => {
@@ -252,6 +294,52 @@ test.describe('SPEC-006 더블클릭으로 글자 고치기 (서버가 내주는
     await expect.poll(() => blockText('b11')).toBe(B11_AFTER);
     expect(await blockText('b1')).toBe('라마바구청');
     expect(sessions.editCount).toBe(2);
+  });
+
+  test('입력칸이 열린 동안 Claude 가 위에 문단을 넣으면 입력칸이 그 블록 새 자리로 옮겨 간다', async ({ page }) => {
+    await sessions.open(fixturePath('notice.hwpx'));
+
+    await doubleClick(page, { id: 'b11' });
+    await editBox(page).fill(B11_AFTER);
+    const before = await editBox(page).boundingBox();
+    await insertParagraph(sessions.get(), { after: 'b1', text: '위에 넣은 문단' });
+
+    await highlight(sessions.get(), [{ id: 'b11' }]);
+    const block = await page.getByTestId('highlight-0').boundingBox();
+    const moved = await editBox(page).boundingBox();
+    expect(moved?.y).toBeGreaterThan(before?.y ?? Infinity);
+    expect(Math.abs((moved?.y ?? 0) - (block?.y ?? 0))).toBeLessThan(1);
+    await expect(editBox(page)).toBeFocused();
+    await firstPage(page).screenshot({ path: `${SCREENS}/dblclick-08-moved.png` });
+    await page.keyboard.press('Enter');
+
+    await expect.poll(() => blockText('b11')).toBe(B11_AFTER);
+  });
+
+  test('입력칸이 열린 동안 Claude 가 그 블록을 지우면 입력칸을 닫고 알림이 보인다', async ({ page }) => {
+    await sessions.open(fixturePath('notice.hwpx'));
+
+    await doubleClick(page, { id: 'b11' });
+    await editBox(page).fill(B11_AFTER);
+    await deleteBlocks(sessions.get(), ['b11']);
+
+    await expect(editBox(page)).toHaveCount(0);
+    await expect(page.getByRole('alert')).toHaveText(BLOCK_CHANGED_WHILE_EDITING);
+    await page.screenshot({ path: `${SCREENS}/dblclick-09-deleted.png` });
+    expect(sessions.editCount).toBe(1);
+  });
+
+  test('입력칸이 열린 동안 되돌리기가 오면 입력칸을 닫고 알림이 보인다', async ({ page }) => {
+    await sessions.open(fixturePath('notice.hwpx'));
+    await replaceText(sessions.get(), { id: 'b1' }, '라마바구청');
+
+    await doubleClick(page, { id: 'b11' });
+    await editBox(page).fill(B11_AFTER);
+    await undo(sessions.get(), 1);
+
+    await expect(editBox(page)).toHaveCount(0);
+    await expect(page.getByRole('alert')).toHaveText(BLOCK_CHANGED_WHILE_EDITING);
+    expect(await blockText('b11')).toBe(B11_BEFORE);
   });
 
   test('하이라이트가 있는 블록을 고치면 그 하이라이트는 지운다', async ({ page }) => {

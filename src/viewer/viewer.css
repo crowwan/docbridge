@@ -94,7 +94,8 @@ body {
   min-width: var(--inline-edit-min-width);
   margin: 0;
   padding: 0 var(--space-1);
-  border: var(--edit-hover-width) solid var(--edit-hover);
+  /* 문서 위에 떠 있는 요소라 그림자만 — 테두리를 같이 쓰지 않는다(PATTERNS X12). 열려 있는 동안은 포커스 링이 가장자리 */
+  border: 0;
   border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text);
@@ -127,8 +128,11 @@ body {
   overflow-wrap: anywhere;
 }
 
-.toast[hidden] {
-  display: none;
+/* 빈 알림은 자리를 차지하지 않지만 화면 읽기 도구가 바뀐 글자를 알 수 있게 늘 그려 둔다(display: none 이면 읽지 않는다) */
+.toast:empty {
+  padding: 0;
+  border: 0;
+  box-shadow: none;
 }
 
 .highlight-note {
