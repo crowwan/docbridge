@@ -75,7 +75,7 @@ SPEC-002(말로 고치기와 저장)의 기능 이슈(#19~#23)에 들어가기 �
 - **줄바꿈은 받지 않는다.** `replaceText` 에 `\n` 을 주면 문단을 나누지 않고 문단 안 글자로 들어간다(문단 수 그대로). 한컴에서 어떻게 보일지 알 수 없어 거부한다 — 새 문단은 `insert_paragraph`.
 - 글자 위치는 유니코드 글자 단위 그대로 넘긴다(`😀가𠀀나` 에서 2..3 → `😀가X나`).
 - **표 칸**: 0.8.7 에는 일반 `replaceTextInCell` 이 없다(`replaceTextInCellDeferredPagination` 은 IME 조합용). `insertTextInCellByPath`/`deleteTextInCellByPath`(경로 `[{controlIndex,cellIndex,cellParaIndex}]`) 로 같은 방법을 쓴다. 칸 text 위치(`\n` 으로 이은 것)는 칸 안 문단·위치로 바꾸고, 여러 문단에 걸치면 `deleteRangeInCell` 로 지워 문단을 합친다.
-- **누름틀**: `setFieldValue(ByName)` 도 값의 글자 모양을 버린다(근거 테스트). 값이 있으면 `getFieldList` 의 `startCharIdx` 기준으로 같은 방법(표 안 누름틀은 `location.path` 경로)을 쓰고 값이 기대와 같은지 다시 읽어 확인한다. 값이 비었으면 따를 글자가 없어 `setFieldValue(fieldId)`. **값 맨 앞·맨 뒤 자리는 누름틀 밖이다**(PR #24 리뷰: 넣으면 값이 안 바뀐다). 맨 뒤에 붙이면 마지막 두 글자를 "두 글자 + 글자" 로, 맨 앞이면 첫 글자를 "글자 + 첫 글자" 로 바꿔 넣는 자리를 값 안쪽으로 둔다. 한 글자 값은 안쪽 자리가 없어 값을 통째로 넣고 그 글자 속성을 다시 건다. 이름은 겹칠 수 있어(실제 기안문 `*검토1`·`검토1` 등) `ByName` 대신 `fieldId` 를 쓴다 → 누름틀 블록에 `fieldId` 가 필요하다(#19).
+- **누름틀**: `setFieldValue(ByName)` 도 값의 글자 모양을 버린다(근거 테스트). 값이 있으면 `getFieldList` 의 `startCharIdx` 기준으로 같은 방법(표 안 누름틀은 `location.path` 경로)을 쓰고 값이 기대와 같은지 다시 읽어 확인한다. 값이 비었으면 따를 글자가 없어 `setFieldValue(fieldId)`. **값 맨 앞·맨 뒤 자리는 누름틀 밖이다**(PR #24 리뷰: 넣으면 값이 안 바뀐다). 맨 뒤에 붙이면 마지막 두 글자를 "두 글자 + 글자" 로, 맨 앞이면 첫 글자를 "글자 + 첫 글자" 로 바꿔 넣는 자리를 값 안쪽으로 둔다. 한 글자 값은 안쪽 자리가 없어 값을 통째로 넣고 그 글자 속성을 다시 건다. 이름은 겹칠 수 있어(실제 기안문 `*검토1`·`검토1` 등) `ByName` 대신 `fieldId` 를 쓴다. #19 에서는 블록에 `fieldId` 를 넣지 않고, 서버가 보낸 위치의 "같은 문단 안 몇 번째 누름틀"(하이라이트와 같은 방법)로 `getFieldList` 에서 `fieldId` 를 고른다(`src/core/edit-operations.ts`).
 
 ### 문단 넣기
 
@@ -89,7 +89,7 @@ SPEC-002(말로 고치기와 저장)의 기능 이슈(#19~#23)에 들어가기 �
 
 - `saveSnapshot()` 은 문서 전체를 복제한다. `snapshotCapacity()` = 100(rhwp studio 예산). 우리는 20칸만 쓰고 넘치면 `discardSnapshot`. 기록 하나는 문서 핸들 하나에 묶이고, 새 문서·새로고침 때 `dispose()` 로 닫는다(버린 편집 수를 돌려줌).
 - 블록 id 표는 편집 전 사본(`BlockIdTable.clone()`)을 스냅샷과 같은 칸에 둔다. `undo(n)` 은 가장 옛 칸 스냅샷으로 `restoreSnapshot` 하고 그 칸의 id 표를 돌려준다(`EditHistory`). 거부된 편집(옮기기 거부)은 기록하지 않는다.
-- 실제 구성(#19): 스냅샷은 문서와 같이 뷰어에, id 표 사본은 서버에 있다. 서버가 `{이름, id 표 사본}` 스택을, 뷰어가 같은 순서의 스냅샷 id 스택을 들고 `undo` 요청 하나로 둘 다 꺼낸다. 새 문서·새로고침 때 둘 다 비운다.
+- 실제 구성(#19): 스냅샷은 문서와 같이 뷰어에, id 표 사본은 서버에 있다. 서버가 `{이름, id 표 사본}` 스택(`src/server/edit-log.ts` `EditLog`)을, 뷰어가 같은 순서의 스냅샷 스택(`src/core/document-editor.ts` `DocumentEditor` 안 `EditHistory`)을 들고 `undo` 요청 하나로 둘 다 꺼낸다. 서버는 편집·되돌리기를 문서 열기와 같은 줄에 세워 하나씩 보내 두 스택 순서가 어긋나지 않게 한다. 새 문서 때 둘 다 비운다(새로고침은 #22). "저장하지 않은 편집" 수는 되돌리기 칸(20)과 따로, 연 뒤 지나온 상태 줄과 저장한 때 줄이 갈라진 길이로 센다(20개를 넘게 고치거나 저장한 뒤 되돌려도 맞다).
 
 ### HWPX 저장 검증
 
