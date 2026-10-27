@@ -5,12 +5,14 @@ import { charLength } from '../core/chars.ts';
 import { errorMessage } from '../shared/errors.ts';
 import { NOTE_MAX_CHARS, textTargetSchema } from '../shared/protocol.ts';
 import { UNDO_LIMIT } from '../core/edit-history.ts';
-import { deleteBlocks, insertParagraph, NOTHING_TO_UNDO, replaceText, undo } from './edit-tools.ts';
+import { deleteBlocks, insertParagraph, moveBlocks, NOTHING_TO_UNDO, replaceText, undo } from './edit-tools.ts';
 import { clearHighlight, highlight } from './highlight-tools.ts';
 import { findText, getOutline, readBlockContents } from './read-tools.ts';
 import { saveDocument } from './save-tool.ts';
 import { OUTLINE_LIMIT, READ_CHAR_LIMIT } from './reading.ts';
 import type { DocumentSession } from './session.ts';
+
+export const MOVE_WHERE_REQUIRED = 'before 와 after 중 하나만 주세요.';
 
 const text = (value: string) => ({ content: [{ type: 'text' as const, text: value }] });
 
@@ -136,6 +138,25 @@ export function createMcpServer(session: DocumentSession): McpServer {
       inputSchema: { ids: z.array(z.string()).min(1).describe('지울 블록 id 목록') },
     },
     ({ ids }) => toolResult(() => deleteBlocks(session, ids)),
+  );
+
+  server.registerTool(
+    'move_blocks',
+    {
+      description:
+        '열린 문서의 이어진 블록을 기준 블록 앞(before)이나 뒤(after)로 서식째(표·누름틀 포함) 옮긴다(바로 적용, undo 로 되돌림). 옮기는 단위는 본문 문단이라, 고른 블록과 같은 문단의 블록(문단 안 누름틀 등)과 사이 빈 문단도 같이 옮겨진다. 블록 id 는 그대로이고 자동 번호는 새 순서로 다시 매겨진다. 같은 구역 안에서만, 구역 첫 문단과 그 앞으로는 옮기지 않는다. 각주·책갈피 등이 든 문단은 옮기지 않고 이유와 id 를 돌려준다(그때는 insert_paragraph·delete_blocks). 결과 { moved(옮긴 id), changed: [{ id, number?, text }](옮긴 블록과 번호가 바뀐 문단, number 는 옮긴 뒤 자동 번호), warnings? } — warnings 의 "직접 입력한 번호" 는 글자로 친 번호라 바뀌지 않았다는 뜻이니 사용자에게 알리고 필요하면 replace_text 로 고친다',
+      inputSchema: {
+        ids: z.array(z.string()).min(1).describe('옮길 블록 id(get_outline 의 id). 문서에서 이어져 있어야 한다'),
+        before: z.string().optional().describe('이 블록 앞으로 옮긴다(after 와 둘 중 하나)'),
+        after: z.string().optional().describe('이 블록 뒤로 옮긴다(before 와 둘 중 하나)'),
+      },
+    },
+    ({ ids, before, after }) =>
+      toolResult(async () => {
+        if (before !== undefined && after === undefined) return moveBlocks(session, ids, before, 'before');
+        if (after !== undefined && before === undefined) return moveBlocks(session, ids, after, 'after');
+        throw new Error(MOVE_WHERE_REQUIRED);
+      }),
   );
 
   server.registerTool(

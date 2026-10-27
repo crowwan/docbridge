@@ -1,9 +1,9 @@
-// 서버(bridge + 문서 세션)가 내준 빌드된 뷰어에서 replace_text · undo 가 화면을 다시 그리고
+// 서버(bridge + 문서 세션)가 내준 빌드된 뷰어에서 replace_text · move_blocks · undo 가 화면을 다시 그리고
 // 바뀐 블록에 초록 테두리를 남기는지, 다음 편집·하이라이트 때 지워지는지 본다(SPEC-002 AC-7). npm run e2e 가 먼저 빌드한다.
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 import { startBridge, type Bridge } from '../src/server/bridge.ts';
-import { deleteBlocks, insertParagraph, replaceText, undo } from '../src/server/edit-tools.ts';
+import { deleteBlocks, insertParagraph, moveBlocks, replaceText, undo } from '../src/server/edit-tools.ts';
 import { highlight } from '../src/server/highlight-tools.ts';
 import { readBlockContents } from '../src/server/read-tools.ts';
 import { DocumentSession } from '../src/server/session.ts';
@@ -129,7 +129,7 @@ test.describe('SPEC-002 문단 넣기·지우기 화면 (서버가 내주는 뷰
     await firstPage.screenshot({ path: `${SCREENS}/insert-01-after-insert.png` });
   });
 
-  test('AC-3 delete_blocks 뒤 지운 문단·표가 화면에서 사라지고 표시는 남지 않는다. undo 하면 돌아온다', async ({ page }) => {
+  test('AC-3 delete_blocks 뒤 지운 문단·표가 화면에서 사라지고, 지운 블록에는 표시가 없고 번호가 바뀐 문단에만 남는다. undo 하면 돌아온다', async ({ page }) => {
     await session.open(fixturePath('notice.hwpx'));
     const firstPage = page.getByRole('region', { name: '1쪽' });
     await insertParagraph(session, { after: 'b1', text: '넣은 문단' });
@@ -137,11 +137,36 @@ test.describe('SPEC-002 문단 넣기·지우기 화면 (서버가 내주는 뷰
 
     expect(await deleteBlocks(session, ['b8', 'b10', 'b12'])).toEqual({ deleted: ['b8', 'b10', 'b12'] });
 
-    await expect(marks(page)).toHaveCount(0);
+    // "나. 교육 내용" 이 "가." 로 다시 매겨져 그 문단만 바뀐 블록이다(#21)
+    await expect(marks(page)).toHaveCount(1);
     expect((await readBlockContents(session, { fromPage: 1 })).blocks.map(({ kind }) => kind)).not.toContain('table');
     await firstPage.screenshot({ path: `${SCREENS}/insert-02-after-delete.png` });
 
     expect(await undo(session, 1)).toEqual({ undone: 1, edits: ['delete_blocks b8, b10, b12'] });
     expect((await readBlockContents(session, { ids: ['b12'] })).blocks.map(({ kind }) => kind)).toEqual(['table']);
+  });
+
+  test('AC-4 move_blocks 뒤 옮긴 문단과 번호가 바뀐 문단이 다시 그려지고 초록 테두리가 남는다. undo 하면 번호가 돌아오고 표시가 없다', async ({ page }) => {
+    await session.open(fixturePath('notice.hwpx'));
+    const firstPage = page.getByRole('region', { name: '1쪽' });
+    await firstPage.screenshot({ path: `${SCREENS}/move-01-before.png` });
+
+    // "3. 회신 기한" 을 "1. 관련" 앞으로
+    const result = await moveBlocks(session, ['b11'], 'b6', 'before');
+
+    expect(result.changed.map(({ id, number }) => `${id} ${number}`)).toEqual(['b11 1.', 'b6 2.', 'b7 3.']);
+    await expect(marks(page)).toHaveCount(3);
+    // 표시는 문서 순서: 옮긴 문단(맨 위) → 번호가 바뀐 문단들
+    const [moved, first, second] = [await markOnFirstPage(page, 0), await markOnFirstPage(page, 1), await markOnFirstPage(page, 2)];
+    expect(moved.bottom).toBeLessThanOrEqual(first.top + 1);
+    expect(first.bottom).toBeLessThanOrEqual(second.top + 1);
+    expect(await inkBounds(page, 0, moved)).not.toBeNull();
+    await firstPage.screenshot({ path: `${SCREENS}/move-02-after.png` });
+
+    expect(await undo(session, 1)).toEqual({ undone: 1, edits: ['move_blocks b11'] });
+
+    await expect(marks(page)).toHaveCount(0);
+    expect(await paragraphText('b11')).toBe('회신 기한: 2026. 11. 14.(금)까지 참석 인원을 회신하여 주시기 바랍니다.');
+    await firstPage.screenshot({ path: `${SCREENS}/move-03-after-undo.png` });
   });
 });

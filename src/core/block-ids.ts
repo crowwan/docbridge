@@ -3,6 +3,7 @@
 // (rhwp-code-analysis 2-6). 그래서 문서를 열 때 블록마다 짧은 id 를 붙이고,
 // docbridge 가 문단을 넣거나 지울 때마다 대응표의 위치를 같이 옮긴다.
 import type { BlockPosition, TextBlockPosition } from './block-schema.ts';
+import { movedParagraphIndex } from './paragraph-changes.ts';
 
 export type { BlockPosition } from './block-schema.ts';
 
@@ -57,6 +58,14 @@ export function anchorsOf(blocks: BlockPosition[]): BlockAnchor[] {
     if (block.kind === 'field') fieldCount.set(at, partIndex + 1);
     return anchorOf(block, partIndex);
   });
+}
+
+/** 같은 문단 안 블록 순서: 문단 글자, 표(컨트롤 순), 누름틀(순번 순) */
+function partRank(anchor: BlockAnchor): number {
+  if (anchor.part === 'text') return 0;
+  const field = fieldOrdinal(anchor);
+  if (field !== undefined) return 1_000_000 + field;
+  return 1 + Number(/^table:(\d+)$/.exec(anchor.part)?.[1] ?? 0);
 }
 
 export class BlockIdTable {
@@ -146,18 +155,18 @@ export class BlockIdTable {
    * 사이 문단들은 옮긴 수만큼 밀리거나 당겨진다
    */
   paragraphsMoved(section: number, start: number, end: number, before: number): void {
-    const size = end - start;
-    const movedStart = before <= start ? before : before - size;
-    const moved = (p: number): number => {
-      if (start <= p && p < end) return movedStart + (p - start);
-      if (before <= start && before <= p && p < start) return p + size;
-      if (before >= end && end <= p && p < before) return p - size;
-      return p;
-    };
+    const moved = movedParagraphIndex(start, end, before);
     for (const anchor of this.anchors.values()) {
       if (anchor.section === section) anchor.paragraph = moved(anchor.paragraph);
     }
     this.idByKey = undefined;
+  }
+
+  /** 한 구역의 id 와 위치(문단 순서, 같은 문단은 문단 글자 → 표 → 누름틀 순). 옮기기 계획(server/move-plan.ts)이 블록 목록 대신 쓴다 */
+  entries(section: number): Array<{ id: string; anchor: BlockAnchor }> {
+    const found: Array<{ id: string; anchor: BlockAnchor }> = [];
+    for (const [id, anchor] of this.anchors) if (anchor.section === section) found.push({ id, anchor: { ...anchor } });
+    return found.sort((a, b) => a.anchor.paragraph - b.anchor.paragraph || partRank(a.anchor) - partRank(b.anchor));
   }
 
   /** 되돌리기용 사본. 편집 전 표를 떠 두었다가 undo 때 그대로 돌려놓는다 */

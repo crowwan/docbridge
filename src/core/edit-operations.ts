@@ -1,13 +1,13 @@
 // 편집 종류(SPEC-002 편집 도구)와 rhwp 문서에 적용하기. 뷰어와 테스트 뷰어가 같이 쓴다(document-editor.ts 가 부른다).
-// 편집은 kind 로 가르는 판별 유니언이다. 새 편집(#21 옮기기 등)은
+// 편집은 kind 로 가르는 판별 유니언이다. 새 편집은
 // 1) editOperationSchema 에 스키마 하나 2) applyEdit 의 switch 에 case 하나를 더한다(case 를 빠뜨리면 컴파일 오류).
 // 대상 블록은 서버가 붙인 위치(anchor)로 지금 블록 목록에서 찾고, 범위·칸 검사는 블록 글자를 가진 여기서 한다.
 import type { HwpDocument } from '@rhwp/core';
 import { z } from 'zod';
 import { blockIndexByAnchor, fieldOrdinal } from './block-ids.ts';
-import { anchoredTargetSchema, type AnchoredTarget, type Block, type FieldBlock, type TableBlock } from './block-schema.ts';
+import { anchoredTargetSchema, blockAnchorSchema, type AnchoredTarget, type Block, type FieldBlock, type TableBlock } from './block-schema.ts';
 import { deleteBlocks } from './delete-blocks.ts';
-import { insertParagraphNear, listFields, replaceCellText, replaceFieldText, replaceParagraphText } from './edits.ts';
+import { insertParagraphNear, listFields, moveParagraphs, replaceCellText, replaceFieldText, replaceParagraphText } from './edits.ts';
 import { noParagraphChanges, type ParagraphChanges, type ParagraphPosition } from './paragraph-changes.ts';
 import { spanIn, targetLabel } from './text-targets.ts';
 
@@ -36,16 +36,34 @@ export const deleteBlocksOperationSchema = z.object({
   targets: z.array(anchoredBlockSchema).min(1),
 });
 
+const paragraphIndexSchema = z.number().int().min(0);
+
+/**
+ * move_blocks: 같은 구역 안 이어진 문단 [start, end) 를 before 문단 앞으로 옮긴다.
+ * 이어짐·기준 위치 등은 서버가 id 표로 검사해 범위를 정해 보낸다(server/move-plan.ts).
+ * blocks 는 그 범위에 든 블록 모두(문서 순서) — 뷰어 블록과 맞는지 확인하고, 거부 문구에 id 를 쓴다
+ */
+export const moveBlocksOperationSchema = z.object({
+  kind: z.literal('move_blocks'),
+  section: paragraphIndexSchema,
+  start: paragraphIndexSchema,
+  end: paragraphIndexSchema,
+  before: paragraphIndexSchema,
+  blocks: z.array(z.object({ id: z.string(), anchor: blockAnchorSchema })).min(1),
+});
+
 /** 뷰어가 적용하는 편집. kind 마다 입력이 다르다 */
 export const editOperationSchema = z.discriminatedUnion('kind', [
   replaceTextOperationSchema,
   insertParagraphOperationSchema,
   deleteBlocksOperationSchema,
+  moveBlocksOperationSchema,
 ]);
 export type EditOperation = z.infer<typeof editOperationSchema>;
 export type ReplaceTextOperation = z.infer<typeof replaceTextOperationSchema>;
 export type InsertParagraphOperation = z.infer<typeof insertParagraphOperationSchema>;
 export type DeleteBlocksOperation = z.infer<typeof deleteBlocksOperationSchema>;
+export type MoveBlocksOperation = z.infer<typeof moveBlocksOperationSchema>;
 
 /**
  * 편집이 바꾼 본문 문단(편집 뒤 위치). 그 문단에 걸린 블록(문단 글자·표·누름틀)을 모두 바뀐 블록으로 본다 —
@@ -136,6 +154,37 @@ function insertParagraph(doc: HwpDocument, blocks: Block[], { reference, where, 
   return { paragraphs: [position], changes: { ...noParagraphChanges(), inserted: [position] } };
 }
 
+export const moveRejectedMessage = (reason: string, label: string) =>
+  `이 문단은 옮길 수 없습니다(${reason}): ${label}. 글자만 옮기려면 insert_paragraph 와 delete_blocks 를 쓰세요.`;
+
+/**
+ * move_blocks: 서식째(표·누름틀 포함) 옮긴다(edits.ts moveParagraphs — 사본·dryRun·번호 문단 모양 되돌리기).
+ * rhwp 가 거부하면 거부된 문단마다 스펙 문구를 모아 던진다(문서는 바뀌지 않았고, 스냅샷 복원 뒤 기록에도 남지 않는다).
+ * 실제로 옮긴 범위를 changes.moved 로 돌려준다 — 서버 id 표와 남길 빈 문단 위치가 이것으로 옮겨진다
+ */
+function moveBlocks(doc: HwpDocument, blocks: Block[], { section, start, end, before, blocks: moving }: MoveBlocksOperation): EditApplied {
+  const indexOf = blockIndexByAnchor(blocks);
+  for (const { id, anchor } of moving) {
+    const inRange = anchor.section === section && start <= anchor.paragraph && anchor.paragraph < end;
+    if (indexOf(anchor) === undefined || !inRange) throw new Error(`${id}: 뷰어 문서에 이 블록이 없습니다. get_outline 을 다시 부르세요.`);
+  }
+  const result = moveParagraphs(doc, section, start, end, before);
+  if (!result.ok) {
+    // 거부된 문단의 첫 블록 id. 블록이 없는 빈 문단이면 바로 앞 블록 뒤라고 적는다(범위 첫 문단에는 늘 블록이 있다)
+    const label = (paragraph: number) => {
+      const own = moving.find(({ anchor }) => anchor.paragraph === paragraph);
+      if (own !== undefined) return own.id;
+      const previous = moving.filter(({ anchor }) => anchor.paragraph < paragraph).at(-1);
+      return `${previous?.id ?? `문단 ${paragraph}`} 뒤 빈 문단`;
+    };
+    throw new Error(result.rejected.map(({ paragraph, reason }) => moveRejectedMessage(reason, label(paragraph))).join('\n'));
+  }
+  return {
+    paragraphs: Array.from({ length: end - start }, (_, i) => ({ section, paragraph: result.moved.start + i })),
+    changes: { ...noParagraphChanges(), moved: { section, start, end, before } },
+  };
+}
+
 /** 편집 하나를 문서에 적용한다. 던지면 문서가 반쯤 바뀌었을 수 있다 — 되돌리기는 부르는 쪽 스냅샷이 맡는다 */
 export function applyEdit(doc: HwpDocument, blocks: Block[], operation: EditOperation): EditApplied {
   switch (operation.kind) {
@@ -145,6 +194,8 @@ export function applyEdit(doc: HwpDocument, blocks: Block[], operation: EditOper
       return insertParagraph(doc, blocks, operation);
     case 'delete_blocks':
       return { paragraphs: [], changes: deleteBlocks(doc, blocks, operation.targets) };
+    case 'move_blocks':
+      return moveBlocks(doc, blocks, operation);
     default: {
       // 편집 종류를 더하고 여기 처리를 빠뜨리면 컴파일 오류가 난다
       const unhandled: never = operation;

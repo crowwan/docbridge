@@ -6,6 +6,7 @@ import { UNDO_LIMIT } from '../core/edit-history.ts';
 import { targetLabel } from '../core/text-targets.ts';
 import type { TextTarget } from '../shared/protocol.ts';
 import { anchored, anchoredTarget } from './highlight-tools.ts';
+import { planMove, type MovePlan, type MoveWhere } from './move-plan.ts';
 import { outlineItem, preview } from './reading.ts';
 import type { DocumentSession, EditedBlock } from './session.ts';
 
@@ -93,6 +94,67 @@ export async function deleteBlocks(session: DocumentSession, ids: string[]): Pro
     return { kind: 'delete_blocks', targets };
   });
   return { deleted };
+}
+
+/** 옮긴 뒤 블록: 자동 번호 문단이면 옮긴 뒤 번호 */
+export interface MovedItem {
+  id: string;
+  number?: string;
+  /** 앞 40자 */
+  text: string;
+}
+
+export interface MoveResult {
+  /** 옮긴 블록 id(문서 순서). 고른 블록과 같은 문단에 걸린 블록도 담는다 */
+  moved: string[];
+  /** 옮긴 블록과 자동 번호가 바뀐 문단의 블록(문서 순서) */
+  changed: MovedItem[];
+  /** 직접 입력한 번호가 있는 문단, 뷰어에 표시하지 못한 블록 */
+  warnings?: string[];
+}
+
+// 글자로 친 번호: 1. 12) 가. 나) (1) (가) ① ㉠ ㉮ Ⅰ. — 숫자·한글·동그라미 번호는 뒤에 공백이나 글 끝이 와야 한다(①번 항목 같은 문장은 아니다)(2026. 11. 같은 날짜는 4자리라 아니다)
+const TYPED_NUMBER =
+  /^\s*(?:(?:\d{1,2}|[가나다라마바사아자차카타파하])[.)](?=\s|$)|[(（](?:\d{1,2}|[가나다라마바사아자차카타파하])[)）]|[\u2460-\u2473\u3260-\u327B](?=\s|$)|[\u2160-\u216B\u2170-\u217B][.)])/u;
+
+/** 문단 글자 맨 앞에 직접 입력한 번호가 있는지(SPEC-002 "직접 입력한 번호") */
+export const hasTypedNumber = (text: string) => TYPED_NUMBER.test(text);
+
+export const typedNumberMessage = (ids: string[]) =>
+  `직접 입력한 번호가 있는 문단: ${ids.join(', ')}. 번호를 고치려면 replace_text 를 쓰세요.`;
+
+/** 편집 이름: 고른 블록을 문서 순서로(셋 이상이면 첫~끝) */
+const moveLabel = (ids: string[]) => `move_blocks ${ids.length <= 2 ? ids.join(', ') : `${ids[0]}~${ids.at(-1)}`}`;
+
+/**
+ * move_blocks: 이어진 블록을 기준 블록 앞/뒤로 서식째 옮긴다. 거부 판정과 범위는 planMove(id 표), 옮기기는 뷰어,
+ * id 표는 뷰어가 돌려준 실제로 옮긴 범위(changes.moved)로 session 이 옮긴다
+ */
+export async function moveBlocks(session: DocumentSession, ids: string[], reference: string, where: MoveWhere): Promise<MoveResult> {
+  let plan: MovePlan | undefined;
+  const chosen = new Set(ids);
+  const { changed, unmarked } = await session.edit(
+    () => moveLabel(plan?.blocks.flatMap(({ id }) => (chosen.has(id) ? [id] : [])) ?? ids),
+    (document) => {
+      plan = planMove(document.ids, ids, reference, where);
+      const { section, start, end, before, blocks } = plan;
+      return { kind: 'move_blocks', section, start, end, before, blocks };
+    },
+  );
+  // 옮긴 블록 = 옮긴 범위에 든 블록(id 는 그대로라 계획 때 id 와 같다)
+  const movedIds = new Set(plan?.blocks.map(({ id }) => id));
+  const items = changed.flatMap(({ id, block }) => {
+    if (id === undefined) return [];
+    const number = block.kind === 'paragraph' ? block.number : undefined;
+    return [{ id, block, item: { id, ...(number === undefined ? {} : { number }), text: outlineItem({ id, block }).text } }];
+  });
+  const typed = items.filter(({ id, block }) => movedIds.has(id) && block.kind === 'paragraph' && hasTypedNumber(block.text));
+  const warnings = [...(typed.length === 0 ? [] : [typedNumberMessage(typed.map(({ id }) => id))]), ...unmarked.map(unmarkedMessage)];
+  return {
+    moved: items.filter(({ id }) => movedIds.has(id)).map(({ id }) => id),
+    changed: items.map(({ item }) => item),
+    ...(warnings.length === 0 ? {} : { warnings }),
+  };
 }
 
 export interface UndoResult {

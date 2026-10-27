@@ -60,10 +60,16 @@ export interface EditOutcome {
 }
 
 /**
- * 뷰어가 실제로 넣고 지운 문단·표(ParagraphChanges)대로 id 표를 옮긴다. 서버가 따로 계획하지 않으므로 뷰어 문서와 어긋나지 않는다.
+ * 뷰어가 실제로 넣고 지우고 옮긴 문단·표(ParagraphChanges)대로 id 표를 옮긴다. 서버가 따로 계획하지 않으므로 뷰어 문서와 어긋나지 않는다.
  * 순서는 relocate(core/paragraph-changes.ts)와 같다: 표만 지운 것(컨트롤 번호 큰 것부터) → 지운 문단(뒤에서부터) → 넣은 문단(앞에서부터)
  */
 function applyParagraphChanges(ids: BlockIdTable, changes: ParagraphChanges): { inserted: string[]; deleted: string[] } {
+  // 옮기기는 id 를 그대로 새 자리로 옮긴다(넣기·지우기와 같이 오지 않는다 — relocate 와 같은 규칙)
+  if (changes.moved !== undefined) {
+    const { section, start, end, before } = changes.moved;
+    ids.paragraphsMoved(section, start, end, before);
+    return { inserted: [], deleted: [] };
+  }
   const removed = [
     ...changes.deletedParagraphs.flatMap(({ section, paragraph }) => ids.anchorsAt(section, paragraph)),
     ...changes.deletedTables.flatMap(({ section, paragraph, controlIndex }) =>
@@ -273,7 +279,8 @@ export class DocumentSession {
    * 요청에 서버 편집 순번을 실어 보낸다: 앞 편집 결과를 못 받았으면(타임아웃 등 — 뷰어는 적용했을 수 있다) 뷰어가 어긋남으로 거부한다
    */
   async edit(
-    label: string,
+    /** 편집 이름(되돌리기 결과에 보인다). 함수면 편집을 만든 뒤(operationFor 다음) 부른다 */
+    label: string | (() => string),
     operationFor: (document: OpenedDocument) => EditOperation,
     updateIds: (ids: BlockIdTable) => void = () => undefined,
   ): Promise<EditOutcome> {
@@ -288,7 +295,7 @@ export class DocumentSession {
       });
       const { inserted, deleted } = changes === undefined ? { inserted: [], deleted: [] } : applyParagraphChanges(document.ids, changes);
       updateIds(document.ids);
-      document.edits.record(label, before);
+      document.edits.record(typeof label === 'string' ? label : label(), before);
       document.pageCount = pageCount;
       const { ids } = document;
       return {
