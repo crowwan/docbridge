@@ -299,7 +299,7 @@ export function createMcpServer(sessions: DocumentSessions): McpServer {
   server.registerTool(
     'undo',
     {
-      description: `편집(replace_text·insert_paragraph·delete_blocks·move_blocks·set_style 등)을 최근 것부터 되돌린다. 최대 ${UNDO_LIMIT}단계이고 그보다 옛 편집은 되돌릴 수 없다. 뷰어가 다시 그려진다. 사용자가 뷰어에서 고친 편집도 같은 줄에 쌓여 같이 되돌린다(edits 에 "(사용자 화면 편집)" 이 붙는다). 결과 { undone, edits(되돌린 편집, 최근 것부터), warnings? }. 되돌릴 것이 없으면 "${NOTHING_TO_UNDO}"`,
+      description: `편집(replace_text·insert_paragraph·delete_blocks·move_blocks·set_style·copy_blocks(대상 문서) 등)을 최근 것부터 되돌린다. 최대 ${UNDO_LIMIT}단계이고 그보다 옛 편집은 되돌릴 수 없다. 뷰어가 다시 그려진다. 사용자가 뷰어에서 고친 편집도 같은 줄에 쌓여 같이 되돌린다(edits 에 "(사용자 화면 편집)" 이 붙는다). 결과 { undone, edits(되돌린 편집, 최근 것부터), warnings? }. 되돌릴 것이 없으면 "${NOTHING_TO_UNDO}"`,
       inputSchema: {
         ...docInput,
         steps: z.number().int().min(1).max(UNDO_LIMIT).default(1).describe(`되돌릴 편집 수(기본 1, 최대 ${UNDO_LIMIT})`),

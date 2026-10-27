@@ -1,4 +1,4 @@
-// 여러 문서(SPEC-007): 서버가 내준 빌드된 뷰어로 문서마다 탭을 띄우고, 탭 제목·doc 이름·● 표시·탭 닫기 알림·close_document 를 본다.
+// 여러 문서(SPEC-007): 서버가 내준 빌드된 뷰어로 문서마다 탭을 띄우고, 탭 제목·doc 이름·● 표시·탭 닫기 알림·close_document·copy_blocks(문서 사이 복사)를 본다.
 // 브라우저 여는 함수는 Playwright 새 페이지(탭)로 바꿔 넣는다. 도구는 MCP 클라이언트로 불러 결과 알림까지 본다.
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -132,5 +132,26 @@ test.describe('SPEC-007 여러 문서 탭 (서버가 내주는 뷰어)', () => {
     await expect(d1).toHaveTitle('report.hwpx');
     await expect(d1.getByTestId('doc-name')).toHaveText('d2');
     expect(context.pages()).toHaveLength(1);
+  });
+
+  test('AC-5 copy_blocks 로 d1 의 번호 문단·표를 d2 에 넣으면 d2 탭에 다시 그려지고 넣은 블록에 초록 표시, d1 탭은 그대로다. undo 한 번에 돌아간다', async () => {
+    await call('open_document', { path: fixturePath('notice.hwpx') });
+    await call('open_document', { path: fixturePath('report.hwpx') });
+    const d2Page = tab('d2').getByRole('region', { name: '1쪽' });
+    await d2Page.screenshot({ path: `${SCREENS}/copy-01-d2-before.png` });
+
+    // 공문의 "3. 회신 기한" + 일정 표 → 보고서 제목(b1) 뒤
+    const { json } = await call('copy_blocks', { from: 'd1', ids: ['b11', 'b12'], to: 'd2', after: 'b1' });
+
+    expect(json).toMatchObject({ doc: 'd2', inserted: [expect.any(String), expect.any(String)] });
+    // 바뀐 블록 표시는 캔버스 위 장식이라 역할·글자가 없다 → 클래스로 찾는다(PLAYBOOK 4장 예외)
+    await expect(tab('d2').locator('.edit-mark').first()).toBeVisible();
+    await expect(tab('d2').locator('.edit-mark').first()).toHaveCSS('outline-color', 'rgb(30, 166, 114)');
+    await expect(tab('d1').locator('.edit-mark')).toHaveCount(0);
+    await d2Page.screenshot({ path: `${SCREENS}/copy-02-d2-after-copy.png` });
+    await tab('d1').getByRole('region', { name: '1쪽' }).screenshot({ path: `${SCREENS}/copy-03-d1-source.png` });
+
+    expect((await call('undo', { doc: 'd2' })).json).toMatchObject({ doc: 'd2', undone: 1, edits: ['copy_blocks d1 b11, b12 → after b1'] });
+    await expect(tab('d2').locator('.edit-mark')).toHaveCount(0);
   });
 });

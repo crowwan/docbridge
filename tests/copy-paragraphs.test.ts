@@ -77,8 +77,8 @@ describe('SPEC-007 copy_blocks — 대상 문서 보정 (copyParagraphs, PR #70 
 
   it('보정은 넣은 문단만 본다 — 대상 문서의 다른 문단 스타일을 훑지 않고, 스타일 목록도 문단마다 다시 읽지 않는다', () => {
     const target = openFixture('report.hwpx');
-    // 대상을 크게: 문단 200개를 더한다
-    for (let i = 0; i < 200; i += 1) appendParagraph(target, `큰 문서 문단 ${i}`);
+    // 대상을 넣을 문단보다 훨씬 크게(문단 30개를 더한다). 시간이 아니라 호출 수로 본다
+    for (let i = 0; i < 30; i += 1) appendParagraph(target, `큰 문서 문단 ${i}`);
     const styleAt = vi.spyOn(target, 'getStyleAt');
     const styleList = vi.spyOn(target, 'getStyleList');
     const range = { section: S, start: SRC.numbered.start, end: SRC.outlineStyle + 1 };
