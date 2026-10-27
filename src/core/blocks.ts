@@ -1,6 +1,7 @@
 // 문서를 Claude 에게 보여줄 블록(본문 문단·표·누름틀) 목록으로 바꾼다. rhwp 공개 API 만 쓴다.
 import type { HwpDocument } from '@rhwp/core';
 import { z } from 'zod';
+import { parseJson } from './json.ts';
 import type { Block, FieldBlock, ParagraphBlock, TableBlock } from './block-schema.ts';
 
 export type { Block, FieldBlock, ParagraphBlock, TableBlock, TableCell } from './block-schema.ts';
@@ -38,16 +39,12 @@ const fieldListSchema = z.array(
   }),
 );
 
-function parse<T>(schema: z.ZodType<T>, json: string): T {
-  return schema.parse(JSON.parse(json));
-}
-
 function paragraphText(doc: HwpDocument, section: number, paragraph: number): string {
   return doc.getTextRange(section, paragraph, 0, doc.getParagraphLength(section, paragraph));
 }
 
 function pageOf(doc: HwpDocument, section: number, paragraph: number): number {
-  return parse(pageOfPositionSchema, doc.getPageOfPosition(section, paragraph)).page + 1;
+  return parseJson(pageOfPositionSchema, doc.getPageOfPosition(section, paragraph)).page + 1;
 }
 
 const positionKey = (section: number, paragraph: number) => `${section}:${paragraph}`;
@@ -127,7 +124,7 @@ interface Heading {
 }
 
 function headingOf(doc: HwpDocument, section: number, paragraph: number): Heading | undefined {
-  const { headType, paraLevel } = parse(paraPropertiesSchema, doc.getParaPropertiesAt(section, paragraph));
+  const { headType, paraLevel } = parseJson(paraPropertiesSchema, doc.getParaPropertiesAt(section, paragraph));
   if (headType !== 'Number' && headType !== 'Outline') return undefined;
   return { outline: headType === 'Outline', level: paraLevel };
 }
@@ -155,12 +152,12 @@ const cellText = (doc: HwpDocument, section: number, paragraph: number, control:
   cellParagraphTexts(doc, section, paragraph, control, cell).join('\n');
 
 function readTable(doc: HwpDocument, section: number, paragraph: number, controlIndex: number): TableBlock {
-  const { rowCount, colCount, cellCount } = parse(
+  const { rowCount, colCount, cellCount } = parseJson(
     tableDimensionsSchema,
     doc.getTableDimensions(section, paragraph, controlIndex),
   );
   const raw = Array.from({ length: cellCount }, (_, cellIdx) => ({
-    ...parse(cellInfoSchema, doc.getCellInfo(section, paragraph, controlIndex, cellIdx)),
+    ...parseJson(cellInfoSchema, doc.getCellInfo(section, paragraph, controlIndex, cellIdx)),
     text: cellText(doc, section, paragraph, controlIndex, cellIdx),
   }));
   const labelOf = (row: number) =>
@@ -189,7 +186,7 @@ function tablesByParagraph(doc: HwpDocument): Map<string, number[]> {
     total += doc.getParagraphCount(s);
   }
   const tables = new Map<string, number[]>();
-  for (const control of parse(controlsSchema, doc.getControls())) {
+  for (const control of parseJson(controlsSchema, doc.getControls())) {
     if (control.ctrlId !== 'tbl' || control.list !== 0) continue;
     const section = sectionStarts.findLastIndex((start) => start <= control.para);
     const key = positionKey(section, control.para - (sectionStarts[section] ?? 0));
@@ -200,7 +197,7 @@ function tablesByParagraph(doc: HwpDocument): Map<string, number[]> {
 
 function fieldsByParagraph(doc: HwpDocument): Map<string, FieldBlock[]> {
   const fields = new Map<string, FieldBlock[]>();
-  for (const field of parse(fieldListSchema, doc.getFieldList())) {
+  for (const field of parseJson(fieldListSchema, doc.getFieldList())) {
     if (field.fieldType !== 'clickhere') continue;
     const { sectionIndex: section, paraIndex: paragraph, path } = field.location;
     const key = positionKey(section, paragraph);
@@ -247,7 +244,7 @@ export function extractBlocks(doc: HwpDocument): Block[] {
     block && heading ? [{ key: positionKey(section, paragraph), page: block.page - 1 }] : [],
   );
   const numbers = numbersForParagraphs(wanted, doc.pageCount(), (page) =>
-    parse(textLayoutSchema, doc.getPageTextLayout(page)).runs,
+    parseJson(textLayoutSchema, doc.getPageTextLayout(page)).runs,
   );
   return body.flatMap(({ section, paragraph, block, heading }) => {
     const key = positionKey(section, paragraph);

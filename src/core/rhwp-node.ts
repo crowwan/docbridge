@@ -4,9 +4,9 @@
 // 문단·표·누름틀 구조와 번호 문자열은 글자 폭과 무관하므로 테스트에 쓸 수 있다.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { HwpDocument, initSync } from '@rhwp/core';
+import { HwpDocument, initSync, type InitOutput } from '@rhwp/core';
 
-let initialized = false;
+let wasm: InitOutput | undefined;
 
 function approximateTextWidth(font: string, text: string): number {
   const size = /(\d+(?:\.\d+)?)px/.exec(font)?.[1];
@@ -15,11 +15,16 @@ function approximateTextWidth(font: string, text: string): number {
 }
 
 export function initRhwpForNode(): void {
-  if (initialized) return;
+  if (wasm !== undefined) return;
   Object.assign(globalThis, { measureTextWidth: approximateTextWidth });
   const wasmPath = fileURLToPath(import.meta.resolve('@rhwp/core/rhwp_bg.wasm'));
-  initSync({ module: readFileSync(wasmPath) });
-  initialized = true;
+  wasm = initSync({ module: readFileSync(wasmPath) });
+}
+
+/** WASM 선형 메모리 크기(바이트). 늘기만 하고 줄지 않는다 — 스냅샷 메모리 측정용(scripts/measure-edits.ts) */
+export function wasmMemoryBytes(): number {
+  initRhwpForNode();
+  return wasm?.memory.buffer.byteLength ?? 0;
 }
 
 export function openDocumentFile(path: string): HwpDocument {

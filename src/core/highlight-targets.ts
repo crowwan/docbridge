@@ -3,6 +3,7 @@
 // rhwp 글자 위치와 단위가 같다.
 import type { HwpDocument } from '@rhwp/core';
 import { z } from 'zod';
+import { parseJson } from './json.ts';
 import { blockIndexByAnchor, fieldOrdinal, type BlockAnchor } from './block-ids.ts';
 import type { Block, FieldBlock, TableBlock } from './block-schema.ts';
 import { cellParagraphTexts } from './blocks.ts';
@@ -55,8 +56,6 @@ export interface Caret {
   y: number;
   height: number;
 }
-
-const parse = <T>(schema: z.ZodType<T>, json: string): T => schema.parse(JSON.parse(json));
 
 /** 대상의 start·end 를 검사해 [시작, 끝) 으로. 둘 다 없으면 전체 */
 function spanIn(target: HighlightTarget, text: string, where: string): { start: number; end: number } {
@@ -205,7 +204,7 @@ class HighlightContext {
   }
 
   private cellBoxes(block: TableBlock): Array<SelectionRect & { cellIndex: number }> {
-    return parse(cellBoxesSchema, this.doc.getTableCellBboxes(block.section, block.paragraph, block.controlIndex)).map(
+    return parseJson(cellBoxesSchema, this.doc.getTableCellBboxes(block.section, block.paragraph, block.controlIndex)).map(
       ({ cellIdx, pageIndex, x, y, w, h }) => ({ cellIndex: cellIdx, pageIndex, x, y, width: w, height: h }),
     );
   }
@@ -241,14 +240,14 @@ class HighlightContext {
   }
 
   private fields(): FieldEntry[] {
-    this.fieldList ??= parse(fieldListSchema, this.doc.getFieldList()).filter((f) => f.fieldType === 'clickhere');
+    this.fieldList ??= parseJson(fieldListSchema, this.doc.getFieldList()).filter((f) => f.fieldType === 'clickhere');
     return this.fieldList;
   }
 
   private layout(pageIndex: number): LayoutRun[] {
     const cached = this.layouts.get(pageIndex);
     if (cached !== undefined) return cached;
-    const runs = parse(layoutSchema, this.doc.getPageTextLayout(pageIndex)).runs;
+    const runs = parseJson(layoutSchema, this.doc.getPageTextLayout(pageIndex)).runs;
     this.layouts.set(pageIndex, runs);
     return runs;
   }
@@ -283,7 +282,7 @@ class HighlightContext {
     cell: CellLocation | undefined,
     paragraph: number,
   ): SelectionRect[] {
-    const caret = parse(
+    const caret = parseJson(
       caretSchema,
       cell === undefined
         ? this.doc.getCursorRect(block.section, paragraph, field.startCharIdx)

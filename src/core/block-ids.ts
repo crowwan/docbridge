@@ -112,6 +112,33 @@ export class BlockIdTable {
     this.idByKey = undefined;
   }
 
+  /**
+   * 이어진 문단 [start, end) 를 before 문단 앞으로 옮긴 뒤(edits.ts moveParagraphs): 옮긴 문단의 id 는 그대로 새 자리로,
+   * 사이 문단들은 옮긴 수만큼 밀리거나 당겨진다
+   */
+  paragraphsMoved(section: number, start: number, end: number, before: number): void {
+    const size = end - start;
+    const movedStart = before <= start ? before : before - size;
+    const moved = (p: number): number => {
+      if (start <= p && p < end) return movedStart + (p - start);
+      if (before <= start && before <= p && p < start) return p + size;
+      if (before >= end && end <= p && p < before) return p - size;
+      return p;
+    };
+    for (const anchor of this.anchors.values()) {
+      if (anchor.section === section) anchor.paragraph = moved(anchor.paragraph);
+    }
+    this.idByKey = undefined;
+  }
+
+  /** 되돌리기용 사본. 편집 전 표를 떠 두었다가 undo 때 그대로 돌려놓는다 */
+  clone(): BlockIdTable {
+    const copy = new BlockIdTable();
+    for (const [id, anchor] of this.anchors) copy.anchors.set(id, { ...anchor });
+    copy.nextNumber = this.nextNumber;
+    return copy;
+  }
+
   private shift(section: number, from: number, delta: number): void {
     for (const anchor of this.anchors.values()) {
       if (anchor.section === section && anchor.paragraph >= from) anchor.paragraph += delta;
