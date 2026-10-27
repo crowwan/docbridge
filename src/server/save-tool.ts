@@ -3,7 +3,7 @@
 import type { ContentLoss } from '../core/hwpx-export.ts';
 import { base64Length, MAX_DOCUMENT_BYTES, tooLargeMessage } from '../shared/limits.ts';
 import type { ViewerResult } from '../shared/protocol.ts';
-import { protectedSource, resolveNewDocumentSavePath, resolveSavePath, writeSave } from './save-path.ts';
+import { newDocumentTakenMessage, protectedSource, resolveNewDocumentSavePath, resolveSavePath, writeSave } from './save-path.ts';
 import type { DocumentSession, OpenedDocument } from './session.ts';
 
 export interface SaveArgs {
@@ -81,6 +81,8 @@ export function saveDocument(session: DocumentSession, args: SaveArgs, write = w
         overwrite,
         numbered: args.path === undefined && location.kind === 'file',
         ...(protectedPath === undefined ? {} : { protectedPath }),
+        // 경로 없는 새 문서 저장은 overwrite 가 쓰이지 않는다 — 경로 + overwrite 나 다른 경로를 안내
+        ...(location.kind === 'new' && args.path === undefined ? { existing: newDocumentTakenMessage } : {}),
       },
       bytes,
     );

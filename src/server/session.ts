@@ -15,7 +15,7 @@ import { ViewerNotConnectedError, type Bridge } from './bridge.ts';
 import { EditLog } from './edit-log.ts';
 import { log } from './log.ts';
 import { absolutePath } from './paths.ts';
-import { resolveNewDocumentPath } from './save-path.ts';
+import { RELATIVE_TEMPLATE_PATH, requireAbsolutePath, resolveNewDocumentPath } from './save-path.ts';
 
 /** 이보다 큰 파일은 읽지 않는다 */
 export const MAX_FILE_BYTES = MAX_DOCUMENT_BYTES;
@@ -104,6 +104,9 @@ export interface OpenResult {
 }
 
 export const discardedEditsMessage = (count: number) => `저장하지 않은 편집 ${count}개를 버렸습니다`;
+/** 한 번도 저장하지 않은 새 문서는 편집이 없어도(양식 keep_content 등) 되살릴 파일이 없다 */
+export const discardedNewDocumentMessage = (fileName: string, edits: number) =>
+  `저장하지 않은 새 문서 ${fileName} 을 버렸습니다(편집 ${edits}개)`;
 export const newDocumentLostMessage = (savePath: string, edits: number) =>
   `뷰어를 새로고침해서 저장하지 않은 새 문서가 사라졌습니다(${savePath}, 편집 ${edits}개). create_document 로 다시 만드세요.`;
 
@@ -273,7 +276,7 @@ export class DocumentSession {
     return this.enqueue(async () => {
       if (!this.bridge.hasViewer()) await this.launchViewer();
       // 뷰어는 새 문서를 열며 이전 문서와 그 되돌리기 스냅샷을 닫는다(AC-12)
-      const discarded = this.unsavedEdits;
+      const discarded = this.discardNotice();
       const loaded = await this.load(fileName, bytes, discarded);
       const ids = BlockIdTable.assign(loaded.blocks);
       this.current = {
@@ -291,9 +294,18 @@ export class DocumentSession {
         pageCount: loaded.pageCount,
         blockCount: loaded.blocks.length,
         viewerUrl: this.bridge.viewerUrl,
-        ...(discarded === 0 ? {} : { warnings: [discardedEditsMessage(discarded)] }),
+        ...(discarded === undefined ? {} : { warnings: [discarded] }),
       };
     });
+  }
+
+  /** 지금 문서를 다른 문서로 대신하면 잃는 것: 새 문서(저장 전)면 그 문서, 아니면 저장하지 않은 편집 수. 잃을 것이 없으면 undefined */
+  private discardNotice(): string | undefined {
+    const document = this.current;
+    if (document === undefined) return undefined;
+    const edits = document.edits.unsavedEdits;
+    if (document.location.kind === 'new') return discardedNewDocumentMessage(document.fileName, edits);
+    return edits === 0 ? undefined : discardedEditsMessage(edits);
   }
 
   /**
@@ -302,7 +314,8 @@ export class DocumentSession {
    */
   async create(args: CreateArgs): Promise<CreateResult> {
     const savePath = await resolveNewDocumentPath(args.path);
-    const templatePath = args.template === undefined ? undefined : absolutePath(args.template, process.cwd());
+    // 양식도 새 문서 경로처럼 절대 경로나 ~ 만(서버 작업 폴더는 사용자가 모른다)
+    const templatePath = args.template === undefined ? undefined : requireAbsolutePath(args.template, RELATIVE_TEMPLATE_PATH);
     const template =
       templatePath === undefined
         ? undefined
@@ -314,7 +327,7 @@ export class DocumentSession {
     const fileName = basename(savePath);
     return this.enqueue(async () => {
       if (!this.bridge.hasViewer()) await this.launchViewer();
-      const discarded = this.unsavedEdits;
+      const discarded = this.discardNotice();
       const failure = template === undefined ? '새 문서를 만들 수 없습니다' : '문서를 열 수 없습니다';
       const created = await this.present(
         () => this.bridge.request('create_document', { fileName, ...(template === undefined ? {} : { template }) }),
@@ -344,7 +357,7 @@ export class DocumentSession {
         styles: created.styles,
         ...(template === undefined ? {} : { template: templateSummary(template.fileName, created.cleared) }),
         viewerUrl: this.bridge.viewerUrl,
-        ...(discarded === 0 ? {} : { warnings: [discardedEditsMessage(discarded)] }),
+        ...(discarded === undefined ? {} : { warnings: [discarded] }),
       };
     });
   }
@@ -451,8 +464,8 @@ export class DocumentSession {
       : `${VIEWER_NOT_CONNECTED} 저장하지 않은 새 문서: ${location.savePath}`;
   }
 
-  /** discarded: 이 문서를 띄우며 버리는 저장하지 않은 편집 수. 열지 못해도 이전 문서는 닫히므로 오류에 붙여 알린다 */
-  private load(fileName: string, bytes: Uint8Array, discarded = 0): Promise<LoadDocumentResult> {
+  /** discarded: 이 문서를 띄우며 잃는 것(discardNotice). 열지 못해도 이전 문서는 닫히므로 오류에 붙여 알린다 */
+  private load(fileName: string, bytes: Uint8Array, discarded?: string): Promise<LoadDocumentResult> {
     const data = Buffer.from(bytes).toString('base64');
     return this.present(() => this.bridge.request('load_document', { fileName, data }), '문서를 열 수 없습니다', discarded);
   }
@@ -461,13 +474,13 @@ export class DocumentSession {
    * 뷰어에 문서를 바꿔 띄우는 요청(열기·새 문서). 뷰어가 실패하면 이전 문서도 닫고 오류 화면을 보여주므로 서버도 열린 문서를 비우고,
    * failure: <뷰어(rhwp)가 문서를 읽거나 만들지 못한 이유>(버린 편집 수) 로 던진다
    */
-  private async present<T>(request: () => Promise<T>, failure: string, discarded: number): Promise<T> {
+  private async present<T>(request: () => Promise<T>, failure: string, discarded: string | undefined): Promise<T> {
     try {
       return await request();
     } catch (error) {
       if (error instanceof ViewerNotConnectedError) throw new Error(this.notConnectedMessage());
       this.current = undefined;
-      const lost = discarded === 0 ? '' : ` (${discardedEditsMessage(discarded)})`;
+      const lost = discarded === undefined ? '' : ` (${discarded})`;
       throw new Error(`${failure}: ${errorMessage(error)}${lost}`);
     }
   }

@@ -8,6 +8,7 @@
 // - 양식 본문 비우기: 구역 첫 문단(구역·단 정의)과 머리말·꼬리말·쪽 번호 위치가 든 문단은 남기고 글자·다른 개체를 지운다
 import { HwpDocument } from '@rhwp/core';
 import { z } from 'zod';
+import { blockPositionSchema, type Block } from './block-schema.ts';
 import { BODY_LIST, bodyParagraphLocator } from './body-paragraphs.ts';
 import { charLength } from './chars.ts';
 import { paraShapeIdOf } from './edits.ts';
@@ -316,8 +317,13 @@ export function bodyTextLength(doc: HwpDocument): number {
 /** rhwp 빈 문서 템플릿(blank2010.hwp, 구역·단 정의가 든 빈 문단 하나). createEmpty 는 구역·단 정의가 없어 쓰지 않는다(ADR 003) */
 export function blankDocument(): HwpDocument {
   const doc = HwpDocument.createEmpty();
-  doc.createBlankDocument();
-  return doc;
+  try {
+    doc.createBlankDocument();
+    return doc;
+  } catch (error) {
+    doc.free();
+    throw error;
+  }
 }
 
 export interface CreatedDocument {
@@ -340,6 +346,19 @@ export function createNewDocument(template: Uint8Array | undefined, keepContent:
     doc.free();
     throw error;
   }
+}
+
+/**
+ * 뷰어 create_document 의 결과(뷰어·테스트 뷰어 공용, shared/protocol createDocumentResultSchema 모양): 쪽 수, 블록 위치,
+ * 문단 스타일, 양식을 비웠으면 지운 개체·남긴 개체
+ */
+export function createdDocumentResult(doc: HwpDocument, blocks: Block[], cleared: ClearedBody | undefined) {
+  return {
+    pageCount: doc.pageCount(),
+    blocks: blocks.map((block) => blockPositionSchema.parse(block)),
+    styles: styleSummaries(doc),
+    ...(cleared === undefined ? {} : { cleared: { removedObjects: cleared.removedObjects, keptObjects: cleared.keptObjects } }),
+  };
 }
 
 /** create_document 결과에 싣는 스타일 목록(이름·영문 이름·개요 수준). 스타일 id 는 문서 안 번호라 싣지 않는다 */

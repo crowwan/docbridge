@@ -47,10 +47,10 @@ export function createMcpServer(session: DocumentSession): McpServer {
     'create_document',
     {
       description:
-        '새 한글 문서를 만들어 뷰어에 띄운다(아직 파일은 없다 — save_document 로 저장). template 이 없으면 빈 A4 문서, 있으면 그 양식(.hwp/.hwpx, 읽기만 함)의 스타일·쪽 설정·머리말·꼬리말을 쓰고 본문(표·그림 포함)은 비운다(keep_content: true 면 본문도 남김). 열린 문서를 대신한다(저장하지 않은 편집은 버리고 warnings 로 알림). path 는 처음 저장할 자리로 절대 경로나 ~ 로 시작해야 하고(상대 경로 거부), 이미 있는 파일이면 거부한다. 확장자가 없으면 .hwpx. 결과 { path, pageCount, blockCount, firstBlock, styles: [{ name, englishName, outlineLevel? }], template?: { fileName, removedObjects, keptObjects } | { fileName, keptContent }, viewerUrl, warnings? } — firstBlock 은 첫 문단(비어 있음) id 로, replace_text 로 채우고(보통 제목) 그 뒤로 insert_paragraph 한다(첫 문단 앞에는 넣을 수 없다). 채우기는 기존 편집 도구(replace_text·insert_paragraph·delete_blocks·move_blocks·undo)로 한다. 한 번도 저장하지 않은 새 문서는 뷰어를 새로고침하면 사라진다',
+        '새 한글 문서를 만들어 뷰어에 띄운다(아직 파일은 없다 — save_document 로 저장). template 이 없으면 빈 A4 문서, 있으면 그 양식(.hwp/.hwpx, 읽기만 함)의 스타일·쪽 설정·머리말·꼬리말을 쓰고 본문(표·그림 포함)은 비운다(keep_content: true 면 본문도 남김). 열린 문서를 대신한다(저장하지 않은 편집은 버리고 warnings 로 알림). path 는 처음 저장할 자리로 절대 경로나 ~ 로 시작해야 하고(상대 경로 거부), 이미 있는 파일이면 거부한다. 확장자가 없으면 .hwpx. 결과 { path, pageCount, blockCount, firstBlock, styles: [{ name, englishName, outlineLevel? }], template?: { fileName, removedObjects, keptObjects } | { fileName, keptContent }, viewerUrl, warnings? } — firstBlock 은 첫 블록 id. 빈 문서·비운 양식이면 비어 있는 첫 문단이라 replace_text 로 채우고(보통 제목) 그 뒤로 insert_paragraph 한다(첫 문단 앞에는 넣을 수 없다). keep_content: true 면 양식 본문의 첫 블록이라 글자가 있거나 표·누름틀일 수 있으니 get_outline 으로 보고 쓴다. 채우기는 기존 편집 도구(replace_text·insert_paragraph·delete_blocks·move_blocks·undo)로 한다. 한 번도 저장하지 않은 새 문서는 뷰어를 새로고침하면 사라진다',
       inputSchema: {
         path: z.string().describe('처음 저장할 경로(절대 경로 또는 ~/…, 예: ~/Downloads/제안서.hwpx). 없는 파일이어야 한다'),
-        template: z.string().optional().describe('양식으로 쓸 .hwp/.hwpx 파일 경로(open_document 와 같은 규칙). 없으면 빈 문서'),
+        template: z.string().optional().describe('양식으로 쓸 .hwp/.hwpx 파일 경로(절대 경로 또는 ~/…). 없으면 빈 문서'),
         keep_content: z.boolean().optional().describe('양식 본문을 남긴다(기본 false: 비움)'),
       },
     },

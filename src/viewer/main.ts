@@ -14,7 +14,7 @@ import { findInBlocks } from '../core/find-text.ts';
 import { selectionRects, type SelectionRect } from '../core/highlight-rects.ts';
 import { blockBoxes, highlightTargets } from '../core/highlight-targets.ts';
 import { exportForSave } from '../core/hwpx-export.ts';
-import { createNewDocument, styleSummaries } from '../core/create-document.ts';
+import { createdDocumentResult, createNewDocument } from '../core/create-document.ts';
 import { base64ToBytes } from '../shared/base64.ts';
 import { errorMessage } from '../shared/errors.ts';
 import {
@@ -261,7 +261,7 @@ function exportHwpx(): ViewerResult<'export_hwpx'> {
 }
 
 function loadDocument(fileName: string, data: string): LoadDocumentResult {
-  return replaceDocument(fileName, false, () => {
+  return replaceDocument(fileName, false, '문서를 열 수 없습니다', () => {
     const { doc } = parseDocument(base64ToBytes(data));
     showDocument(doc, fileName);
     currentEditor = new DocumentEditor(doc);
@@ -271,18 +271,15 @@ function loadDocument(fileName: string, data: string): LoadDocumentResult {
 
 /** 새 문서(빈 문서·양식)를 만들어 그린다. 첫 문단은 비어 있어도 블록이다(SPEC-003) */
 function createDocument(params: ViewerParams<'create_document'>): CreateDocumentResult {
-  return replaceDocument(params.fileName, true, () => {
+  // 양식을 못 읽으면 열기와 같은 제목(SPEC-001 문구), 빈 문서를 못 만들면 "새 문서를 만들 수 없습니다"(서버 오류 문구와 같다)
+  const failure = params.template === undefined ? '새 문서를 만들 수 없습니다' : '문서를 열 수 없습니다';
+  return replaceDocument(params.fileName, true, failure, () => {
     const { template } = params;
     const { doc, cleared } = createNewDocument(template === undefined ? undefined : base64ToBytes(template.data), template?.keepContent ?? false);
     showDocument(doc, params.fileName);
-    // 블록이 없는 문서는 첫 문단이 빈 문단 블록이 된다(DocumentEditor)
+    // 블록이 없는 문서는 첫 문단이 빈 문단 블록이 된다(extractBlocks)
     currentEditor = new DocumentEditor(doc);
-    return {
-      pageCount: doc.pageCount(),
-      blocks: currentEditor.blocks.map((block) => blockPositionSchema.parse(block)),
-      styles: styleSummaries(doc),
-      ...(cleared === undefined ? {} : { cleared: { removedObjects: cleared.removedObjects, keptObjects: cleared.keptObjects } }),
-    };
+    return createdDocumentResult(doc, currentEditor.blocks, cleared);
   });
 }
 
@@ -290,7 +287,7 @@ function createDocument(params: ViewerParams<'create_document'>): CreateDocument
  * 열린 문서를 open 이 만든 문서로 바꾼다(열기·새 문서 공용). 실패하면 이전 문서도 닫고 오류 화면을 보여준 뒤 던진다
  * (서버도 열린 문서를 비운다)
  */
-function replaceDocument<T>(fileName: string, newDocument: boolean, open: () => T): T {
+function replaceDocument<T>(fileName: string, newDocument: boolean, failure: string, open: () => T): T {
   unsavedEdits = 0;
   unsavedNewDocument = newDocument;
   try {
@@ -304,7 +301,7 @@ function replaceDocument<T>(fileName: string, newDocument: boolean, open: () => 
     api.highlight = () => {
       throw new Error('문서가 열려 있지 않습니다');
     };
-    showNotice('문서를 열 수 없습니다', `${fileName}: ${errorMessage(error)}`);
+    showNotice(failure, `${fileName}: ${errorMessage(error)}`);
     setStatus('열 수 없음');
     throw error;
   }

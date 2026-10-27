@@ -22,6 +22,8 @@ import { createBlankDocument } from '../src/core/rhwp-node.ts';
 import { openFixture } from './fixtures.ts';
 
 const S = 0;
+/** 블록이 없는 문서에서 블록으로 남기는 첫 구역 첫 빈 문단(#36) */
+const FIRST_EMPTY = { kind: 'paragraph', section: 0, paragraph: 0, page: 1, text: '' } as const;
 
 const paraPropsSchema = z.looseObject({ paraShapeId: z.number(), headType: z.string(), alignment: z.string() });
 const charPropsSchema = z.looseObject({ fontSize: z.number(), bold: z.boolean(), textColor: z.string() });
@@ -107,13 +109,12 @@ describe('SPEC-003 빈 문서 템플릿 (기술 검증)', () => {
     expect(() => styleIdByName(doc, '옛 글자')).toThrow('없는 스타일입니다: 옛 글자');
   });
 
-  it('빈 문서는 구역·단 정의가 든 빈 문단 하나라 블록이 없고, 첫 문단을 빈 문단 블록으로 남기면 채울 수 있다', () => {
+  it('빈 문서는 구역·단 정의가 든 빈 문단 하나라, 블록이 없는 문서 규칙대로 첫 문단이 빈 문단 블록이 되어 채울 수 있다(#36)', () => {
     const doc = createBlankDocument();
     expect(doc.getParagraphCount(S)).toBe(1);
-    expect(extractBlocks(doc)).toEqual([]);
 
-    const start = extractBlocks(doc, (section, paragraph) => section === S && paragraph === 0);
-    expect(start).toEqual([{ kind: 'paragraph', section: S, paragraph: 0, page: 1, text: '' }]);
+    const start = extractBlocks(doc);
+    expect(start).toEqual([FIRST_EMPTY]);
 
     replaceParagraphText(doc, S, 0, 'DocBridge 도입 제안서');
     expect(paragraphLines(extractBlocks(doc))).toEqual(['DocBridge 도입 제안서']);
@@ -409,7 +410,7 @@ describe('SPEC-003 양식 본문 비우기 (기술 검증)', () => {
       expect(cleared.removedObjects['표']).toBeGreaterThan(0);
       expect(doc.getParagraphCount(S)).toBe(1);
       expect(bodyTextLength(doc)).toBe(0);
-      expect(extractBlocks(doc)).toEqual([]);
+      expect(extractBlocks(doc)).toEqual([FIRST_EMPTY]);
       expect(doc.getStyleList()).toBe(styles);
       expect(doc.getPageDef(S)).toBe(pageDef);
       expectSaveVerified(doc);
@@ -462,7 +463,7 @@ describe('SPEC-003 양식 본문 비우기 (기술 검증)', () => {
 
     expect(cleared.removedObjects).toEqual({ 표: 1 });
     expect(doc.getParagraphCount(S)).toBe(1);
-    expect(extractBlocks(doc)).toEqual([]);
+    expect(extractBlocks(doc)).toEqual([FIRST_EMPTY]);
     expectSaveVerified(doc);
   });
 

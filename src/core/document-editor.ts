@@ -38,7 +38,7 @@ export class DocumentEditor {
   constructor(doc: HwpDocument) {
     this.doc = doc;
     this.history = new EditHistory<Block[]>(doc);
-    this.current = initialBlocks(doc);
+    this.current = extractBlocks(doc);
   }
 
   /** 지금 문서의 블록(문서 순서). 편집·되돌리기 때마다 다시 뽑는다 */
@@ -111,16 +111,6 @@ export class DocumentEditor {
   private assertDepth(expected: number): void {
     if (expected !== this.appliedDepth) throw new Error(editHistoryMismatchMessage(expected, this.appliedDepth));
   }
-}
-
-/**
- * 문서를 열거나 만들 때의 블록. 글자 없는 문단은 블록이 아니지만, 블록이 하나도 없는 문서(빈 문서·비운 양식, 그런 파일을 연 경우)는
- * 첫 구역 첫 문단(구역·단 정의가 든 빈 문단)을 빈 문단 블록으로 남긴다 — 그래야 replace_text 로 채우고 그 뒤로 넣을 기준이 있다(SPEC-003, ADR 003 결정 10)
- */
-function initialBlocks(doc: HwpDocument): Block[] {
-  const blocks = extractBlocks(doc);
-  if (blocks.length > 0) return blocks;
-  return extractBlocks(doc, (section, paragraph) => section === 0 && paragraph === 0);
 }
 
 /** 바뀐 문단에 걸린 블록(문단 글자·표·누름틀) 모두, 문서 순서대로 */

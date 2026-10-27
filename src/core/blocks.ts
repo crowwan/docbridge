@@ -218,11 +218,22 @@ interface BodyParagraph {
   heading: Heading | undefined;
 }
 
+/** 첫 구역 첫 문단(구역·단 정의가 든 문단) */
+const isFirstParagraph = (section: number, paragraph: number) => section === 0 && paragraph === 0;
+
 /**
  * 본문 문단·표·누름틀을 문서 순서대로 돌려준다. 글자가 없는 문단은 블록으로 내보내지 않는다.
- * keepEmpty 가 참인 문단은 비어 있어도 문단 블록으로 남긴다(편집으로 비운 문단은 id 가 있어 다시 채울 수 있어야 한다, SPEC-002)
+ * keepEmpty 가 참인 문단은 비어 있어도 문단 블록으로 남긴다(편집으로 비운 문단은 id 가 있어 다시 채울 수 있어야 한다, SPEC-002).
+ * 블록이 하나도 없는 문서(빈 문서·비운 양식, 그런 파일)는 첫 구역 첫 문단을 빈 문단 블록으로 남긴다 — 그래야 replace_text 로 채우고
+ * 그 뒤로 넣을 기준이 있다(SPEC-003, ADR 003 결정 10). 열기·편집·저장 전 검증·다시 열기가 모두 이 함수라 같은 규칙을 쓴다
  */
 export function extractBlocks(doc: HwpDocument, keepEmpty: (section: number, paragraph: number) => boolean = () => false): Block[] {
+  const blocks = bodyBlocks(doc, keepEmpty);
+  if (blocks.length > 0 || doc.getSectionCount() === 0 || doc.getParagraphCount(0) === 0) return blocks;
+  return bodyBlocks(doc, isFirstParagraph);
+}
+
+function bodyBlocks(doc: HwpDocument, keepEmpty: (section: number, paragraph: number) => boolean): Block[] {
   const tables = tablesByParagraph(doc);
   const fields = fieldsByParagraph(doc);
   const body: BodyParagraph[] = [];

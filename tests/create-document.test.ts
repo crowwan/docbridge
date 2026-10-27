@@ -15,9 +15,16 @@ import { exportVerifiedHwpx } from '../src/core/hwpx-export.ts';
 import { parseJson } from '../src/core/json.ts';
 import { startBridge, type Bridge } from '../src/server/bridge.ts';
 import { createMcpServer } from '../src/server/mcp.ts';
-import { newDocumentExistsMessage, RELATIVE_NEW_PATH, resolveNewDocumentPath, writeSave } from '../src/server/save-path.ts';
+import {
+  newDocumentExistsMessage,
+  newDocumentTakenMessage,
+  RELATIVE_NEW_PATH,
+  RELATIVE_TEMPLATE_PATH,
+  resolveNewDocumentPath,
+  writeSave,
+} from '../src/server/save-path.ts';
 import { saveDocument } from '../src/server/save-tool.ts';
-import { DocumentSession, NO_DOCUMENT, newDocumentLostMessage } from '../src/server/session.ts';
+import { discardedNewDocumentMessage, DocumentSession, NO_DOCUMENT, newDocumentLostMessage } from '../src/server/session.ts';
 import { FakeViewer } from './fake-viewer.ts';
 import { fixturePath, openFixture } from './fixtures.ts';
 import { rhwpViewer, type RhwpViewer } from './rhwp-viewer.ts';
@@ -42,7 +49,7 @@ const createResultSchema = z.object({
   viewerUrl: z.string(),
   warnings: z.array(z.string()).optional(),
 });
-const saveResultSchema = z.object({ path: z.string() });
+const saveResultSchema = z.object({ path: z.string(), verified: z.object({ blockCount: z.number() }) });
 const outlineSchema = z.object({ blocks: z.array(z.object({ id: z.string(), kind: z.string(), text: z.string() })) });
 const headerFooterSchema = z.looseObject({ exists: z.boolean(), text: z.string().optional() });
 
@@ -195,6 +202,20 @@ describe('SPEC-003 새 문서 만들기 (create_document)', () => {
     expect(await outlineTexts()).toEqual(['']);
   });
 
+  it('한 번도 저장하지 않은 새 문서를 다른 create_document·open_document 로 대신하면 편집이 없어도 새 문서를 버렸다고 알린다', async () => {
+    await connectRhwp();
+    const template = join(dir, '공문 양식.hwpx');
+    await copyFile(fixturePath('notice.hwpx'), template);
+    await create({ path: join(dir, '양식 그대로.hwpx'), template, keep_content: true });
+
+    const replaced = await create({ path: join(dir, '제안서.hwpx') });
+    expect(replaced.warnings).toEqual([discardedNewDocumentMessage('양식 그대로.hwpx', 0)]);
+
+    await json('replace_text', { target: { id: replaced.firstBlock }, text: '제목' });
+    const opened = z.object({ warnings: z.array(z.string()).optional() }).parse(await json('open_document', { path: template }));
+    expect(opened.warnings).toEqual([discardedNewDocumentMessage('제안서.hwpx', 1)]);
+  });
+
   it('AC-2 template 을 주면 양식의 스타일·쪽 설정·머리말·꼬리말을 쓰고 본문(표 포함)은 비우며, 지운 개체·남긴 개체를 알리고 양식 파일은 그대로다', async () => {
     const viewer = await connectRhwp();
     const template = await makeTemplate('보고서 양식.hwpx');
@@ -243,6 +264,7 @@ describe('SPEC-003 새 문서 만들기 (create_document)', () => {
     expect(await toolError('create_document', { path, template: join(dir, '양식.docx') })).toBe(
       '열 수 없는 파일 형식입니다(.docx). .hwp, .hwpx 만 열 수 있습니다.',
     );
+    expect(await toolError('create_document', { path, template: '양식.hwpx' })).toBe(RELATIVE_TEMPLATE_PATH);
     const broken = join(dir, '깨진 양식.hwpx');
     await writeFile(broken, 'hwpx 가 아님');
     expect(await toolError('create_document', { path, template: broken })).toMatch(/^문서를 열 수 없습니다: /);
@@ -286,9 +308,7 @@ describe('SPEC-003 새 문서 저장 (save_document)', () => {
     await create({ path });
     await writeFile(path, '다른 프로그램이 만든 파일');
 
-    expect(await toolError('save_document')).toBe(
-      `이미 있는 파일입니다: ${path}. 덮어쓰려면 path 에 그 경로와 overwrite: true 를 주거나 다른 경로를 주세요.`,
-    );
+    expect(await toolError('save_document')).toBe(newDocumentTakenMessage(path));
     expect(await readFile(path, 'utf8')).toBe('다른 프로그램이 만든 파일');
     expect(session.document?.location.kind).toBe('new');
   });
@@ -302,7 +322,7 @@ describe('SPEC-003 새 문서 저장 (save_document)', () => {
       return writeSave(target, bytes);
     };
 
-    await expect(saveDocument(session, {}, raced)).rejects.toThrow(`이미 있는 파일입니다: ${path}. 덮어쓰려면 overwrite: true 를 주세요.`);
+    await expect(saveDocument(session, {}, raced)).rejects.toThrow(newDocumentTakenMessage(path));
     expect(await readFile(path, 'utf8')).toBe('그사이 생긴 파일');
     expect(await readdir(dir)).toEqual(['제안서.hwpx']);
   });
@@ -359,6 +379,21 @@ describe('SPEC-003 새 문서와 새로고침', () => {
 });
 
 describe('SPEC-003 블록이 없는 문서의 첫 블록', () => {
+  it('만든 직후 저장하면 저장 전 검증·저장 블록에 첫 빈 문단이 들고, 새로고침해도 파일이 바뀌었다고 보지 않아 id 표가 그대로다', async () => {
+    await connectRhwp();
+    const { firstBlock } = await create({ path: join(dir, '제안서.hwpx') });
+
+    const saved = await save();
+
+    expect(saved.verified).toEqual({ blockCount: 1 });
+    expect(session.document?.blocks).toEqual([{ kind: 'paragraph', section: 0, paragraph: 0 }]);
+    const ids = session.document?.ids;
+    await refresh();
+    // 블록 위치가 같으면 새로고침은 id 표를 그대로 둔다(다시 매기면 새 표가 된다)
+    expect(session.document?.ids).toBe(ids);
+    expect(await outline()).toEqual([{ id: firstBlock, kind: 'paragraph', text: '' }]);
+  });
+
   it('비운 채 저장한 새 문서를 새로고침하거나 다시 열어도 첫 문단이 빈 문단 블록이라 채울 수 있다', async () => {
     await connectRhwp();
     const path = join(dir, '제안서.hwpx');
