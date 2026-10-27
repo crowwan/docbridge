@@ -31,11 +31,11 @@ function measureOne(path: string): void {
   const [copy, copyParseMs] = timed(() => new HwpDocument(hwp));
   copy.free();
 
-  // 옮기기: 가운데쯤 문단 하나를 맨 앞(첫 문단 앞)으로. 거부되면 다음 문단
+  // 옮기기: 가운데쯤 문단 하나를 둘째 문단 앞으로(첫 문단 앞은 구역 정의 때문에 막혀 있다). 거부되면 다음 문단
   const count = doc.getParagraphCount(0);
   let moveMs: number | undefined;
-  for (let p = Math.max(1, Math.floor(count / 2)); p < count && moveMs === undefined; p += 1) {
-    const [result, ms] = timed(() => moveParagraphs(doc, 0, p, p + 1, 0));
+  for (let p = Math.max(2, Math.floor(count / 2)); p < count && moveMs === undefined; p += 1) {
+    const [result, ms] = timed(() => moveParagraphs(doc, 0, p, p + 1, 1));
     if (result.ok) moveMs = ms;
   }
 
@@ -78,7 +78,7 @@ const fmt = (value: unknown) => (typeof value === 'number' ? (Number.isInteger(v
 function main(paths: string[]): void {
   const columns = [
     ['name', '문서'],
-    ['pages', '쪽(Node)'],
+    ['pages', '쪽(Node 근사)'],
     ['paragraphs', '문단'],
     ['blocks', '블록'],
     ['extractMs', '블록 뽑기'],

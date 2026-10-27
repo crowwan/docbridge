@@ -20,7 +20,7 @@
 
 ## 스택
 
-- Web (TS, Node 24). 로컬 MCP 서버(stdio, `@modelcontextprotocol/sdk`) + 같은 프로세스의 127.0.0.1 HTTP·WebSocket(`ws`, 기본 포트 7790) + 브라우저 뷰어(Vite, `@rhwp/core` 0.8.7 고정 직접 사용) — 결정과 측정값: `docs/decisions/001-stack-and-rhwp.md`
+- Web (TS, Node 24). 로컬 MCP 서버(stdio, `@modelcontextprotocol/sdk`) + 같은 프로세스의 127.0.0.1 HTTP·WebSocket(`ws`, 기본 포트 7790) + 브라우저 뷰어(Vite, `@rhwp/core` 0.8.7 고정 직접 사용) — 결정과 측정값: `docs/decisions/001-stack-and-rhwp.md`, 편집·저장 방식: `docs/decisions/002-edit-and-save.md`
 - `any`·타입 단언(`as`) 금지(`as const` 는 허용). rhwp 가 돌려주는 JSON 문자열은 zod 스키마로 읽는다
 - 상대 import 는 `.ts` 확장자까지 쓴다(Node 가 TS 를 바로 실행하고, 빌드 때 `.js` 로 바뀐다)
 - stdout 은 MCP 전용. 서버 로그는 `src/server/log.ts`(stderr)로만 쓴다
@@ -36,10 +36,12 @@ npm run build          # 서버(tsc → dist/server) + 뷰어(vite → dist/view
 npm start              # 빌드 결과 실행: MCP 서버(stdio) + 뷰어 서버(7790, 사용 중이면 7799 까지 다음 포트).
                        # = node dist/server/index.js. DOCBRIDGE_PORT 로 시작 포트 변경
 npm run typecheck
-npm test               # Vitest: 블록 추출·블록 id·글자 단위·하이라이트 계산·요청/응답·open_document·읽기·하이라이트 도구(가짜/rhwp 테스트 뷰어)·
+npm test               # Vitest: 블록 추출·블록 id·글자 단위·하이라이트 계산·요청/응답·open_document·읽기·하이라이트 도구(가짜/rhwp 테스트 뷰어)·편집 기술 검증·
                        # fixture 별 get_outline 기대 JSON(tests/outline/, rhwp 회귀 — 바꿀 때 -u)·서버 통합 (CI)
 npm run e2e            # 빌드 후 Playwright: 렌더링·하이라이트·측정·문서 열기·토큰 거부·읽기 도구·하이라이트 도구 (로컬 전용, CI 에 없음)
 node scripts/make-fixtures.ts   # fixtures/ 의 생성 문서 다시 만들기
+node scripts/measure-edits.ts [문서…]   # 편집·되돌리기·HWPX 저장 검증 비용 측정 (ADR 002)
+node scripts/make-hwp-check.ts [폴더]   # 한글 프로그램 확인용 편집 HWPX (기본 ~/Downloads/docbridge-hwp-check, 레포에 넣지 않음)
 ```
 
 - 처음 E2E 를 돌릴 때 `npx playwright install chromium`
@@ -58,11 +60,13 @@ src/
   core/        rhwp 어댑터 — 블록 모양 zod 스키마(block-schema.ts), 블록 추출(blocks.ts), 블록 id 대응표(block-ids.ts),
                글자 위치 단위(chars.ts: 유니코드 글자 = rhwp 글자 위치), 글자 찾기(find-text.ts),
                하이라이트 사각형(highlight-rects.ts: 줄 끝 보정), 하이라이트 대상 → 사각형(highlight-targets.ts: 요청당 한 번 도는 highlightTargets, 뷰어·테스트 뷰어 공용),
+               편집 어댑터(edits.ts: 옮기기·첫 글자 모양 바꾸기·칸·누름틀·문단 넣기), 되돌리기(edit-history.ts: 스냅샷 20칸 + id 표 사본),
+               HWPX 저장 검증(hwpx-export.ts: 내보내 다시 열어 블록 비교·손실 보고) — SPEC-002 기술 검증(#18) 프로토타입, ADR 002,
                Node 용 초기화(rhwp-node.ts)
   viewer/      브라우저 뷰어(Vite root). Canvas 렌더링 + 하이라이트·note 오버레이. 디자인 토큰은 tokens.css (의도는 docs/design.md)
 tests/         Vitest (Node 에서 rhwp WASM 을 직접 띄움). outline/ = fixture 별 get_outline 기대 JSON
 e2e/           Playwright (렌더링·하이라이트·측정·서버가 내주는 뷰어·문서 열기·읽기 도구·하이라이트 도구)
 fixtures/      테스트용 문서와 출처(README.md)
-scripts/       fixtures 생성 스크립트
+scripts/       fixtures 생성, 편집 비용 측정(measure-edits.ts), 한글 확인 파일 생성(make-hwp-check.ts)
 docs/          PRD, 스펙, ADR(decisions/), 조사 자료(research/), QA 체크리스트
 ```
