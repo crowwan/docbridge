@@ -49,7 +49,7 @@ const fieldListSchema = z.array(
 );
 export type FieldEntry = z.infer<typeof fieldListSchema>[number];
 const runSchema = z.object({ text: z.string(), x: z.number(), y: z.number(), w: z.number(), h: z.number() });
-const layoutSchema = z.object({ runs: z.array(runSchema) });
+export const layoutSchema = z.object({ runs: z.array(runSchema) });
 export type LayoutRun = z.infer<typeof runSchema>;
 export interface Caret {
   pageIndex: number;
