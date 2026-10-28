@@ -103,6 +103,7 @@ const sampleParams: { [M in ViewerMethod]: ViewerParams<M> } = {
   export_hwpx: {},
   edit_state: { fileName: '공문-수정.hwpx', unsavedEdits: 0, newDocument: false, state: 0 },
   close_document: {},
+  export_pdf_pages: { pages: [0, 2] },
   create_document: { doc: 'd2', fileName: '제안서.hwpx', template: { fileName: '양식.hwpx', data: 'AA==', keepContent: false } },
 };
 

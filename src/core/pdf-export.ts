@@ -49,6 +49,7 @@ import { parseJson } from './json.ts';
 import { FontResolver, type FontChoice, type FontLibrary } from './pdf-fonts.ts';
 import { GlyphForms } from './pdf-glyphs.ts';
 import { TEXT_LAYER_FONT, TextLayerFont } from './pdf-text-layer.ts';
+import { fontStackKey } from './screen-fonts.ts';
 import {
   isElement,
   multiply,
@@ -146,11 +147,26 @@ function layoutChars(textLayout: string): LayerChar[] {
   });
 }
 
+export interface PdfExportOptions {
+  /**
+   * 화면(브라우저)이 font-family 차례마다 실제로 쓰는 첫 글꼴 이름(열쇠 = screen-fonts.ts fontStackKey, 뷰어가 Canvas 로 잼).
+   * 있으면 그 이름을 차례 맨 앞에 두고 고르고, 서버 글꼴에 없으면 warnings 로 알린다
+   */
+  screenFonts?: Record<string, string>;
+  /** 쪽 하나를 그릴 때마다 기다린다 — 서버는 다음 이벤트 루프 차례로 넘겨 큰 문서를 만드는 동안 MCP·뷰어 연결이 멈추지 않게 */
+  pause?: () => Promise<void>;
+}
+
 /** 쪽들 → PDF 바이트. 쪽 크기는 SVG width·height(px) 그대로 */
-export async function svgPagesToPdf(sources: PdfPageSource[], library: FontLibrary): Promise<PdfExportResult> {
+export async function svgPagesToPdf(sources: PdfPageSource[], library: FontLibrary, options: PdfExportOptions = {}): Promise<PdfExportResult> {
   const pdf = await PDFDocument.create();
   const resolver = new FontResolver(library);
-  const pages = sources.map((source) => parseSvg(source.svg));
+  const pause = options.pause ?? (async () => undefined);
+  const pages: SvgElement[] = [];
+  for (const source of sources) {
+    pages.push(parseSvg(source.svg));
+    await pause();
+  }
   const warnings = new Map<string, number>();
   const warn = (kind: string): void => {
     warnings.set(kind, (warnings.get(kind) ?? 0) + 1);
@@ -159,6 +175,12 @@ export async function svgPagesToPdf(sources: PdfPageSource[], library: FontLibra
   // 1) 글자마다 글꼴을 고른다(글꼴 바이트를 읽어 글자가 있는지 봐야 해서 먼저 다 한다)
   const runs: TextRun[] = [];
   for (const svg of pages) collectText(svg, runs);
+  for (const run of runs) {
+    const screen = options.screenFonts?.[fontStackKey(run.families)];
+    if (screen === undefined) continue;
+    run.families = [screen, ...run.families.filter((name) => name !== screen)];
+    if (!resolver.hasFamily(screen)) warn(`화면 글꼴 "${screen}" 를 이 컴퓨터 글꼴에서 쓸 수 없음(다른 글꼴로 그림)`);
+  }
   const glyphFonts = new Map<SvgElement, Array<FontChoice | undefined>>();
   let missingGlyphs = 0;
   for (const run of runs) {
@@ -170,6 +192,8 @@ export async function svgPagesToPdf(sources: PdfPageSource[], library: FontLibra
     }
     glyphFonts.set(run.element, choices);
   }
+  // 그 글자가 든 글꼴이 이 컴퓨터에 하나도 없다(글꼴 없는 리눅스 등) — 보이지 않을 뿐 글자 층에는 있다
+  if (missingGlyphs > 0) warnings.set('글꼴이 없어 그리지 못한 글자(선택·검색은 됨)', missingGlyphs);
 
   // 2) 쓰인 글꼴을 연다(윤곽은 쓸 때 글리프마다 Form 으로)
   const glyphs = new GlyphForms(pdf);
@@ -192,10 +216,12 @@ export async function svgPagesToPdf(sources: PdfPageSource[], library: FontLibra
     const textLayout = sources[index]?.textLayout;
     const painter = new PagePainter({ pdf, page, svg, glyphs, textLayer, glyphFonts, images, warn });
     await painter.paint(textLayout === undefined ? undefined : layoutChars(textLayout));
+    await pause();
   }
   textLayer.finish();
 
-  const bytes = await pdf.save();
+  // objectsPerTick: 큰 PDF 를 쓰는 동안에도 사이사이 다른 일이 돈다(pdf-lib 가 그만큼마다 쉰다)
+  const bytes = await pdf.save({ objectsPerTick: options.pause === undefined ? Infinity : 200 });
   return {
     bytes,
     stats: { pages: pages.length, textElements: runs.length, missingGlyphs, fonts: [...usedIds], glyphForms: glyphs.count },

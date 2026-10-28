@@ -13,6 +13,7 @@ import { copyBlocks } from './copy-tool.ts';
 import { clearHighlight, highlight } from './highlight-tools.ts';
 import { findText, getOutline, readBlockContents } from './read-tools.ts';
 import { saveDocument } from './save-tool.ts';
+import { exportPdf, systemFonts, type ExportPdfDeps } from './export-pdf-tool.ts';
 import { OUTLINE_LIMIT, READ_CHAR_LIMIT } from './reading.ts';
 import { MAX_DOCUMENTS, type DocumentSessions } from './documents.ts';
 import type { DocumentSession } from './session.ts';
@@ -37,7 +38,12 @@ const docInput = {
     .describe('대상 문서 이름(open_document·create_document·list_documents 의 doc, 예: d2). 없으면 마지막으로 쓴(열었거나 도구 대상이 된) 문서'),
 };
 
-export function createMcpServer(sessions: DocumentSessions): McpServer {
+export interface McpServerOptions {
+  /** PDF 에 그릴 글꼴(기본: 이 컴퓨터의 시스템 글꼴, 처음 내보낼 때 훑는다). 테스트는 시험 글꼴 */
+  fonts?: ExportPdfDeps['fonts'];
+}
+
+export function createMcpServer(sessions: DocumentSessions, options: McpServerOptions = {}): McpServer {
   const server = new McpServer({ name: 'docbridge', version: '0.0.0' });
 
   /**
@@ -318,6 +324,32 @@ export function createMcpServer(sessions: DocumentSessions): McpServer {
       },
     },
     ({ doc, ...args }) => documentTool(doc, (session) => saveDocument(session, args)),
+  );
+
+  server.registerTool(
+    'export_pdf',
+    {
+      description:
+        '열린 문서를 지금 화면(뷰어)에 보이는 그대로 PDF 로 저장한다(편집이 아니다 — 되돌리기·저장하지 않은 편집 수는 그대로, 저장하지 않은 편집도 들어가고 warnings 로 알린다). 하이라이트·note·바뀐 블록 표시는 넣지 않는다. 글자는 PDF 안에서 선택·검색된다. path 가 없으면 문서 옆 <이름>.pdf(있으면 <이름>-2.pdf …). 상대 경로는 원본 폴더 기준, ~/ 는 홈, 확장자가 없으면 .pdf 를 붙이고 다른 확장자는 거부(.hwp/.hwpx 경로는 덮어쓰기여도 거부). 이미 있는 파일은 path 에 그 경로와 overwrite: true 일 때만 덮어쓴다. pages 로 일부 쪽만("1-3,5", 1부터 — 문서 쪽 수를 넘으면 거부). 글꼴은 화면과 같은 이 컴퓨터의 글꼴. 결과 { path, pageCount, bytes, warnings? } — warnings 는 저장 전 편집·비슷하게만 그린 것(그러데이션·화살표·글꼴 없음 등)이라 사용자에게 알린다. 쪽이 많으면(수백 쪽) 수십 초 걸린다',
+      inputSchema: {
+        ...docInput,
+        path: z.string().optional().describe('저장할 PDF 경로(.pdf). 없으면 문서 옆 <이름>.pdf'),
+        pages: z.string().optional().describe('내보낼 쪽(1부터, 예: "1-3,5"). 없으면 모든 쪽'),
+        overwrite: z.boolean().optional().describe('path 의 파일이 이미 있으면 덮어쓴다(기본 false). path 가 없으면 무시'),
+      },
+    },
+    ({ doc, ...args }, extra) => {
+      const token = extra._meta?.progressToken;
+      // 큰 문서는 수십 초 — 클라이언트가 진행 알림을 받으면(progressToken) 묶음마다 알린다(요청 제한 시간이 알림마다 다시 시작되는 클라이언트도 있다)
+      const progress: ExportPdfDeps['progress'] =
+        token === undefined
+          ? undefined
+          : (done, total, message) =>
+              void extra.sendNotification({ method: 'notifications/progress', params: { progressToken: token, progress: done, total, message } }).catch(() => undefined);
+      return documentTool(doc, (session) =>
+        exportPdf(session, args, { fonts: options.fonts ?? systemFonts, ...(progress === undefined ? {} : { progress }) }),
+      );
+    },
   );
 
   server.registerTool(

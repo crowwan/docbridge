@@ -303,6 +303,11 @@ export class FontResolver {
     }
   }
 
+  /** 이 이름의 글꼴이 있고 PDF 에 쓸 수 있는지(넣지 말라는 글꼴은 없는 것과 같다) */
+  hasFamily(name: string): boolean {
+    return this.byFamily.has(name.toLowerCase());
+  }
+
   private coverage(id: string): Promise<Coverage> {
     let coverage = this.coverages.get(id);
     if (coverage === undefined) {

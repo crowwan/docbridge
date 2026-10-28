@@ -26,6 +26,8 @@ import { exportForSave } from '../core/hwpx-export.ts';
 import { notePlacement, pageTextBoxes, type Box } from '../core/note-placement.ts';
 import { createdDocumentResult, createNewDocument } from '../core/create-document.ts';
 import { paragraphStyles } from '../core/styles.ts';
+import { pdfPages } from '../core/pdf-pages.ts';
+import { screenFonts } from '../core/screen-fonts.ts';
 import { base64ToBytes } from '../shared/base64.ts';
 import { errorMessage } from '../shared/errors.ts';
 import {
@@ -381,6 +383,24 @@ function applyEditState(fileName: string, count: number, newDocument: boolean, s
   if (currentDoc !== undefined) showStatus(currentDoc);
 }
 
+// 화면 글꼴 재기용 Canvas(rhwp 글자 폭 재기와 따로 — 글꼴 설정이 섞이지 않게)
+const fontProbe = document.createElement('canvas').getContext('2d');
+
+function measureFont(font: string, text: string): number {
+  if (!fontProbe) return 0;
+  fontProbe.font = font;
+  return fontProbe.measureText(text).width;
+}
+
+/**
+ * PDF 로 내보낼 쪽(SPEC-008): 쪽 SVG·글자 배치와, SVG 글꼴 차례마다 이 브라우저가 실제로 쓰는 글꼴 이름(서버가 같은 글꼴을 고르게).
+ * 편집이 아니다 — 문서·되돌리기·화면 표시를 건드리지 않고, 하이라이트·note·바뀐 블록 표시(오버레이)는 SVG 에 없다
+ */
+function exportPdfPages(pages: number[]): ViewerResult<'export_pdf_pages'> {
+  const result = pdfPages(openedEditor().doc, pages);
+  return { pages: result, screenFonts: screenFonts(result.map((page) => page.svg), measureFont) };
+}
+
 function exportHwpx(): ViewerResult<'export_hwpx'> {
   return exportForSave(openedEditor().doc);
 }
@@ -476,6 +496,8 @@ function handleRequest(request: RequestMessage): unknown {
     case 'close_document':
       closeDocument();
       return {};
+    case 'export_pdf_pages':
+      return exportPdfPages(request.params.pages);
     default: {
       // 메서드를 더하고 여기 처리를 빠뜨리면 컴파일 오류가 난다
       const unhandled: never = request;

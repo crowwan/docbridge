@@ -89,6 +89,8 @@ interface GivenPathRules {
   sourcePath?: string;
   /** 이미 있는 파일이고 overwrite 가 아닐 때의 이유 */
   existing?: (path: string) => string;
+  /** 확장자 규칙(기본: HWPX 저장 withSaveExtension) */
+  extension?: (given: string) => string;
 }
 
 /**
@@ -96,13 +98,13 @@ interface GivenPathRules {
  * .hwp 원본 보호, 저장할 폴더 있음, 이미 있는 파일은 overwrite 일 때만. 확장자를 붙인 절대 경로를 돌려준다
  */
 async function checkGivenPath(raw: string, given: string, rules: GivenPathRules): Promise<string> {
-  const { overwrite, sourcePath, existing: existingMessage = existingFileMessage } = rules;
+  const { overwrite, sourcePath, existing: existingMessage = existingFileMessage, extension = withSaveExtension } = rules;
   // 폴더를 먼저 본다. 확장자를 붙인 뒤에 보면 ~/Downloads 가 ~/Downloads.hwpx 가 된다
   if (isFolderInput(raw) || (await statOf(given))?.isDirectory() === true) throw new Error(folderMessage(given));
   const hwpSource = sourcePath === undefined ? undefined : protectedSource(sourcePath);
   // 원본 경로를 그대로 준 경우(.hwp 라 아래 확장자 검사에 걸리기 전에 이유를 알린다)
   if (hwpSource !== undefined && (await sameFile(given, hwpSource))) throw new Error(await hwpSourceMessage(hwpSource));
-  const path = withSaveExtension(given);
+  const path = extension(given);
   // .hwpx 이름의 링크(심볼릭·하드)가 .hwp 원본을 가리킬 수 있다 — 붙인 뒤의 경로로 다시 본다
   if (hwpSource !== undefined && (await sameFile(path, hwpSource))) throw new Error(await hwpSourceMessage(hwpSource));
   const folder = await statOf(dirname(path));
@@ -177,6 +179,8 @@ export interface SaveTarget {
   protectedPath?: string;
   /** 번호 없는 배타 쓰기에서 이미 있을 때의 이유(기본: overwrite 안내. 경로 없는 새 문서 저장은 newDocumentTakenMessage) */
   existing?: (path: string) => string;
+  /** 기본 이름의 다음 번호(기본: <이름>-수정-n.hwpx. PDF 는 nextPdfName) */
+  next?: (path: string) => string;
 }
 
 const errorCode = (error: unknown) => (error instanceof Error && 'code' in error ? error.code : undefined);
@@ -242,7 +246,7 @@ async function replaceWith(temporary: string, real: string): Promise<void> {
 }
 
 async function linkExclusively(temporary: string, target: SaveTarget): Promise<string> {
-  for (let path = target.path; ; path = nextNumbered(path)) {
+  for (let path = target.path; ; path = (target.next ?? nextNumbered)(path)) {
     try {
       await createExclusively(temporary, path);
       return path;
@@ -251,4 +255,67 @@ async function linkExclusively(temporary: string, target: SaveTarget): Promise<s
       if (!target.numbered) throw new ExistingFileError((target.existing ?? existingFileMessage)(path));
     }
   }
+}
+
+// PDF 내보내기(SPEC-008) ------------------------------------------------------------------------------
+
+const PDF_EXTENSION = '.pdf';
+const HWP_EXTENSIONS = ['.hwp', '.hwpx'];
+
+const hwpPathMessage = (extension: string) => `한글 문서(${extension}) 경로에는 PDF 를 쓰지 않습니다. 경로를 .pdf 로 끝내세요.`;
+
+/** 확장자 규칙: 없으면 .pdf, .hwp/.hwpx 는 거부(PDF 로 한글 문서를 덮지 않게), 다른 확장자도 거부 */
+export function withPdfExtension(given: string, rules: PathRules = nodePath): string {
+  const extension = rules.extname(given);
+  if (HWP_EXTENSIONS.includes(extension.toLowerCase())) throw new Error(hwpPathMessage(extension));
+  if (extension !== '' && extension.toLowerCase() !== PDF_EXTENSION) {
+    throw new Error(`PDF 로만 내보냅니다(${extension}). 경로를 .pdf 로 끝내거나 확장자를 빼세요.`);
+  }
+  return extension === '' ? given + PDF_EXTENSION : given;
+}
+
+/** 기본 PDF 이름의 n 번째: base(폴더 + 이름, 확장자 없음) → <이름>.pdf, <이름>-n.pdf */
+const pdfNameAt = (base: string, n: number) => `${base}${n === 1 ? '' : `-${n}`}${PDF_EXTENSION}`;
+
+/** 기본 PDF 이름 다음 번호(<이름>.pdf → <이름>-2.pdf, -2 → -3). base 가 아닌 이름이면 던진다 */
+export const nextPdfName =
+  (base: string) =>
+  (path: string): string => {
+    if (path === pdfNameAt(base, 1)) return pdfNameAt(base, 2);
+    const n = Number(/^-(\d+)\.pdf$/.exec(path.slice(base.length))?.[1]);
+    if (!path.startsWith(base) || !Number.isInteger(n)) throw new Error(`기본 PDF 이름이 아닙니다: ${path}`);
+    return pdfNameAt(base, n + 1);
+  };
+
+/** 문서 파일(마지막 파일, 저장 전 새 문서는 처음 저장할 자리) 옆 기본 PDF 이름의 확장자 뺀 자리 */
+export const pdfBase = (documentPath: string, rules: PathRules = nodePath) =>
+  rules.join(rules.dirname(documentPath), rules.basename(documentPath, rules.extname(documentPath)));
+
+export interface PdfPathRequest {
+  /** 기본 이름의 기준: 마지막 파일(저장 전 새 문서는 처음 저장할 자리) */
+  documentPath: string;
+  /** 상대 경로의 기준 폴더: 원본 폴더(저장 전 새 문서는 처음 저장할 자리의 폴더) — save_document 와 같다 */
+  baseDir: string;
+  path?: string;
+  overwrite: boolean;
+}
+
+/**
+ * export_pdf 의 쓸 절대 경로(SPEC-008). 경로가 없으면 문서 옆 <이름>.pdf(겹치면 -2 …), 있으면 save_document 와 같은 규칙
+ * (폴더 아님, 저장할 폴더 있음, 이미 있는 파일은 overwrite 일 때만) + 확장자 .pdf. 한글 문서(.hwp/.hwpx)는 이름도, 링크가 가리키는 실제 파일도 덮지 않는다
+ */
+export async function resolvePdfPath(request: PdfPathRequest, home = homedir()): Promise<string> {
+  const { documentPath, baseDir, overwrite } = request;
+  if (request.path === undefined) {
+    const base = pdfBase(documentPath);
+    for (let n = 1; ; n += 1) {
+      const candidate = pdfNameAt(base, n);
+      if ((await statOf(candidate)) === undefined) return candidate;
+    }
+  }
+  const path = await checkGivenPath(request.path, absolutePath(request.path, baseDir, home), { overwrite, extension: withPdfExtension });
+  const real = await realpath(path).catch(() => path);
+  const realExtension = extname(real);
+  if (HWP_EXTENSIONS.includes(realExtension.toLowerCase())) throw new Error(hwpPathMessage(realExtension));
+  return path;
 }

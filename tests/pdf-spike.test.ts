@@ -283,11 +283,12 @@ describe('SPEC-008 쪽 SVG → PDF (기술 검증)', () => {
     expect(warnings).toEqual(['선 끝 모양(화살표 등, 그리지 않음) 1곳', '그림(image/bmp, 그리지 않음) 1곳']);
   });
 
-  it('글꼴이 없는 글자는 빠지고 missingGlyphs 로 센다', async () => {
+  it('글꼴이 없는 글자는 빠지고 missingGlyphs 로 세고 warnings 로 알린다', async () => {
     const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"><text x="10" y="50" font-size="20">똠</text></svg>';
-    const { stats } = await svgPagesToPdf([{ svg }], await testLibrary());
+    const { stats, warnings } = await svgPagesToPdf([{ svg }], await testLibrary());
 
     expect(stats.missingGlyphs).toBe(1);
+    expect(warnings).toEqual(['글꼴이 없어 그리지 못한 글자(선택·검색은 됨) 1곳']);
   });
 
   it('보이는 글자는 쓴 글리프만 윤곽(Form)으로 넣고, PDF 글꼴은 보이지 않는 글자 층 하나뿐이다', async () => {
