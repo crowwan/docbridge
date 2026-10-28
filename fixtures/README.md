@@ -14,7 +14,7 @@
 ## docbridge 생성 문서
 
 - `scripts/make-fixtures.ts` 가 `@rhwp/core` 0.8.7 편집 API(`createBlankDocument`, `insertText`, `splitParagraph`, `applyParaFormat`, `createTable`, `insertClickHereField` 등)로 만든다. 다시 만들기: `node scripts/make-fixtures.ts`
-- `sections.hwpx` 는 rhwp 편집 API 에 구역 나누기가 없어, 구역 하나짜리 문서 둘의 HWPX 를 합쳐 만든다(`scripts/hwpx-zip.ts` `joinSections` — 둘째 문서의 `section0.xml` 을 `section1.xml` 로 넣고 `content.hpf` 에 올림).
+- `sections.hwpx` 는 rhwp 편집 API 에 구역 나누기가 없어, 구역 하나짜리 문서 둘의 HWPX 를 합쳐 만든다(`scripts/hwpx-zip.ts` `joinSections` — 둘째 문서의 `section0.xml` 을 `section1.xml` 로 넣고 구역 목록 — `header.xml` `secCnt`·`META-INF/container.rdf`·`content.hpf` manifest·spine — 을 모두 맞춤, #111).
 - 내용(기관명 "가나다구청" 등)은 모두 지어낸 것이다.
 - 라이선스: 이 레포와 같다(docbridge 가 만든 저작물).
 - 한컴오피스가 아니라 rhwp 직렬화기로 저장한 파일이라, 한컴이 저장한 실제 문서보다 서식이 단순하다. 실제 문서 렌더링은 ADR 001 의 로컬 측정(레포에 넣지 않음)으로 따로 확인했다.

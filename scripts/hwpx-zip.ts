@@ -1,4 +1,5 @@
-// HWPX(zip) 안 파일을 읽고 다시 묶는 최소 도우미 — rhwp 편집 API 로 만들 수 없는 fixture(구역 둘)를 만들 때만 쓴다(make-fixtures.ts).
+// HWPX(zip) 안 파일을 읽고 다시 묶는 최소 도우미 — rhwp 편집 API 로 만들 수 없는 fixture(구역 둘)를 만들 때(make-fixtures.ts),
+// 그리고 테스트가 HWPX 안 XML 을 고쳐 보거나 들여다볼 때(tests/paragraph-layout.test.ts 줄 배치 빼기·tests/hwpx-zip.test.ts) 쓴다.
 // 압축은 저장(0)·deflate(8)만, zip64·암호·데이터 설명자는 없다(rhwp 가 내보낸 HWPX 가 이 모양이다).
 import { crc32, deflateRawSync, inflateRawSync } from 'node:zlib';
 
@@ -91,24 +92,47 @@ const textOf = (entries: ZipEntry[], name: string) => {
   return Buffer.from(entry.data).toString('utf8');
 };
 
+/** 한 곳을 바꾸되, 바꿀 글자는 꼭 한 번 나와야 한다 — rhwp 가 내보내는 모양이 바뀌면 조용히 넘어가지 않고 멈춘다 */
+const replaceOnce = (text: string, from: string, to: string, where: string) => {
+  const at = text.indexOf(from);
+  if (at < 0 || text.indexOf(from, at + 1) >= 0) throw new Error(`${where} 에서 ${from} 을 한 번만 찾지 못했다`);
+  return text.slice(0, at) + to + text.slice(at + from.length);
+};
+
+const SECTION0_RDF =
+  '<rdf:Description rdf:about=""><ns0:hasPart xmlns:ns0="http://www.hancom.co.kr/hwpml/2016/meta/pkg#" rdf:resource="Contents/section0.xml"/></rdf:Description><rdf:Description rdf:about="Contents/section0.xml"><rdf:type rdf:resource="http://www.hancom.co.kr/hwpml/2016/meta/pkg#SectionFile"/></rdf:Description>';
+
 /**
  * 두 HWPX 를 구역 둘인 HWPX 하나로: first 에 second 의 구역 0 을 구역 1 로 붙인다.
+ * 구역 목록은 모두 맞춘다 — header.xml secCnt, META-INF/container.rdf(구역 파일 항목), content.hpf(manifest·spine). 한컴은 이 목록으로 구역을 읽는다(#111).
  * 머리(header.xml — 글자·문단 모양 표)는 first 것을 쓰므로 second 는 first 와 같은 모양 번호만 쓰는 문서여야 한다(둘 다 기본 모양만 쓴 문서)
  */
 export function joinSections(first: Uint8Array, second: Uint8Array): Uint8Array {
   const entries = readZip(first);
   const section1 = textOf(readZip(second), 'Contents/section0.xml');
-  const manifest = textOf(entries, 'Contents/content.hpf')
-    .replace(
-      '<opf:item id="section0" href="Contents/section0.xml" media-type="application/xml"/>',
-      '<opf:item id="section0" href="Contents/section0.xml" media-type="application/xml"/><opf:item id="section1" href="Contents/section1.xml" media-type="application/xml"/>',
-    )
-    .replace('<opf:itemref idref="section0" linear="yes"/>', '<opf:itemref idref="section0" linear="yes"/><opf:itemref idref="section1" linear="yes"/>');
-  if (!manifest.includes('section1.xml') || !manifest.includes('idref="section1"')) throw new Error('content.hpf 에 구역 1 을 넣지 못했다');
+  const changed = new Map<string, string>([
+    ['Contents/header.xml', replaceOnce(textOf(entries, 'Contents/header.xml'), 'secCnt="1"', 'secCnt="2"', 'header.xml')],
+    ['META-INF/container.rdf', replaceOnce(textOf(entries, 'META-INF/container.rdf'), SECTION0_RDF, SECTION0_RDF + SECTION0_RDF.replaceAll('section0.xml', 'section1.xml'), 'container.rdf')],
+    [
+      'Contents/content.hpf',
+      replaceOnce(
+        replaceOnce(
+          textOf(entries, 'Contents/content.hpf'),
+          '<opf:item id="section0" href="Contents/section0.xml" media-type="application/xml"/>',
+          '<opf:item id="section0" href="Contents/section0.xml" media-type="application/xml"/><opf:item id="section1" href="Contents/section1.xml" media-type="application/xml"/>',
+          'content.hpf manifest',
+        ),
+        '<opf:itemref idref="section0" linear="yes"/>',
+        '<opf:itemref idref="section0" linear="yes"/><opf:itemref idref="section1" linear="yes"/>',
+        'content.hpf spine',
+      ),
+    ],
+  ]);
   const added: ZipEntry = { name: 'Contents/section1.xml', method: 8, data: new Uint8Array(Buffer.from(section1, 'utf8')) };
   return writeZip(
     entries.flatMap((entry): ZipEntry[] => {
-      if (entry.name === 'Contents/content.hpf') return [{ ...entry, data: new Uint8Array(Buffer.from(manifest, 'utf8')) }];
+      const text = changed.get(entry.name);
+      if (text !== undefined) return [{ ...entry, data: new Uint8Array(Buffer.from(text, 'utf8')) }];
       if (entry.name === 'Contents/section0.xml') return [entry, added];
       return [entry];
     }),

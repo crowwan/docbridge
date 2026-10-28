@@ -5,7 +5,7 @@ status: in-progress        # draft | approved | in-progress | done | dropped
 milestone: v0.3
 issue: "#61"
 prototype:
-updated: 2026-10-27
+updated: 2026-10-28
 ---
 
 # SPEC-007 여러 문서 동시에 열기와 문서 사이 복사
@@ -113,3 +113,4 @@ updated: 2026-10-27
 | 2026-10-28 | #85: 넣은 문단을 대상 본문 폭으로 다시 배치(원본 줄 배치 `lineseg` 를 그대로 가져와 표시·더블클릭 자리가 첫 줄 일부만 잡히던 것). `move_blocks`·`insert_paragraph` 는 같은 문제 없음 확인(ADR 004) |
 | 2026-10-28 | #89: 줄 배치가 빠진 채 저장된 문단을 열 때 다시 계산(다시 연 파일에서 넣은 문단이 한 줄로 잡히던 것). 복사 다시 배치 비용을 ADR 004 에 기록 |
 | 2026-10-28 | #80: 저장 중에는 그 파일을 다른 문서가 열거나 저장하지 않는다(결정 — 막는다), `copy_blocks` 는 `from`·`to` 를 모두 확인한 뒤 마지막으로 쓴 문서를 바꾼다. 대소문자만 다른 경로는 qa-checklist 로. PR #90 리뷰 후속: 열 때 다시 배치 기준(경고 목록) 스키마를 좁히고 여러 구역·머리말 문서(fixture `sections.hwpx`)로 확인 |
+| 2026-10-28 | #111: 구역 둘 fixture(`sections.hwpx`)의 구역 목록 — `header.xml` `secCnt`·`container.rdf`·`content.hpf` — 을 구역 파일과 맞춤, 자기 파일 덮어 저장 중 다시 열기(막지 않음) 테스트 |

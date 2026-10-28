@@ -1,0 +1,14 @@
+# GitHub Actions 만 주 1회 올린다(#111). 워크플로는 액션을 커밋 SHA 로 고정하고 판을 주석으로 단다 — Dependabot 이 둘 다 고친다.
+# npm 은 넣지 않는다: 의존성은 판을 정확히 고정했고(@rhwp/core 0.8.7 은 fixture·get_outline 기대 JSON 회귀와 묶임), 올릴 때는 이슈로 손으로 확인한다.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - '*'
+    labels:
+      - chore
