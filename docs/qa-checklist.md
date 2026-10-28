@@ -51,4 +51,4 @@
   - "`C:\v1.2\회신` 으로 저장해줘" 하면 `C:\v1.2\회신.hwpx` 로 저장된다(폴더 이름의 `.2` 를 확장자로 보지 않는다)
   - 두 문서를 연 뒤 한 문서를 다른 문서 파일 경로를 대소문자만 바꿔 저장하라고 하면(`…\공문.HWPX`) 열린 다른 문서의 파일이라며 거부한다
 - [ ] SPEC-008 AC-8 실제 공문·공고문 PDF 가 macOS 미리보기에서 화면과 같은 모양(표·글꼴·쪽 나눔)으로 보이고 글자를 선택·검색할 수 있다
-- [ ] SPEC-008 기술 검증(#107, ADR 005): `~/Downloads/docbridge-pdf-check/` 의 `*-a-pdflib.pdf` 를 미리보기로 열어 `README.txt` 의 "확인할 것"(화면 PNG 와 모양, 글자 끌어 고르기·⌘F 검색, 확대해도 매끈한 글자, A4)을 본다. 다시 만들기 `node scripts/make-pdf-check.ts --doc <실제 공고문>`
+- [x] SPEC-008 기술 검증(#107, ADR 005 — 2026-10-28 사용자 미리보기 확인, accepted): `~/Downloads/docbridge-pdf-check/` 의 `*-a-pdflib.pdf` 를 미리보기로 열어 `README.txt` 의 "확인할 것"(화면 PNG 와 모양, 글자 끌어 고르기·⌘F 검색, 확대해도 매끈한 글자, A4)을 본다. 다시 만들기 `node scripts/make-pdf-check.ts --doc <실제 공고문>`
