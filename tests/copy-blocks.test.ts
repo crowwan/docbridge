@@ -209,4 +209,14 @@ describe('SPEC-007 copy_blocks — 문서 사이 문단·표 복사', () => {
 
     expect((await outline()).doc).toBe('d2');
   });
+
+  it('from 이나 to 가 없는 문서면 오류만 내고 마지막으로 쓴 문서는 그대로다(두 문서를 모두 확인한 뒤 고른다)', async () => {
+    await json('open_document', { path: fixturePath('notice.hwpx') });
+    await json('open_document', { path: fixturePath('report.hwpx') });
+
+    expect(await errorText('copy_blocks', { from: 'd1', ids: ['b11'], to: 'd9', after: 'b1' })).toBe('열린 문서에 d9 가 없습니다. list_documents 로 확인해 주세요.');
+    expect((await outline()).doc).toBe('d2');
+    expect(await errorText('copy_blocks', { from: 'd9', ids: ['b11'], to: 'd1', after: 'b1' })).toBe('열린 문서에 d9 가 없습니다. list_documents 로 확인해 주세요.');
+    expect((await outline()).doc).toBe('d2');
+  });
 });

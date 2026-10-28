@@ -71,31 +71,36 @@ export function saveDocument(session: DocumentSession, args: SaveArgs, write = w
       location.kind === 'file'
         ? await resolveSavePath({ sourcePath: location.sourcePath, path: args.path, overwrite })
         : await resolveNewDocumentSavePath({ savePath: location.savePath, path: args.path, overwrite });
-    // 열린 다른 문서의 파일이면 쓰지 않는다(SPEC-007 — 같은 파일 다시 열기·새로고침이 그 문서로 간다)
-    session.assertNotOpenElsewhere(await realFilePath(resolved), resolved);
-    const exported = await send('export_hwpx', {});
-    if (!exported.verified) throw verificationError(document, exported);
-    const bytes = decodeExport(exported.data, exported.byteLength);
-    // 기본 이름(<이름>-수정)은 그사이 같은 이름이 생기면(동시 저장, 다른 프로그램) 다음 번호로 쓴다. 새 문서의 자리는 번호를 붙이지 않고 덮지 않는다
-    const protectedPath = location.kind === 'file' ? protectedSource(location.sourcePath) : undefined;
-    const path = await write(
-      {
-        path: resolved,
-        overwrite,
-        numbered: args.path === undefined && location.kind === 'file',
-        ...(protectedPath === undefined ? {} : { protectedPath }),
-        // 경로 없는 새 문서 저장은 overwrite 가 쓰이지 않는다 — 경로 + overwrite 나 다른 경로를 안내
-        ...(location.kind === 'new' && args.path === undefined ? { existing: newDocumentTakenMessage } : {}),
-      },
-      bytes,
-    );
-    await session.recordSave(document, path, exported.blocks, await realFilePath(path));
-    const warnings = exported.losses.map(lossWarning);
-    return {
-      path,
-      bytes: bytes.length,
-      verified: { blockCount: exported.blocks.length },
-      ...(warnings.length === 0 ? {} : { warnings }),
-    };
+    // 열린 다른 문서의 파일이거나 다른 문서가 그 파일로 저장하는 중이면 쓰지 않는다(SPEC-007 — 같은 파일 다시 열기·새로고침이 그 문서로 간다).
+    // 쓰기를 마칠 때까지 이 문서가 그 파일로 저장하는 중이라, 그사이 다른 문서가 그 파일을 열거나 저장하지 않는다
+    session.beginSave(await realFilePath(resolved), resolved);
+    try {
+      const exported = await send('export_hwpx', {});
+      if (!exported.verified) throw verificationError(document, exported);
+      const bytes = decodeExport(exported.data, exported.byteLength);
+      // 기본 이름(<이름>-수정)은 그사이 같은 이름이 생기면(동시 저장, 다른 프로그램) 다음 번호로 쓴다. 새 문서의 자리는 번호를 붙이지 않고 덮지 않는다
+      const protectedPath = location.kind === 'file' ? protectedSource(location.sourcePath) : undefined;
+      const path = await write(
+        {
+          path: resolved,
+          overwrite,
+          numbered: args.path === undefined && location.kind === 'file',
+          ...(protectedPath === undefined ? {} : { protectedPath }),
+          // 경로 없는 새 문서 저장은 overwrite 가 쓰이지 않는다 — 경로 + overwrite 나 다른 경로를 안내
+          ...(location.kind === 'new' && args.path === undefined ? { existing: newDocumentTakenMessage } : {}),
+        },
+        bytes,
+      );
+      await session.recordSave(document, path, exported.blocks, await realFilePath(path));
+      const warnings = exported.losses.map(lossWarning);
+      return {
+        path,
+        bytes: bytes.length,
+        verified: { blockCount: exported.blocks.length },
+        ...(warnings.length === 0 ? {} : { warnings }),
+      };
+    } finally {
+      session.endSave();
+    }
   });
 }
