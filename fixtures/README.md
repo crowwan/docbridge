@@ -8,11 +8,13 @@
 | `notice.hwp` | 위와 같은 공문의 HWP 5.0 바이너리 | 같음 | docbridge 생성 |
 | `report.hwpx` | 보고서(여러 쪽) | 개요 번호(`1.`·`가.`) 문단, 4×4 표, 긴 본문 | docbridge 생성 |
 | `application.hwpx` | 신청서 양식 | 라벨 칸이 있는 4×2 표, 누름틀 2개, 오른쪽·가운데 정렬 | docbridge 생성 |
+| `sections.hwpx` | 구역 둘(2쪽) | 구역마다 머리말·꼬리말(양쪽)과 본문 문단 셋(가운데 문단은 두 줄) | docbridge 생성 |
 | `outline-demo.hwpx` | 개요 3단계 문서(3쪽) | 개요 번호 3단계, 1×1 표(표 안 개요 번호 포함) | rhwp 레포 |
 
 ## docbridge 생성 문서
 
 - `scripts/make-fixtures.ts` 가 `@rhwp/core` 0.8.7 편집 API(`createBlankDocument`, `insertText`, `splitParagraph`, `applyParaFormat`, `createTable`, `insertClickHereField` 등)로 만든다. 다시 만들기: `node scripts/make-fixtures.ts`
+- `sections.hwpx` 는 rhwp 편집 API 에 구역 나누기가 없어, 구역 하나짜리 문서 둘의 HWPX 를 합쳐 만든다(`scripts/hwpx-zip.ts` `joinSections` — 둘째 문서의 `section0.xml` 을 `section1.xml` 로 넣고 `content.hpf` 에 올림).
 - 내용(기관명 "가나다구청" 등)은 모두 지어낸 것이다.
 - 라이선스: 이 레포와 같다(docbridge 가 만든 저작물).
 - 한컴오피스가 아니라 rhwp 직렬화기로 저장한 파일이라, 한컴이 저장한 실제 문서보다 서식이 단순하다. 실제 문서 렌더링은 ADR 001 의 로컬 측정(레포에 넣지 않음)으로 따로 확인했다.

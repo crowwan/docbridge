@@ -4,6 +4,7 @@ import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { HwpDocument } from '@rhwp/core';
 import { createBlankDocument } from '../src/core/rhwp-node.ts';
+import { joinSections } from './hwpx-zip.ts';
 
 const SECTION = 0;
 
@@ -188,10 +189,40 @@ function buildApplication(): HwpDocument {
   return w.finish();
 }
 
+/**
+ * 구역 하나짜리 문서: 머리말·꼬리말(양쪽)과 본문 문단. 모양은 기본 문단(양쪽 정렬)만 쓴다 — 두 문서를 한 머리(header.xml)로 합치기 때문(joinSections)
+ */
+function buildSectionPart(header: string, footer: string, paragraphs: string[]): HwpDocument {
+  const w = new DocumentWriter();
+  for (const text of paragraphs) w.paragraph(text);
+  const doc = w.finish();
+  doc.createHeaderFooter(SECTION, true, 0);
+  doc.insertTextInHeaderFooter(SECTION, true, 0, 0, 0, header);
+  doc.createHeaderFooter(SECTION, false, 0);
+  doc.insertTextInHeaderFooter(SECTION, false, 0, 0, 0, footer);
+  return doc;
+}
+
+/** 구역 둘, 구역마다 머리말·꼬리말. rhwp 편집 API 에 구역 나누기가 없어 두 문서의 HWPX 를 구역 둘로 합친다 */
+function buildSections(): Uint8Array {
+  const first = buildSectionPart('가나다구청 안내 — 1구역 머리말', '1구역 꼬리말', [
+    '첫째 구역 첫 문단입니다.',
+    '첫째 구역 둘째 문단은 줄이 넘어가도록 조금 길게 씁니다. 구역마다 머리말과 꼬리말이 따로 있는 문서를 열 때 줄 배치를 다시 계산해도 그대로인지 봅니다.',
+    '첫째 구역 끝 문단입니다.',
+  ]);
+  const second = buildSectionPart('가나다구청 안내 — 2구역 머리말', '2구역 꼬리말', [
+    '둘째 구역 첫 문단입니다.',
+    '둘째 구역 둘째 문단도 줄이 넘어가도록 길게 씁니다. 구역 첫 문단은 구역 정의가 들어 있어 줄 배치 없이 저장되는 일이 잦습니다.',
+    '둘째 구역 끝 문단입니다.',
+  ]);
+  return joinSections(first.exportHwpx(), second.exportHwpx());
+}
+
 const fixturesDir = fileURLToPath(new URL('../fixtures/', import.meta.url));
 const notice = buildNotice();
 writeFileSync(`${fixturesDir}notice.hwpx`, notice.exportHwpx());
 writeFileSync(`${fixturesDir}notice.hwp`, notice.exportHwp());
 writeFileSync(`${fixturesDir}report.hwpx`, buildReport().exportHwpx());
 writeFileSync(`${fixturesDir}application.hwpx`, buildApplication().exportHwpx());
+writeFileSync(`${fixturesDir}sections.hwpx`, buildSections());
 process.stderr.write('fixtures 생성 완료\n');

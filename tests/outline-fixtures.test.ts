@@ -8,7 +8,7 @@ import { extractBlocks } from '../src/core/blocks.ts';
 import { outline } from '../src/server/reading.ts';
 import { openFixture } from './fixtures.ts';
 
-const FIXTURES = ['notice.hwpx', 'notice.hwp', 'report.hwpx', 'application.hwpx', 'outline-demo.hwpx'];
+const FIXTURES = ['notice.hwpx', 'notice.hwp', 'report.hwpx', 'application.hwpx', 'outline-demo.hwpx', 'sections.hwpx'];
 
 describe('SPEC-001 fixture 별 get_outline 기대값 (rhwp 회귀)', () => {
   it.each(FIXTURES)('%s 의 get_outline 결과가 기대 JSON 과 같다', async (fixture) => {
