@@ -1,0 +1,83 @@
+# Claude Desktop 확장(.mcpb)을 GitHub Release 에 붙인다(SPEC-004 "릴리스 흐름", AC-6).
+# Release 는 /release 가 태그를 민 직후 gh release create 로 만든다. 이 워크플로는 Release 를 만들지 않고,
+# 빌드·테스트(몇 분) 뒤 그 Release 에 .mcpb 를 붙인다. Release 가 없으면 실패한다 — 만든 뒤 workflow_dispatch 로 다시 돌린다.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "태그 이름(예: v0.2.0). 이 태그를 체크아웃해 만든다"
+        required: true
+        type: string
+      dry_run:
+        description: "드라이런: Release 에 올리지 않고 Actions 아티팩트로만 남긴다"
+        required: false
+        type: boolean
+        default: true
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  mcpb:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: refs/tags/${{ env.TAG }}
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # 오래 걸리는 빌드·테스트 전에 먼저 본다. 맞으면 올릴 파일 경로를 남긴다
+      - name: 태그와 package.json 버전 확인
+        id: version
+        # 대입으로 받아야 check-tag 가 실패했을 때 단계가 멈춘다(echo "$(…)" 는 실패를 삼킨다)
+        run: |
+          file=$(node scripts/release/check-tag.ts "$TAG")
+          echo "file=$file" >> "$GITHUB_OUTPUT"
+
+      - name: 빌드
+        run: npm run build
+      - name: 타입 검사
+        run: npm run typecheck
+      - name: 테스트
+        run: npm test
+      # npm run pack 으로 dist/docbridge-<버전>.mcpb 를 만들고, 그 파일을 풀어 설치판 검사를 한다
+      - name: 설치판(.mcpb) 만들기와 검사
+        run: npm run test:pack
+      - name: 만든 파일 확인
+        run: test -f "${{ steps.version.outputs.file }}"
+
+      - name: 아티팩트로 남기기
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: docbridge-${{ env.TAG }}-mcpb
+          path: ${{ steps.version.outputs.file }}
+          if-no-files-found: error
+
+      - name: Release 에 붙이기
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FILE: ${{ steps.version.outputs.file }}
+        run: |
+          if ! gh release view "$TAG" > /dev/null; then
+            echo "::error::Release $TAG 가 없습니다. /release 로 gh release create $TAG 를 한 뒤 이 워크플로를 workflow_dispatch(tag=$TAG, dry_run=false)로 다시 돌리세요"
+            exit 1
+          fi
+          gh release upload "$TAG" "$FILE" --clobber

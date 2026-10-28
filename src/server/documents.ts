@@ -22,6 +22,14 @@ import { handleUserRequest } from './user-edit.ts';
 
 /** 한 번에 열 수 있는 문서 수(탭마다 WASM 문서가 따로 있다 — 큰 문서 탭 메모리를 보고 다시 정한다) */
 export const MAX_DOCUMENTS = 8;
+
+/**
+ * n 번째로 연 문서의 이름(d1, d2 …). 뷰어 주소 &doc= 에 그대로 들어간다.
+ * 영문자·숫자만 쓴다 — 퍼센트 인코딩(%)이 생기면 윈도우 cmd 가 주소를 환경 변수로 펼친다(SPEC-004 브라우저 열기)
+ */
+export function documentName(n: number): string {
+  return `d${n}`;
+}
 export const TOO_MANY_DOCUMENTS = `열린 문서가 ${MAX_DOCUMENTS}개입니다. close_document 로 닫아 주세요.`;
 /**
  * 문서 탭 연결이 끊긴 뒤 이만큼 다시 붙지 않으면 사용자가 탭을 닫은 것으로 본다.
@@ -229,7 +237,7 @@ export class DocumentSessions {
   /** 새 문서 이름으로 세션을 더한다. 8개면 거부 */
   private add(): DocumentSession {
     if (this.sessions.size >= MAX_DOCUMENTS) throw new Error(TOO_MANY_DOCUMENTS);
-    const name = `d${this.nextNumber}`;
+    const name = documentName(this.nextNumber);
     this.nextNumber += 1;
     const session = new DocumentSession({
       name,

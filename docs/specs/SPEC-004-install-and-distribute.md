@@ -46,18 +46,22 @@ updated: 2026-10-28
 
 - 플랫폼별로 맥 `open`, 윈도우 `cmd /c start "" <주소>`, 리눅스(그 밖의 유닉스) `xdg-open` 을 쓴다.
 - 윈도우는 주소의 `&`(`…?token=…&doc=d2`)에서 cmd 가 명령을 끊지 않게 cmd 특수 문자(`& | < > ( ) ^`)를 `^` 로 막고, 인자를 따옴표로 다시 싸지 않고 그대로 넘긴다(Node `windowsVerbatimArguments`).
+  - `%` 는 `^` 로 막을 수 없어(cmd 가 `%이름%` 을 환경 변수로 펼친다) 주소에 `%` 가 생기지 않게 한다: 토큰은 UUID, 문서 이름은 `d1`, `d2` … 영문자·숫자라 퍼센트 인코딩이 없다(테스트로 고정, #94).
 - 열지 못하면 지금처럼 stderr 에 주소를 남기고, `open_document`·`create_document` 결과의 `viewerUrl` 로 Claude 가 사용자에게 주소를 알려 줄 수 있다(기존 동작).
 
 ### 릴리스 흐름
 
-1. `/release v0.x` 가 버전을 올리고 태그(`v0.x.y`)를 민다.
-2. 태그 CI 가 빌드 → 테스트 → `.mcpb` 만들기(`mcpb pack`) → GitHub Release 에 `.mcpb` 첨부.
-3. Release 본문에 설치 방법(Desktop `.mcpb`)과 CHANGELOG 해당 부분.
+1. `/release v0.x` 가 버전을 올리고(package.json) 태그(`v0.x.y`)를 민다.
+2. **Release 는 `/release` 가 만든다**: 태그를 민 바로 뒤 `gh release create v0.x.y --verify-tag --notes-file <노트>`. 노트는 설치 방법(Desktop `.mcpb` — README "설치" 절 링크)과 CHANGELOG 해당 부분.
+3. 태그 CI(`.github/workflows/release.yml`)가 태그를 체크아웃해 태그와 package.json 버전이 같은지 먼저 본다(`scripts/release/check-tag.ts`, 다르면 실패) → 빌드 → 타입 검사 → 테스트 → `npm run test:pack`(`npm run pack` 으로 `.mcpb` 를 만들고 풀어서 검사) → Actions 아티팩트로 남김 → 그 Release 에 `gh release upload <태그> dist/docbridge-<버전>.mcpb --clobber`.
+   - 워크플로는 Release 를 만들지 않는다. 업로드는 빌드·테스트(몇 분) 뒤라 2 의 Release 가 그 사이에 생긴다. 그때도 Release 가 없으면 실패하고, Release 를 만든 뒤 `workflow_dispatch`(태그 이름, 드라이런 끔)로 다시 돌린다. `--clobber` 라 다시 돌려도 같은 이름 파일을 바꿔 붙인다.
+   - `workflow_dispatch` 의 드라이런(기본 켬)은 Release 에 올리지 않고 Actions 아티팩트만 남긴다(태그를 다시 만들지 않고 워크플로를 시험할 때).
+   - 권한은 `contents: write`, 토큰은 기본 `GITHUB_TOKEN`. 쓰는 액션은 커밋 sha 로 고정한다.
 
 ### README 설치 안내
 
-- 맨 위에 "설치" 절: Desktop(`.mcpb` 받기 → 더블클릭). Claude Code 와 개발용 설치(레포 받아 빌드)는 아래 "개발" 절로 옮긴다.
-- 데모 영상 정지 화면 한 장을 함께 둔다.
+- 맨 위에 "설치" 절: Desktop(Releases 에서 `.mcpb` 받기 → 더블클릭 또는 설정 › 확장에 끌어다 놓기), 수동 설정이 있으면 지우라는 한 줄. Claude Code 와 개발용 설치(레포 받아 빌드, Desktop 수동 등록)는 아래 "개발·Claude Code" 절로 옮긴다.
+- 데모 영상 정지 화면 한 장을 함께 둔다(레포에 넣지 않고 `assets` 브랜치 이미지 링크).
 
 ### 예외와 경계 상황
 
@@ -115,3 +119,4 @@ updated: 2026-10-28
 | 2026-10-28 | 스펙 리뷰 승인(사용자), AC-3 도구 수를 "전부(지금 20개)"로, 이슈 분해 (#91) |
 | 2026-10-28 | AC-4·5 구현(#93): 윈도우 start 의 `&` 막기, 윈도우 경로 규칙(`~\`·`C:이름` 거부·`\\server\share`·폴더 판정·확장자·같은 파일) 구체화 |
 | 2026-10-28 | #92 .mcpb 패키징: Desktop Node 기술 검증(24.22.0) → target node24·runtimes.node, 아이콘 생략, 서버는 rhwp WASM 을 띄우지 않음(WASM 은 viewer/), THIRD_PARTY_NOTICES.txt, AC-1·2·3 |
+| 2026-10-28 | #94 릴리스 흐름 구체화: Release 는 `/release` 가 태그 직후 만들고 워크플로는 붙이기만(없으면 실패, workflow_dispatch 로 다시·드라이런), 태그 = package.json 버전 확인. README 설치 절. AC-6 은 첫 태그에서 확인 |

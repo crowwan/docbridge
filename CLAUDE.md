@@ -10,7 +10,7 @@
 - 작업: GitHub Issues + Projects. 이슈는 approved 스펙에서만 만든다 (`/spec-issues`).
 - 브랜치 `<종류>/<이슈번호>-<이름>`, 커밋 `feat: 한글 메시지 (#12)`, PR 로만 머지 (squash).
 - 테스트: 스펙 ID 를 테스트 묶음 이름에, AC 내용을 테스트 이름에 한글로.
-- 릴리스: `/release v0.x`
+- 릴리스: `/release v0.x`. 태그를 민 바로 뒤 `gh release create <태그> --verify-tag` 로 Release 를 만든다 — 태그 워크플로(`.github/workflows/release.yml`)는 Release 를 만들지 않고 빌드·테스트 뒤 `.mcpb` 를 붙이기만 한다(없으면 실패 → Actions 에서 workflow_dispatch 로 다시, 드라이런은 아티팩트만). SPEC-004 "릴리스 흐름"
 
 ## 현재 상태
 
@@ -37,10 +37,11 @@ npm start              # 빌드 결과 실행: MCP 서버(stdio) + 뷰어 서버
                        # = node dist/server/index.js. DOCBRIDGE_PORT 로 시작 포트 변경
 npm run typecheck
 npm test               # Vitest: 블록 추출·블록 id·글자 단위·하이라이트 계산·note 자리·요청/응답·open_document·읽기·하이라이트 도구(가짜/rhwp 테스트 뷰어)·편집 기술 검증·편집 공용 경로·replace_text·replace_all·insert_paragraph·delete_blocks·move_blocks·undo·insert_table·저장(경로 규칙·검증·새로고침)·스타일(styles.ts·list_styles·set_style·insert_paragraph style)·새 문서 만들기(create_document·새 문서 저장·새로고침)·새 문서 만들기 기술 검증(빈 문서·표·양식 비우기)·문서 사이 복사 기술 검증(importParagraphBlock·번호·스타일 보정·HTML 대안)·사람 편집 요청(user_edit·⌘Z 공용 되돌리기·알림·늦은 요청 거부)·더블클릭 고칠 자리(hitTest → 블록·칸·누름틀, 바뀐 범위만, 누름틀 걸침, 입력 중 Claude 편집 따라가기)·끌어 옮기기·메뉴(점 → 본문 블록, 놓일 자리, 지우기·위로·아래로)·여러 문서(doc 표·마지막으로 쓴 문서·문서별 id/undo/편집 수·8개 상한·close_document·탭 닫기 알림·문서별 사람 편집·같은 파일 = 실제 경로·다른 문서 파일로 저장 거부)·copy_blocks(원본 범위 계획·대상 탭 편집·보정 후속·문서 사이/같은 문서 복사·거부)·넣은·옮긴 문단 줄 배치(대상 본문 폭, #85)·열 때 줄 배치 다시 계산(줄 배치 빠진 저장 파일 다시 열기·fixture 5개 그대로, #89)·
-                       # 플랫폼별 브라우저 열기 명령·윈도우 경로 규칙(path.win32/posix 주입, #93)·
+                       # 플랫폼별 브라우저 열기 명령·윈도우 경로 규칙(path.win32/posix 주입, #93)·주소에 % 없음·THIRD_PARTY_NOTICES 패키지 모으기·릴리스 태그 = package.json 버전(#94)·
                        # fixture 별 get_outline 기대 JSON(tests/outline/, rhwp 회귀 — 바꿀 때 -u)·서버 통합 (CI)
 npm run pack           # Claude Desktop 확장 → dist/docbridge-<버전>.mcpb (뷰어 빌드 → esbuild 서버 한 파일 → manifest(버전·도구 목록 자동) → mcpb validate·pack, scripts/pack/) — SPEC-004
-npm run test:pack      # pack 후 설치판 검사(tests/pack/): manifest 버전·도구 = 서버 등록 도구, node_modules 없는 임시 폴더에 풀어 node server/index.js → open_document·read_blocks·save_document (PATH 빈 폴더로 브라우저 막음, CI)
+node scripts/release/check-tag.ts <태그>   # 태그 = v<package.json 버전> 이면 올릴 파일 경로(dist/docbridge-<버전>.mcpb), 아니면 실패 (Release 워크플로)
+npm run test:pack      # pack 후 설치판 검사(tests/pack/): manifest 버전·도구 = 서버 등록 도구, THIRD_PARTY_NOTICES 에 dependencies 전부, node_modules 없는 임시 폴더에 풀어 node server/index.js → open_document·read_blocks·save_document (PATH 빈 폴더로 브라우저 막음, CI)
 npm run e2e            # 빌드 후 Playwright: 렌더링·하이라이트·측정·문서 열기·토큰 거부·읽기 도구·하이라이트 도구·편집 표시(표 넣기 포함)·스타일 바꾸기 표시·저장과 새로고침 확인 창·새 문서 만들기(빈 문서·양식·확인 창)·사람 편집 요청과 ⌘Z·더블클릭 글자 고치기·여러 문서 탭(탭 제목·doc 이름·●·탭 닫기 알림·close_document·copy_blocks 대상 탭 표시와 undo)·끌어 옮기기와 오른쪽 클릭 메뉴 (로컬 전용, CI 에 없음)
 node scripts/make-fixtures.ts   # fixtures/ 의 생성 문서 다시 만들기
 node scripts/measure-edits.ts [문서…]   # 편집·되돌리기·HWPX 저장 검증 비용 측정 (ADR 002)
@@ -91,6 +92,7 @@ src/
 tests/         Vitest (Node 에서 rhwp WASM 을 직접 띄움). outline/ = fixture 별 get_outline 기대 JSON, pack/ = 설치판 검사(npm test 에서 빠짐, npm run test:pack)
 e2e/           Playwright (렌더링·하이라이트·측정·서버가 내주는 뷰어·문서 열기·읽기 도구·하이라이트 도구·편집 표시·스타일 바꾸기 표시·사람 편집과 ⌘Z·더블클릭 글자 고치기·여러 문서 탭·끌어 옮기기와 메뉴)
 fixtures/      테스트용 문서와 출처(README.md)
-scripts/       fixtures 생성, 편집 비용 측정(measure-edits.ts), 한글 확인 파일 생성(make-hwp-check.ts 편집, make-create-check.ts 새 문서, make-copy-check.ts 문서 사이 복사), 데모 영상 녹화(demo/: 채팅+뷰어 화면 demo.html, record-demo.ts), .mcpb 만들기(pack/: manifest.ts = 버전·서버에 물은 도구 목록·Node 범위, pack.ts = esbuild 번들(target node24 = Desktop 내장 Node 24.22)·LICENSE·THIRD_PARTY_NOTICES·mcpb pack)
+scripts/       fixtures 생성, 편집 비용 측정(measure-edits.ts), 한글 확인 파일 생성(make-hwp-check.ts 편집, make-create-check.ts 새 문서, make-copy-check.ts 문서 사이 복사), 데모 영상 녹화(demo/: 채팅+뷰어 화면 demo.html, record-demo.ts), .mcpb 만들기(pack/: manifest.ts = 버전·서버에 물은 도구 목록·Node 범위·mcpb CLI 는 node 로 JS 진입 파일 실행(윈도우 .cmd 피함), notices.ts = 번들 입력의 마지막 node_modules 기준 패키지·라이선스, pack.ts = esbuild 번들(target node24 = Desktop 내장 Node 24.22)·LICENSE·THIRD_PARTY_NOTICES·mcpb pack),
+               릴리스(release/: tag.ts·check-tag.ts = 태그 = package.json 버전 확인 → 올릴 파일, .github/workflows/release.yml 이 부른다)
 docs/          PRD, 스펙, ADR(decisions/), 조사 자료(research/), QA 체크리스트
 ```

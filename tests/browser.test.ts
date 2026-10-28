@@ -1,5 +1,8 @@
+import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { startBridge } from '../src/server/bridge.ts';
 import { browserCommand, openInBrowser, type CommandRunner } from '../src/server/browser.ts';
+import { documentName } from '../src/server/documents.ts';
 
 const URL_WITH_DOC = 'http://127.0.0.1:7790/?token=abc-123&doc=d2';
 
@@ -28,6 +31,19 @@ describe('SPEC-004 브라우저 열기 (플랫폼별 명령)', () => {
 
   it('윈도우에서 cmd 특수 문자(^ | < > ( ))도 모두 ^ 로 막는다', () => {
     expect(browserCommand('http://h/?a=(1)|<2>^', 'win32').args[3]).toBe('http://h/?a=^(1^)^|^<2^>^^');
+  });
+
+  it('브라우저로 여는 실제 주소(토큰 UUID, 문서 이름 d1, d2 …)에는 % 가 없다 — cmd 는 %이름% 을 환경 변수로 펼치고 ^ 로 막을 수 없다', async () => {
+    // PR #96 리뷰: 문서 이름이 바뀌어 퍼센트 인코딩이 생기면 윈도우에서 주소가 바뀐다. 그 전제를 여기서 고정한다
+    const bridge = await startBridge({ port: 0, viewerDir: tmpdir() });
+    try {
+      // 닫고 다시 열면 번호가 계속 올라가므로 상한보다 넉넉히 본다
+      const urls = [bridge.viewerUrl, ...Array.from({ length: 100 }, (_, i) => bridge.viewerUrlFor(documentName(i + 1)))];
+      expect(urls.filter((url) => url.includes('%'))).toEqual([]);
+      expect(bridge.viewerUrlFor(documentName(2))).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/\?token=[0-9a-f-]{36}&doc=d2$/);
+    } finally {
+      await bridge.close();
+    }
   });
 
   it('고른 명령을 실행기에 넘긴다(윈도우는 인자를 그대로 붙이는 옵션과 함께)', () => {

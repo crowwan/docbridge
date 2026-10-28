@@ -1,4 +1,5 @@
 // .mcpb 의 manifest.json 만들기(SPEC-004). 버전은 package.json, 도구 목록은 실제 MCP 서버(src/server/mcp.ts)에 물어 채운다 — 손으로 두 군데 적지 않는다.
+import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -20,9 +21,25 @@ export const NODE_RUNTIME = '>=24.0.0';
 /** 레포 맨 위 폴더(끝에 /) */
 export const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
+/** npm run pack 이 만드는 파일 이름 */
+export function mcpbFileName(version: string): string {
+  return `docbridge-${version}.mcpb`;
+}
+
 /** npm run pack 이 만드는 파일 */
 export function mcpbPath(version: string): string {
-  return `${REPO_ROOT}dist/docbridge-${version}.mcpb`;
+  return `${REPO_ROOT}dist/${mcpbFileName(version)}`;
+}
+
+const mcpbPackageDir = `${REPO_ROOT}node_modules/@anthropic-ai/mcpb/`;
+const mcpbBin = z.object({ bin: z.string() }).parse(JSON.parse(readFileSync(`${mcpbPackageDir}package.json`, 'utf8'))).bin;
+
+/**
+ * mcpb CLI 실행 명령. node_modules/.bin/mcpb 는 윈도우에서 .cmd 라 execFile 로 바로 못 부르므로
+ * 지금 Node 로 CLI 의 JS 진입 파일을 실행한다(PR #97 리뷰)
+ */
+export function mcpbCommand(args: string[]): { command: string; args: string[] } {
+  return { command: process.execPath, args: [`${mcpbPackageDir}${mcpbBin}`, ...args] };
 }
 
 const packageJsonSchema = z.object({ version: z.string() });

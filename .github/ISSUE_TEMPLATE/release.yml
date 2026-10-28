@@ -13,7 +13,8 @@ body:
         - [ ] 수동 QA (아래 목록, Release 빌드로 확인)
         - [ ] CHANGELOG.md 갱신
         - [ ] 버전 번호 반영 PR 머지
-        - [ ] 태그 푸시 및 배포
+        - [ ] 태그 푸시 → 바로 `gh release create <태그> --verify-tag`(노트: 설치 방법 + CHANGELOG)
+        - [ ] Release 워크플로가 끝나고 Release 에 `docbridge-<버전>.mcpb` 가 붙음(SPEC-004 AC-6)
         - [ ] 스펙 status: done, 마일스톤 Close
     validations:
       required: true
