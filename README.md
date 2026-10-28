@@ -18,10 +18,10 @@ Claude 채팅 ──stdio── docbridge (내 PC) ──127.0.0.1── 브라�
 2. 받은 파일을 더블클릭하거나, Claude Desktop 의 **설정 › 확장** 화면에 끌어다 놓고 **설치**를 누릅니다.
 3. 채팅 입력창의 도구 목록에 docbridge 가 보이면 됩니다. Node 설치나 설정 파일 편집은 필요 없습니다.
 
-- 예전에 `claude_desktop_config.json` 에 docbridge 를 손으로 넣었다면 그 항목을 지우세요. 둘 다 켜 두면 docbridge 가 두 번 뜹니다.
+- 예전에 `claude_desktop_config.json` 에 docbridge 를 손으로 넣었다면 그 항목을 지운 뒤 **Claude Desktop 을 완전히 종료했다가 다시 열고** 설치하세요. 둘 다 켜 두면 docbridge 가 두 번 뜹니다. 지우기만 하면 Desktop 이 이미 읽어 둔 옛 설정이 남아, 같은 이름 확장을 옛 명령(손으로 넣은 `node` 경로)으로 띄워 시작에 실패합니다.
 - 새 버전은 새 `.mcpb` 를 받아 같은 방법으로 다시 설치합니다.
 
-![docbridge 데모: 채팅에서 회신 기한을 묻자 뷰어의 그 부분이 하이라이트된 화면](https://raw.githubusercontent.com/crowwan/docbridge/assets/pr/48/02-highlight.png)
+![docbridge 데모: 채팅에서 회신 기한을 묻자 뷰어의 그 부분이 하이라이트된 화면](https://raw.githubusercontent.com/crowwan/docbridge/804ba0067831d622a3454b679cde935e2f8088c2/pr/48/02-highlight.png)
 
 <sub>데모 화면. 왼쪽 채팅은 녹화용으로 꾸민 화면이고, 오른쪽이 실제 docbridge 뷰어입니다.</sub>
 
@@ -81,6 +81,7 @@ Claude Code 에서 쓰거나 직접 빌드하려면 아래 [개발·Claude Code]
 
 ## 문제 해결
 
+- **설치 후 "docbridge 커넥터를 시작할 수 없습니다"**: 로그 `~/Library/Logs/Claude/mcp-server-docbridge.log` 에 "Node.js server requires a resolvable entry point" 가 보이면 예전 수동 설정이 Desktop 에 남은 것입니다. `claude_desktop_config.json` 의 docbridge 항목을 지우고 Claude Desktop 을 완전히 종료했다가 다시 여세요.
 - **브라우저가 안 열려요**: Claude 의 답에 뷰어 주소(`http://127.0.0.1:7790/?token=…`)가 있습니다. 직접 열면 됩니다.
 - **"docbridge 가 연 탭이 아닙니다"**: docbridge 가 다시 시작되면서 토큰이 바뀐 예전 탭입니다. 닫고 다시 "열어줘"라고 하세요.
 - **"포트 7790~7799 이 모두 사용 중입니다"**: `DOCBRIDGE_PORT` 로 다른 포트를 정하세요.

@@ -43,8 +43,8 @@
 - [ ] SPEC-007 copy_blocks(#64): 실제 두 문서 탭 사이에서 문단·표를 복사하면 대상 탭에만 초록 표시가 생기고 원본 탭은 그대로다. 대상 탭에서 ⌘Z 한 번에 돌아간다
 - [ ] SPEC-007 #85·#89 본문이 넓은 문서의 한 줄 문단(예: 공고문 "① 서울시 거주자…")을 본문이 좁은 문서에 copy_blocks 하면 브라우저에서 초록 표시가 대상 폭 줄마다 잡히고 둘째 줄을 더블클릭해도 그 줄에 입력칸이 뜬다. 저장한 파일을 다시 열어 같은 문단에 `highlight` 해도 줄마다 잡힌다(자동 테스트는 Node 글자 폭 근사로 줄 수만 본다)
 - [ ] SPEC-006 #86 Safari 에서 더블클릭 입력칸에 한글을 쓰고 조합 중 Enter 를 누르면 조합만 끝나고 적용되지 않으며, 한 번 더 Enter 로 적용된다. 같은 Safari 에서 "신청기간" 같은 짧은 note 가 한 줄로 나온다(E2E 는 Chromium 에 keyCode 229 를 흉내 냄, WebKit 없음)
-- [ ] SPEC-004 AC-6 첫 태그에서 Release 에 .mcpb 가 붙는다: 태그를 민 바로 뒤 `gh release create <태그> --verify-tag` 로 Release 를 만들고, Actions 의 Release 워크플로가 끝나면 그 Release 자산에 `docbridge-<버전>.mcpb` 가 있다(받은 파일로 AC-7 을 본다). 워크플로가 "Release … 가 없습니다" 로 실패했으면 Actions › Release › Run workflow(태그, 드라이런 끔)로 다시 돌린다
-- [ ] SPEC-004 AC-7 맥 Claude Desktop 에서 .mcpb 더블클릭 설치 후 수동 설정 없이 열기 → 하이라이트 → 저장. 예전 수동 설정(`claude_desktop_config.json` 의 docbridge)이 있으면 지운 뒤 본다
+- [ ] SPEC-004 AC-6 첫 태그에서 Release 에 .mcpb 가 붙는다: 태그를 민 바로 뒤 `gh release create <태그> --verify-tag` 로 Release 를 만들고, Actions 의 Release 워크플로가 끝나면 그 Release 자산에 `docbridge-<버전>.mcpb` 가 있다(받은 파일로 AC-7 을 본다). 워크플로가 "Release … 가 없습니다" 로 실패했으면 Actions › Release › Run workflow(태그, 드라이런 끔)로 다시 돌린다. "확인하지 못했습니다"·"업로드에 실패했습니다" 면 인증·권한·네트워크 원인을 고친 뒤 같은 방법으로. 이 워크플로는 v0.2.0 태그부터 돈다(v0.1.0 태그 코드에는 `scripts/release` 가 없어 실패한다 — 드라이런 run 40620164576)
+- [ ] SPEC-004 AC-7 맥 Claude Desktop 에서 .mcpb 더블클릭 설치 후 수동 설정 없이 열기 → 하이라이트 → 저장. 예전 수동 설정(`claude_desktop_config.json` 의 docbridge)이 있으면 지우고 Claude Desktop 을 완전히 종료했다가 다시 연 뒤 설치한다(지우기만 하면 옛 명령으로 떠서 "Node.js server requires a resolvable entry point")
 - [ ] SPEC-004 AC-8 윈도우 Claude Desktop 에서 같은 흐름 + 한글에서 열림 (윈도우 기기 생길 때). 함께 볼 것(PR #96 리뷰):
   - 문서를 둘 열면 브라우저가 저절로 뜨고, 두 번째 탭 주소 끝에 `&doc=d2` 까지 남아 있다(cmd 가 `&` 에서 끊지 않았다)
   - "`C:\v1.2\회신` 으로 저장해줘" 하면 `C:\v1.2\회신.hwpx` 로 저장된다(폴더 이름의 `.2` 를 확장자로 보지 않는다)
