@@ -14,8 +14,8 @@
 
 ## 현재 상태
 
-- 마일스톤: v0.2 (v0.1.0 릴리스 2026-10-27)
-- 진행 중 스펙: SPEC-001·002 done(v0.1.0), SPEC-003 새 문서 만들기 (in-progress, #34), SPEC-004 설치와 배포 (in-progress, #91), SPEC-005 여러 자리 한 번에 바꾸기 (in-progress, #54), SPEC-006 뷰어에서 직접 고치기 (in-progress, #57), SPEC-007 여러 문서와 문서 사이 복사 (in-progress, #61, v0.3)
+- 마일스톤: v0.3 (v0.2.0 릴리스 2026-10-28)
+- 진행 중 스펙: SPEC-001·002 done(v0.1.0), SPEC-003·004·005·006 done(v0.2.0), SPEC-007 여러 문서와 문서 사이 복사 (in-progress, #61, v0.3 — 기능은 v0.2.0 에 포함, 후속 #80·#89 잔여)
 - Projects 보드: #6 (https://github.com/users/crowwan/projects/6)
 
 ## 스택

@@ -1,6 +1,6 @@
 ---
 id: 004
-status: proposed       # proposed | accepted | superseded — 한글 프로그램 확인(사용자) 뒤 accepted
+status: proposed       # proposed | accepted | superseded — 한글 프로그램 확인(사용자) 뒤 accepted. 2026-10-28: 실제 복사 저장본(QA saved/03, #85 수정 후)은 HWPViewer 에서 경고 없음 확인, copy-check 01~04 는 아직
 date: 2026-10-27
 ---
 

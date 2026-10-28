@@ -1,11 +1,11 @@
 ---
 id: SPEC-003
 title: 새 문서 만들기
-status: in-progress    # draft | approved | in-progress | done | dropped
+status: done        # draft | approved | in-progress | done | dropped
 milestone: v0.2
 issue: "#34"
 prototype: src/core/create-document.ts (#35)
-updated: 2026-10-27
+updated: 2026-10-28
 ---
 
 # SPEC-003 새 문서 만들기
@@ -157,3 +157,4 @@ GO 기준: 빈 문서와 양식 문서 각각으로 제목·개요·본문·표�
 | 2026-10-27 | SPEC-007 #63 에 맞춰 고침: `create_document` 는 새 탭(대신하지 않음, 결과에 `doc`·`warnings` 없음), 저장하지 않은 새 문서를 버리는 알림은 `close_document` discard·탭 닫기로, 새로고침으로 사라진 새 문서는 열린 문서에서 뺌 |
 | 2026-10-27 | PR #46 리뷰: 첫 블록 규칙을 블록 추출 자체로(저장 전 검증·새로고침도 같은 블록), 저장하지 않은 새 문서를 대신하면 편집이 없어도 버렸다고 알림, 양식 경로도 절대·`~` 만, 경로 없는 새 문서 저장의 이미 있음 문구 |
 | 2026-10-27 | #36: 블록이 하나도 없는 문서는 (새 문서가 아니어도) 첫 문단을 빈 문단 블록으로 — 비운 채 저장한 새 문서를 새로고침해도 채울 수 있게, 새 문서는 뷰어가 만든다(바이트 경로), 새 문서 저장의 상대 경로 기준(`path` 폴더)·처음 저장 뒤 원본, 저장 전 확인 창은 편집이 없어도, 새로고침 알림 문구, 양식 경로는 `open_document` 와 같음 |
+| 2026-10-28 | v0.2.0 릴리스 (#101), status done |
