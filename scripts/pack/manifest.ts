@@ -32,7 +32,22 @@ export function mcpbPath(version: string): string {
 }
 
 const mcpbPackageDir = `${REPO_ROOT}node_modules/@anthropic-ai/mcpb/`;
-const mcpbBin = z.object({ bin: z.string() }).parse(JSON.parse(readFileSync(`${mcpbPackageDir}package.json`, 'utf8'))).bin;
+const mcpbPackageSchema = z.object({ bin: z.union([z.string(), z.record(z.string(), z.string())]).optional() });
+
+/**
+ * mcpb package.json 의 bin 에서 CLI 진입 파일(패키지 폴더 기준 경로)을 꺼낸다.
+ * npm 의 bin 은 문자열(명령 이름 = 패키지 이름)이거나 명령 이름 → 경로 객체라 둘 다 받는다(#99)
+ */
+export function mcpbBinEntry(packageJson: unknown): string {
+  const { bin } = mcpbPackageSchema.parse(packageJson);
+  if (bin === undefined) throw new Error('@anthropic-ai/mcpb package.json 에 bin 이 없습니다');
+  if (typeof bin === 'string') return bin;
+  const entry = bin.mcpb;
+  if (entry === undefined) throw new Error(`@anthropic-ai/mcpb package.json 의 bin 에 mcpb 명령이 없습니다(있는 명령: ${Object.keys(bin).join(', ')})`);
+  return entry;
+}
+
+const mcpbBin = mcpbBinEntry(JSON.parse(readFileSync(`${mcpbPackageDir}package.json`, 'utf8')));
 
 /**
  * mcpb CLI 실행 명령. node_modules/.bin/mcpb 는 윈도우에서 .cmd 라 execFile 로 바로 못 부르므로

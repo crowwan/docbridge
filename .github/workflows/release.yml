@@ -61,7 +61,9 @@ jobs:
       - name: 설치판(.mcpb) 만들기와 검사
         run: npm run test:pack
       - name: 만든 파일 확인
-        run: test -f "${{ steps.version.outputs.file }}"
+        env:
+          FILE: ${{ steps.version.outputs.file }}
+        run: test -f "$FILE"
 
       - name: 아티팩트로 남기기
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -75,9 +77,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           FILE: ${{ steps.version.outputs.file }}
+        # 실패를 둘로 나눠 안내한다(#99): Release 가 없음(만든 뒤 다시) / 인증·권한·네트워크 등 그 밖의 오류(원인을 고친 뒤 다시)
         run: |
-          if ! gh release view "$TAG" > /dev/null; then
-            echo "::error::Release $TAG 가 없습니다. /release 로 gh release create $TAG 를 한 뒤 이 워크플로를 workflow_dispatch(tag=$TAG, dry_run=false)로 다시 돌리세요"
+          if ! view_error=$(gh release view "$TAG" 2>&1 > /dev/null); then
+            if grep -qi "release not found" <<< "$view_error"; then
+              echo "::error::Release $TAG 가 없습니다. /release 로 gh release create $TAG 를 한 뒤 이 워크플로를 workflow_dispatch(tag=$TAG, dry_run=false)로 다시 돌리세요"
+            else
+              echo "::error::Release $TAG 를 확인하지 못했습니다(인증·권한·네트워크 등): $view_error — 원인을 고친 뒤 workflow_dispatch(tag=$TAG, dry_run=false)로 다시 돌리세요"
+            fi
             exit 1
           fi
-          gh release upload "$TAG" "$FILE" --clobber
+          if ! gh release upload "$TAG" "$FILE" --clobber; then
+            echo "::error::Release $TAG 는 있지만 $FILE 업로드에 실패했습니다(인증·권한·네트워크 등). 위 gh 오류를 보고 고친 뒤 workflow_dispatch(tag=$TAG, dry_run=false)로 다시 돌리세요"
+            exit 1
+          fi

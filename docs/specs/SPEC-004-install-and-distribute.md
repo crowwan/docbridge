@@ -57,6 +57,8 @@ updated: 2026-10-28
    - 워크플로는 Release 를 만들지 않는다. 업로드는 빌드·테스트(몇 분) 뒤라 2 의 Release 가 그 사이에 생긴다. 그때도 Release 가 없으면 실패하고, Release 를 만든 뒤 `workflow_dispatch`(태그 이름, 드라이런 끔)로 다시 돌린다. `--clobber` 라 다시 돌려도 같은 이름 파일을 바꿔 붙인다.
    - `workflow_dispatch` 의 드라이런(기본 켬)은 Release 에 올리지 않고 Actions 아티팩트만 남긴다(태그를 다시 만들지 않고 워크플로를 시험할 때).
    - 권한은 `contents: write`, 토큰은 기본 `GITHUB_TOKEN`. 쓰는 액션은 커밋 sha 로 고정한다.
+   - 업로드 단계 실패는 둘로 나눠 안내한다: Release 가 없음(`gh release view` 가 "release not found" → Release 를 만든 뒤 다시) / 그 밖의 오류(인증·권한·네트워크 등, Release 확인이나 업로드 실패 → 원인을 고친 뒤 다시). 둘 다 `workflow_dispatch`(태그, 드라이런 끔)로 다시 돌린다.
+   - 이 워크플로는 **v0.2.0 태그부터** 돈다. v0.1.0 태그 코드에는 `scripts/release` 가 없다(v0.1.0 으로 돌린 드라이런 run 40620164576 이 태그 확인 단계에서 실패한 이유).
 
 ### README 설치 안내
 
@@ -120,3 +122,4 @@ updated: 2026-10-28
 | 2026-10-28 | AC-4·5 구현(#93): 윈도우 start 의 `&` 막기, 윈도우 경로 규칙(`~\`·`C:이름` 거부·`\\server\share`·폴더 판정·확장자·같은 파일) 구체화 |
 | 2026-10-28 | #92 .mcpb 패키징: Desktop Node 기술 검증(24.22.0) → target node24·runtimes.node, 아이콘 생략, 서버는 rhwp WASM 을 띄우지 않음(WASM 은 viewer/), THIRD_PARTY_NOTICES.txt, AC-1·2·3 |
 | 2026-10-28 | #94 릴리스 흐름 구체화: Release 는 `/release` 가 태그 직후 만들고 워크플로는 붙이기만(없으면 실패, workflow_dispatch 로 다시·드라이런), 태그 = package.json 버전 확인. README 설치 절. AC-6 은 첫 태그에서 확인 |
+| 2026-10-28 | #99 릴리스 후속: 워크플로는 v0.2.0 태그부터, 업로드 실패를 Release 없음 / 그 밖의 오류로 나눠 안내. README 설치 절에 수동 설정을 지운 뒤 Desktop 재시작 |
