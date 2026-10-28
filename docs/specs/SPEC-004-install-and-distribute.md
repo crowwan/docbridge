@@ -1,11 +1,11 @@
 ---
 id: SPEC-004
 title: 설치와 배포
-status: draft          # draft | approved | in-progress | done | dropped
+status: in-progress        # draft | approved | in-progress | done | dropped
 milestone: v0.2
-issue:
+issue: "#91"
 prototype:
-updated: 2026-10-27
+updated: 2026-10-28
 ---
 
 # SPEC-004 설치와 배포
@@ -67,7 +67,7 @@ updated: 2026-10-27
 
 - [ ] AC-1 `npm run pack` 이 `dist/docbridge-<버전>.mcpb` 를 만들고, `mcpb validate`(또는 manifest 스키마 검사)를 통과한다 (자동)
 - [ ] AC-2 서버 번들은 `node_modules` 없는 빈 폴더에 풀어도 `node server/index.js` 로 뜨고, MCP 클라이언트로 `open_document` → `read_blocks` → `save_document` 가 된다 (자동)
-- [ ] AC-3 manifest 의 `version` 이 package.json 과 같고, `tools` 가 실제 등록 도구 16개와 같다 (자동)
+- [ ] AC-3 manifest 의 `version` 이 package.json 과 같고, `tools` 가 실제 등록 도구 전부(지금 20개)와 같다 (자동)
 - [ ] AC-4 브라우저 열기가 플랫폼별 명령(맥 `open`, 윈도우 `cmd /c start`, 리눅스 `xdg-open`)을 고른다 (자동)
 - [ ] AC-5 경로 규칙(`~`, 절대 경로 판정, 기본 저장 이름)이 윈도우 경로에서도 맞다 (자동)
 - [ ] AC-6 태그를 올리면 CI 가 Release 에 `.mcpb` 를 붙인다 (수동 QA — 첫 릴리스에서 확인)
@@ -104,3 +104,4 @@ updated: 2026-10-27
 |---|---|
 | 2026-10-27 | 초안 |
 | 2026-10-27 | 리뷰 반영: npm 배포는 이번 범위에서 뺌(.mcpb 만), AC 8개로 |
+| 2026-10-28 | 스펙 리뷰 승인(사용자), AC-3 도구 수를 "전부(지금 20개)"로, 이슈 분해 (#91) |
