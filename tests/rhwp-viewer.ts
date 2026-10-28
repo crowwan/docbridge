@@ -9,6 +9,7 @@ import { findInBlocks } from '../src/core/find-text.ts';
 import { blockBoxes, highlightTargets } from '../src/core/highlight-targets.ts';
 import { exportForSave, type Reopen } from '../src/core/hwpx-export.ts';
 import type { BlockAnchor } from '../src/core/block-ids.ts';
+import { openHwpDocument } from '../src/core/open-document.ts';
 import { initRhwpForNode } from '../src/core/rhwp-node.ts';
 import { paragraphStyles } from '../src/core/styles.ts';
 import type { RequestMessage, ViewerParams } from '../src/shared/protocol.ts';
@@ -49,7 +50,8 @@ export function rhwpViewer(options: RhwpViewerOptions = {}): RhwpViewer {
     switch (request.method) {
       case 'load_document': {
         close();
-        editor = new DocumentEditor(new HwpDocument(new Uint8Array(Buffer.from(request.params.data, 'base64'))));
+        // 뷰어와 같은 열기(줄 배치가 빠진 문단을 다시 배치, #89)
+        editor = new DocumentEditor(openHwpDocument(new Uint8Array(Buffer.from(request.params.data, 'base64'))));
         unsaved = 0;
         newDocument = false;
         return { pageCount: editor.doc.pageCount(), blocks: editor.blocks.map((block) => blockPositionSchema.parse(block)) };

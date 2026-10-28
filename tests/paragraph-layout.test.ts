@@ -4,13 +4,20 @@
 // copy_blocks(SPEC-007)·move_blocks(SPEC-002, importParagraphBlock + deleteParagraph)·insert_paragraph(SPEC-002) 를 같은 기준으로 본다.
 // move_blocks 는 같은 문서 사본에서 가져와 폭이 같고, insert_paragraph 는 글자를 넣으며 다시 배치돼 고치기 전에도 맞았다(회귀 확인용).
 import { HwpDocument } from '@rhwp/core';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import { anchorsOf } from '../src/core/block-ids.ts';
+import { extractBlocks } from '../src/core/blocks.ts';
 import { copyParagraphs, type CopyResult } from '../src/core/copy-paragraphs.ts';
+import { blockBoxes } from '../src/core/highlight-targets.ts';
+import { linelessParagraphs, openHwpDocument } from '../src/core/open-document.ts';
 import { insertParagraphNear, moveParagraphs } from '../src/core/edits.ts';
 import { parseJson } from '../src/core/json.ts';
 import { createBlankDocument } from '../src/core/rhwp-node.ts';
 import { buildCopySource, SRC } from './copy-source.ts';
+import { fixturePath } from './fixtures.ts';
+import { rhwpViewer } from './rhwp-viewer.ts';
 
 const S = 0;
 const lineInfoSchema = z.object({ lineCount: z.number() });
@@ -101,7 +108,8 @@ describe('SPEC-007 · SPEC-002 넣은·옮긴 문단의 줄 배치는 대상 본
 
     expect(textOf(saved, 2)).toBe(textOf(source, SRC.sourceStyle));
     expect(lines).toBeGreaterThan(1);
-    expect([lines, 'recompute']).toContain(savedLayout(saved, 2));
+    // 이 문서에서 rhwp 는 다시 배치한 줄 배치를 합성한 것으로 보고 빼고 저장한다(원본 폭 한 줄이 저장되면 1)
+    expect(savedLayout(saved, 2)).toBe('recompute');
   });
 
   it('move_blocks 로 옮긴 문단은 옮기기 전과 줄 수가 같고, 저장한 HWPX 에도 그 줄 배치(또는 한글이 다시 계산)가 남는다', () => {
@@ -126,5 +134,86 @@ describe('SPEC-007 · SPEC-002 넣은·옮긴 문단의 줄 배치는 대상 본
     expect(lines).toBeGreaterThan(1);
     expect(paragraphRects(doc, at)).toHaveLength(lines);
     expect(savedLayout(reopened(doc), at)).toBe(lines);
+  });
+});
+
+/** 좁은 문서에 넓은 원본의 한 줄 문단을 copy_blocks 로 넣고(대상 문단 2) HWPX 로 저장한 바이트 — 넣은 문단은 줄 배치 없이 저장된다 */
+function savedNarrowCopy(): Uint8Array {
+  const source = wideSource();
+  const target = narrowTarget();
+  copied(copyParagraphs(target, source.exportHwpx(), { section: S, start: SRC.sourceStyle, end: SRC.sourceStyle + 1 }, { section: S, before: 2 }));
+  const bytes = target.exportHwpx();
+  source.free();
+  target.free();
+  return bytes;
+}
+
+const base64 = (bytes: Uint8Array) => Buffer.from(bytes).toString('base64');
+
+describe('SPEC-007 줄 배치가 빠진 채 저장된 문단은 다시 열면 줄마다 잡힌다 (#89)', () => {
+  it('좁은 문서에 복사해 저장한 파일을 다시 열면(load_document) 넣은 문단의 줄 사각형이 여러 줄이다', () => {
+    const bytes = savedNarrowCopy();
+    // rhwp 로 그냥 열면 한 줄(고치기 전 docbridge 와 같다)
+    expect(lineCount(new HwpDocument(bytes), 2)).toBe(1);
+    const viewer = rhwpViewer();
+
+    viewer.handle({ type: 'request', id: 1, method: 'load_document', params: { doc: 'd1', fileName: '좁은 문서.hwpx', data: base64(bytes) } });
+
+    const { doc } = viewer.editor();
+    const lines = lineCount(doc, 2);
+    expect(lines).toBeGreaterThan(1);
+    const rects = paragraphRects(doc, 2);
+    expect(rects).toHaveLength(lines);
+    expect(new Set(rects.map(({ y }) => y)).size).toBe(lines);
+  });
+
+  it('그 파일을 양식으로 새 문서를 만들어도(create_document 내용 그대로) 넣은 문단이 여러 줄이다', () => {
+    const bytes = savedNarrowCopy();
+    const viewer = rhwpViewer();
+
+    viewer.handle({
+      type: 'request',
+      id: 1,
+      method: 'create_document',
+      params: { doc: 'd1', fileName: '새 문서.hwpx', template: { fileName: '좁은 문서.hwpx', data: base64(bytes), keepContent: true } },
+    });
+
+    const { doc } = viewer.editor();
+    expect(lineCount(doc, 2)).toBeGreaterThan(1);
+    expect(paragraphRects(doc, 2)).toHaveLength(lineCount(doc, 2));
+  });
+
+  it('저장 파일에서 넣은 문단은 줄 배치가 빠진 본문 문단으로 잡힌다(다시 배치할 대상)', () => {
+    expect(linelessParagraphs(new HwpDocument(savedNarrowCopy()))).toContainEqual({ section: S, paragraph: 2 });
+  });
+});
+
+const FIXTURES = ['notice.hwpx', 'notice.hwp', 'application.hwpx', 'outline-demo.hwpx', 'report.hwpx'];
+const blockBoxesOf = (doc: HwpDocument) => {
+  const blocks = extractBlocks(doc);
+  return blockBoxes(doc, blocks, anchorsOf(blocks));
+};
+
+describe('SPEC-007 열 때 다시 배치는 줄 배치가 있는 일반 문서를 바꾸지 않는다 (#89)', () => {
+  it.each(FIXTURES)('%s: 블록·블록 사각형(하이라이트·바뀐 블록 표시)·HWPX 저장 결과가 그냥 연 것과 같다', (name) => {
+    const bytes = new Uint8Array(readFileSync(fixturePath(name)));
+    const plain = new HwpDocument(bytes);
+    const opened = openHwpDocument(bytes);
+
+    expect(extractBlocks(opened)).toEqual(extractBlocks(plain));
+    expect(blockBoxesOf(opened)).toEqual(blockBoxesOf(plain));
+    expect(opened.exportHwpx()).toEqual(plain.exportHwpx());
+    expect(opened.pageCount()).toBe(plain.pageCount());
+  });
+
+  it('구역 첫 문단을 먼저 다시 배치하지 않고 reflowLinesegs() 만 부르면 저장 결과가 바뀐다(뒤 문단 vertpos 가 한 줄씩 밀림)', () => {
+    // openHwpDocument 가 구역 첫 문단을 먼저 다시 배치하는 이유. rhwp 를 올려 이 테스트가 실패하면 그 단계를 빼는 것을 다시 본다
+    const bytes = new Uint8Array(readFileSync(fixturePath('notice.hwpx')));
+    const plain = new HwpDocument(bytes);
+    const reflowed = new HwpDocument(bytes);
+
+    expect(reflowed.reflowLinesegs()).toBeGreaterThan(0);
+
+    expect(reflowed.exportHwpx()).not.toEqual(plain.exportHwpx());
   });
 });

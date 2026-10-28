@@ -15,6 +15,7 @@ import wasmUrl from '@rhwp/core/rhwp_bg.wasm?url';
 import type { BlockAnchor } from '../core/block-ids.ts';
 import { blockPositionSchema, type Block } from '../core/block-schema.ts';
 import { DocumentEditor } from '../core/document-editor.ts';
+import { openHwpDocument } from '../core/open-document.ts';
 import { blockBands, menuEdits } from '../core/block-moves.ts';
 import { BLOCK_CHANGED_WHILE_EDITING, bodyBlockAt, editSpotAt, replaceEditAt, spotBox, type EditSpot } from '../core/edit-spot.ts';
 import type { EditOperation } from '../core/edit-operations.ts';
@@ -248,10 +249,10 @@ let currentFileName = '';
 /** 서버가 연 문서의 편집 공용 경로(블록·되돌리기 스냅샷). 편집할 때마다 블록을 다시 뽑는다 */
 let currentEditor: DocumentEditor | undefined;
 
-/** 파일 바이트를 rhwp 로 연다. 읽지 못하면 던진다 */
+/** 파일 바이트를 rhwp 로 연다(줄 배치가 빠진 문단은 다시 배치, #89). 읽지 못하면 던진다 */
 function parseDocument(bytes: Uint8Array): { doc: HwpDocument; parseMs: number } {
   const parseStarted = performance.now();
-  const doc = new HwpDocument(bytes);
+  const doc = openHwpDocument(bytes);
   return { doc, parseMs: performance.now() - parseStarted };
 }
 
