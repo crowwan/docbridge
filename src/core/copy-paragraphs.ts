@@ -12,7 +12,7 @@
 import { HwpDocument } from '@rhwp/core';
 import { z } from 'zod';
 import { bodyControlsAt } from './body-paragraphs.ts';
-import { moveRejectReason, type MoveRejection } from './edits.ts';
+import { moveRejectReason, paraShapeIdOf, type MoveRejection } from './edits.ts';
 import { parseJson } from './json.ts';
 import { positionKey } from './paragraph-changes.ts';
 import { errorMessage } from '../shared/errors.ts';
@@ -113,12 +113,26 @@ export function copyParagraphs(
       const before = { styles: styleNames(target), numberings: numberings(target), precedingNumbering: numberingAt(target, to.section, to.before - 1) };
       target.importParagraphBlock(source, importRequest(from, to, false));
       const inserted = { start: to.before, end: to.before + (from.end - from.start) };
-      return { ok: true, inserted, corrections: correct(target, to.section, inserted, before) };
+      const corrections = correct(target, to.section, inserted, before);
+      relayout(target, to.section, inserted);
+      return { ok: true, inserted, corrections };
     } finally {
       source.free();
     }
   }
   return { ok: false, rejected };
+}
+
+/**
+ * 넣은 문단의 줄 배치(lineseg)를 대상 폭으로 다시 계산한다(#85).
+ * importParagraphBlock 은 원본 문서 폭으로 계산된 줄 배치를 그대로 가져오고 다시 배치하지 않는다 → 좁은 대상에서
+ * 감겨야 할 줄이 한 줄로 남아 초록 표시·highlight·더블클릭 자리가 첫 줄 일부만 잡히고, 저장 파일에도 원본 폭 줄 배치가 남는다.
+ * 편집하면 맞아지는 경로(rhwp 문단 편집 → 그 문단 다시 배치)와 같게, 문단 모양을 같은 번호로 다시 건다.
+ * reflowLinesegs 는 줄 배치가 비었거나 높이 0 인 문단만 다시 계산해서 이 경우를 고치지 못한다.
+ * 표 칸 문단은 표가 칸 폭째 들어와 폭이 같으므로 보지 않는다
+ */
+function relayout(doc: HwpDocument, section: number, inserted: { start: number; end: number }): void {
+  for (let p = inserted.start; p < inserted.end; p += 1) doc.setParaShapeId(section, p, paraShapeIdOf(doc, section, p));
 }
 
 function dryRunRejections(target: HwpDocument, source: HwpDocument, from: SourceRange, to: TargetPlace): MoveRejection[] {
