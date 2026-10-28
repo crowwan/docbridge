@@ -6,6 +6,7 @@ import {
   RequestTracker,
   requestMessageSchema,
   textTargetSchema,
+  USER_EXPORT_PDF_TIMEOUT_MS,
   userRequestTimeoutMessage,
   viewerMethodSchemas,
   type RequestMessage,
@@ -72,6 +73,23 @@ describe('SPEC-001 서버↔뷰어 요청/응답', () => {
     await expect(request.promise).rejects.toThrow(
       `docbridge 가 ${REQUEST_TIMEOUT_MS / 1000}초 안에 답하지 않았습니다. 화면이 바뀌지 않았으면 다시 해 주세요.`,
     );
+  });
+
+  it('SPEC-008 뷰어 PDF 버튼 요청은 PDF 를 만들 시간만큼 따로 정한 시간을 기다리고, 늦으면 PDF 가 생겼는지 보라는 문구로 실패한다', async () => {
+    // 수백 쪽 문서는 수십 초 — 사람 편집 시간(30초)으로 끊으면 서버는 계속 만들어 쓰는데 화면은 실패라고 한다
+    const tracker = new RequestTracker(REQUEST_TIMEOUT_MS, userRequestTimeoutMessage);
+    const request = tracker.start('user_export_pdf', numberResult, USER_EXPORT_PDF_TIMEOUT_MS);
+    const outcome = request.promise.then(
+      () => 'resolved',
+      (error: unknown) => (error instanceof Error ? error.message : String(error)),
+    );
+
+    expect(USER_EXPORT_PDF_TIMEOUT_MS).toBe(5 * 60_000);
+    vi.advanceTimersByTime(REQUEST_TIMEOUT_MS);
+    expect(tracker.pendingCount()).toBe(1);
+    vi.advanceTimersByTime(USER_EXPORT_PDF_TIMEOUT_MS - REQUEST_TIMEOUT_MS);
+
+    expect(await outcome).toBe('docbridge 가 300초 안에 PDF 를 다 만들지 못했습니다. 조금 뒤 문서 옆에 PDF 가 생겼는지 확인하세요.');
   });
 
   it('뷰어 연결이 끊기면 기다리던 요청을 모두 그 이유로 실패시킨다', async () => {

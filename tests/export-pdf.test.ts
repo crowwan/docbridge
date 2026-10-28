@@ -1,6 +1,6 @@
 // SPEC-008 PDF 로 내보내기(export_pdf, #108): 뷰어(rhwp 테스트 뷰어)가 쪽 SVG·글자 배치를 주고 서버가 PDF 를 만들어 쓴다.
 // 글꼴은 시험 글꼴(tests/fonts/, Noto Sans KR 부분 집합, OFL)만 써서 컴퓨터마다 결과가 같다.
-import { copyFile, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -86,7 +86,7 @@ describe('SPEC-008 PDF 로 내보내기 (export_pdf)', () => {
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'docbridge-export-pdf-'));
     bridge = await startBridge({ port: 0, viewerDir: tmpdir() });
-    sessions = new DocumentSessions(bridge, { openBrowser: () => {} });
+    sessions = new DocumentSessions(bridge, { openBrowser: () => {}, fonts: testFonts });
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
     await createMcpServer(sessions, { fonts: testFonts }).connect(serverSide);
     client = new Client({ name: 'docbridge-test', version: '0.0.0' });
@@ -247,6 +247,46 @@ describe('SPEC-008 PDF 로 내보내기 (export_pdf)', () => {
     ]);
     for (const [i, event] of progress.entries()) if (i > 0) expect(event.progress).toBeGreaterThan(progress[i - 1]?.progress ?? Infinity);
     expect((await inspectPdf(new Uint8Array(await readFile(join(dir, '개요.pdf'))))).pages).toHaveLength(45);
+  });
+
+  it('AC-7 뷰어 PDF 버튼 요청(user_export_pdf)은 기본 경로에 PDF 를 저장하고 그 경로를 돌려준다 — 편집이 아니다', async () => {
+    await openCopy('notice.hwpx', '공문.hwpx');
+
+    const first = await viewer.userRequest('user_export_pdf', {});
+    const second = await viewer.userRequest('user_export_pdf', {});
+
+    expect(first).toMatchObject({ ok: true, result: { path: join(dir, '공문.pdf') } });
+    expect(second).toMatchObject({ ok: true, result: { path: join(dir, '공문-2.pdf') } });
+    expect((await readFile(join(dir, '공문.pdf'))).subarray(0, 5).toString()).toBe('%PDF-');
+    expect(await unsavedEdits()).toBe(0);
+    expect(sessions.get().editCount).toBe(0);
+  });
+
+  it('AC-7 PDF 버튼 요청이 실패하면 사람용 문구로 알린다 — 폴더에 쓸 수 없으면 쓰기 실패 문구, 그 밖은 일반 문구(원래 오류 문구는 보내지 않는다)', async () => {
+    await openCopy('notice.hwpx', '공문.hwpx');
+    await chmod(dir, 0o555);
+    try {
+      expect(await viewer.userRequest('user_export_pdf', {})).toEqual({
+        type: 'user_response',
+        id: expect.any(Number),
+        ok: false,
+        code: 'export_write_failed',
+        error: '문서 폴더에 PDF 를 쓰지 못했습니다. 폴더에 쓸 수 있는지 확인하거나, Claude 에게 다른 경로로 저장해 달라고 하세요.',
+      });
+    } finally {
+      await chmod(dir, 0o755);
+    }
+
+    const handle = rhwpViewerHandler();
+    viewer.serve((request) => {
+      if (request.method === 'export_pdf_pages') throw new Error('rhwp 원문 오류: renderPageSvg');
+      return handle(request);
+    });
+    expect(await viewer.userRequest('user_export_pdf', {})).toMatchObject({
+      ok: false,
+      code: 'export_failed',
+      error: 'PDF 를 만들지 못했습니다. 다시 해 주세요. 계속 안 되면 Claude 에게 PDF 로 저장해 달라고 하세요.',
+    });
   });
 
   it('뷰어가 연결되지 않았으면 기존 "뷰어가 없습니다" 오류', async () => {

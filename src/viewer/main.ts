@@ -10,6 +10,7 @@
 // ⌘Z(윈도우 Ctrl+Z)는 서버 공용 되돌리기(user_undo).
 // 더블클릭 글자 고치기(inline-edit.ts)는 고칠 자리·바뀐 범위만(core/edit-spot.ts)을 user_edit 로 보내고, 안 되면 뷰어 아래 알림(toast.ts).
 // 끌어 옮기기·오른쪽 클릭 메뉴(block-actions.ts)는 core/block-moves.ts 의 move_blocks·delete_blocks 를 같은 길로 보낸다.
+// 도구 막대 PDF 버튼(pdf-button.ts, SPEC-008 AC-7)은 user_export_pdf 로 서버에 저장을 부탁한다(편집이 아니다).
 import init, { HwpDocument } from '@rhwp/core';
 import wasmUrl from '@rhwp/core/rhwp_bg.wasm?url';
 import type { BlockAnchor } from '../core/block-ids.ts';
@@ -35,6 +36,7 @@ import {
   parseUserResult,
   REQUEST_TIMEOUT_MS,
   RequestTracker,
+  USER_EXPORT_PDF_TIMEOUT_MS,
   userRequestTimeoutMessage,
   userResponseMessageSchema,
   type CreateDocumentResult,
@@ -50,14 +52,19 @@ import {
 import type { RenderMetrics, ViewerApi } from './api.ts';
 import { setupBlockActions } from './block-actions.ts';
 import { setupInlineEdit } from './inline-edit.ts';
+import { setupPdfButton } from './pdf-button.ts';
 import { showToast } from './toast.ts';
 
 const ZOOM = 1;
 
 const statusEl = document.getElementById('status');
+const pdfButtonEl = document.getElementById('export-pdf');
 const pagesEl = document.getElementById('pages');
 const noticeEl = document.getElementById('notice');
 const docNameEl = document.getElementById('doc-name');
+/** 도구 막대 PDF 버튼(SPEC-008 AC-7). 서버가 연 문서가 있을 때만 보인다 */
+const pdfButton =
+  pdfButtonEl instanceof HTMLButtonElement ? setupPdfButton(pdfButtonEl, { exportPdf: () => exportPdfFromButton(), report: showToast, progress: showPdfProgress }) : undefined;
 
 function setStatus(text: string): void {
   if (statusEl) statusEl.textContent = text;
@@ -293,6 +300,14 @@ function closeEditor(): void {
   blockActions?.cancel();
   currentEditor?.dispose();
   currentEditor = undefined;
+  pdfButton?.setAvailable(false);
+}
+
+/** 서버가 연 문서의 편집 공용 경로를 둔다. PDF 버튼은 이때부터 보인다 */
+function useEditor(doc: HwpDocument): DocumentEditor {
+  currentEditor = new DocumentEditor(doc);
+  pdfButton?.setAvailable(true);
+  return currentEditor;
 }
 
 /** 상태 줄: 마지막 파일 이름(새 문서는 저장할 이름과 "새 문서")과 쪽 수 */
@@ -409,8 +424,8 @@ function loadDocument(fileName: string, data: string): LoadDocumentResult {
   return replaceDocument(fileName, false, '문서를 열 수 없습니다', () => {
     const { doc } = parseDocument(base64ToBytes(data));
     showDocument(doc, fileName);
-    currentEditor = new DocumentEditor(doc);
-    return { pageCount: doc.pageCount(), blocks: currentEditor.blocks.map((block) => blockPositionSchema.parse(block)) };
+    const editor = useEditor(doc);
+    return { pageCount: doc.pageCount(), blocks: editor.blocks.map((block) => blockPositionSchema.parse(block)) };
   });
 }
 
@@ -423,8 +438,7 @@ function createDocument(params: ViewerParams<'create_document'>): CreateDocument
     const { doc, cleared } = createNewDocument(template === undefined ? undefined : base64ToBytes(template.data), template?.keepContent ?? false);
     showDocument(doc, params.fileName);
     // 블록이 없는 문서는 첫 문단이 빈 문단 블록이 된다(extractBlocks)
-    currentEditor = new DocumentEditor(doc);
-    return createdDocumentResult(doc, currentEditor.blocks, cleared);
+    return createdDocumentResult(doc, useEditor(doc).blocks, cleared);
   });
 }
 
@@ -577,11 +591,11 @@ let serverSocket: WebSocket | undefined;
 /** 뷰어 → 서버 요청(사람 편집·⌘Z)의 응답을 id 로 기다린다. 늦으면 docbridge 가 답하지 않았다는 문구(서버 마감보다 길다) */
 const userRequests = new RequestTracker(REQUEST_TIMEOUT_MS, userRequestTimeoutMessage);
 
-/** 서버에 뷰어 요청을 보내고 응답을 기다린다. 연결이 끊겨 있으면 보내지 않고 DISCONNECTED 로 실패한다 */
-function sendUserRequest<M extends UserMethod>(method: M, params: UserParams<M>): Promise<UserResult<M>> {
+/** 서버에 뷰어 요청을 보내고 응답을 기다린다. 연결이 끊겨 있으면 보내지 않고 DISCONNECTED 로 실패한다. timeoutMs: 이 요청만 기다리는 시간(PDF 버튼) */
+function sendUserRequest<M extends UserMethod>(method: M, params: UserParams<M>, timeoutMs?: number): Promise<UserResult<M>> {
   const socket = serverSocket;
   if (socket === undefined || socket.readyState !== WebSocket.OPEN) return Promise.reject(new Error(DISCONNECTED));
-  const { id, promise } = userRequests.start(method, parseUserResult[method]);
+  const { id, promise } = userRequests.start(method, parseUserResult[method], timeoutMs);
   socket.send(JSON.stringify({ type: 'user_request', id, method, params }));
   return promise;
 }
@@ -636,6 +650,26 @@ const blockActions =
           requestUserEdit(edit).catch(reportEditFailure);
         },
       });
+
+const PDF_PROGRESS = 'PDF 만드는 중…';
+
+/** PDF 버튼 진행: 만드는 동안 상태 줄에 진행 문구, 끝나면 원래 상태 줄(파일 이름·쪽 수) */
+function showPdfProgress(busy: boolean): void {
+  if (busy) setStatus(PDF_PROGRESS);
+  else if (currentDoc !== undefined) showStatus(currentDoc);
+}
+
+const PDF_DISCONNECTED = 'docbridge 와 연결이 끊겨 PDF 로 저장할 수 없습니다. Claude 채팅에서 open_document 로 다시 여세요.';
+
+/** PDF 버튼: 서버에 기본 경로 저장을 부탁한다. 연결이 끊겼으면(보내기 전·기다리는 중) PDF 문구로 */
+async function exportPdfFromButton(): Promise<string> {
+  try {
+    return (await sendUserRequest('user_export_pdf', {}, USER_EXPORT_PDF_TIMEOUT_MS)).path;
+  } catch (error) {
+    if (serverSocket === undefined || serverSocket.readyState !== WebSocket.OPEN) throw new Error(PDF_DISCONNECTED);
+    throw error;
+  }
+}
 
 /** 상태 줄에 사람 편집·되돌리기가 안 된 이유를 남긴다(다음 다시 그리기 때 원래 상태 줄로 돌아간다) */
 function reportUserFailure(error: unknown): void {

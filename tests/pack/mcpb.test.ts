@@ -189,7 +189,8 @@ describe('SPEC-004 설치판(.mcpb)', () => {
       expect(exported).toMatchObject({ path: join(work, '공문-수정.pdf'), pageCount: 1 });
       expect(pdf.pages).toHaveLength(1);
       expect(compact(pdf.pages[0]?.text ?? '')).toContain(compact('2026년 하반기 주민 안전교육 일정 안내'));
-      expect((await pageContents(bytes))[0]).toMatch(/ Do\n/);
+      // 글리프 윤곽 Form 은 쪽 자원 이름 G-<수>(pdf-export.ts xobjectName → pdf-lib newXObject('G') — 그림은 Im-<수>)
+      expect((await pageContents(bytes))[0]).toMatch(/\/G-\d+ Do\n/);
       if (process.platform === 'darwin') expect(exported.warnings ?? []).not.toContainEqual(expect.stringContaining('글꼴이 없어 그리지 못한 글자'));
     } finally {
       viewer.close();
