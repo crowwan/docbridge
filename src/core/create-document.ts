@@ -10,6 +10,7 @@ import { blockPositionSchema, type Block } from './block-schema.ts';
 import { bodyControlsAt, type BodyControl } from './body-paragraphs.ts';
 import { charLength } from './chars.ts';
 import { parseJson } from './json.ts';
+import { openHwpDocument } from './open-document.ts';
 import { ensureTitleStyle, NORMAL_STYLE, paragraphStyles, resetToStyle, styleById, type ParagraphStyle } from './styles.ts';
 
 const S_FIRST = 0;
@@ -227,7 +228,7 @@ export interface CreatedDocument {
  * 그다음 제목 스타일이 없으면 더한다. 실패하면 만든 문서를 닫고 던진다(양식을 rhwp 가 읽지 못함 등)
  */
 export function createNewDocument(template: Uint8Array | undefined, keepContent: boolean): CreatedDocument {
-  const doc = template === undefined ? blankDocument() : new HwpDocument(template);
+  const doc = template === undefined ? blankDocument() : openHwpDocument(template);
   try {
     const cleared = template !== undefined && !keepContent ? clearTemplateBody(doc) : undefined;
     ensureTitleStyle(doc);

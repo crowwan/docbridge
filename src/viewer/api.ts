@@ -7,7 +7,7 @@ export type { SelectionRect, TextRange };
 export interface RenderMetrics {
   /** WASM 내려받기·컴파일·초기화 시간(ms) */
   wasmInitMs: number;
-  /** 문서 파싱(new HwpDocument) 시간(ms). 문서를 안 열었으면 0 */
+  /** 문서 파싱(openHwpDocument: new HwpDocument + 줄 배치가 빠진 문단 다시 배치) 시간(ms). 문서를 안 열었으면 0 */
   parseMs: number;
   /** 쪽마다 renderPageToCanvas 시간(ms) */
   pageRenderMs: number[];
