@@ -145,6 +145,9 @@ export const reloadLostEditsMessage = (count: number) => `뷰어를 새로고침
 export const userChangesMessage = (changes: string[]) => `사용자가 화면에서 고침: ${changes.join(', ')}`;
 export const openElsewhereMessage = (doc: string, path: string) =>
   `${doc} 이 이 파일을 열고 있습니다: ${path}. 다른 경로에 저장하거나 ${doc} 을 close_document 로 닫은 뒤 저장하세요.`;
+/** 다른 문서가 이 파일로 저장하는 중이라 열거나 저장하지 않을 때(SPEC-007 — 저장을 마치면 그 문서가 이 파일을 연 문서가 된다) */
+export const savingElsewhereMessage = (doc: string, path: string) =>
+  `${doc} 이 이 파일로 저장하는 중입니다: ${path}. 저장이 끝난 뒤 다시 하세요.`;
 export const unknownDocumentMessage = (doc: string) => `열린 문서에 ${doc} 가 없습니다. list_documents 로 확인해 주세요.`;
 
 /** close_document 가 저장하지 않은 편집(또는 한 번도 저장하지 않은 새 문서) 때문에 닫지 않을 때(SPEC-007) */
@@ -174,8 +177,8 @@ export interface DocumentSessionOptions {
   gone: () => void;
   /** 새로고침 때 마지막 파일을 읽는다(검사는 readDocumentFile) */
   readFile: (path: string) => Promise<Uint8Array>;
-  /** 이 파일(실제 경로)을 연 다른 문서의 이름. 없으면 undefined — 저장할 때 두 문서가 같은 파일을 가리키지 않게 본다 */
-  otherDocumentWith: (fileKey: string) => string | undefined;
+  /** 이 파일(실제 경로)을 열었거나(saving: false) 그 파일로 저장하는 중인(saving: true) 다른 문서. 없으면 undefined — 저장할 때 두 문서가 같은 파일을 가리키지 않게 본다 */
+  otherDocumentWith: (fileKey: string) => { doc: string; saving: boolean } | undefined;
 }
 
 /** create_document 결과의 양식 요약: 비웠으면 지운 개체·남긴 개체, keep_content 면 본문을 남겼다는 것 */
@@ -205,10 +208,12 @@ export class DocumentSession {
   private readonly readFile: (path: string) => Promise<Uint8Array>;
   private readonly notify: (text: string) => void;
   private readonly gone: () => void;
-  private readonly otherDocumentWith: (fileKey: string) => string | undefined;
+  private readonly otherDocumentWith: DocumentSessionOptions['otherDocumentWith'];
   private current: OpenedDocument | undefined;
   /** 여는 중인 파일의 실제 경로(같은 파일을 연달아 열어도 같은 문서가 되게) */
   private opening: string | undefined;
+  /** 저장하는 중인 파일의 실제 경로(거부 확인 ~ 쓰기를 마칠 때까지). 그사이 다른 문서가 이 파일을 열거나 저장하지 않게 한다 */
+  private saving: string | undefined;
   /** 마지막 파일의 실제 경로(링크를 따라간 것 — paths.ts realFilePath). 같은 파일 판정에 쓴다 */
   private lastFile: string | undefined;
   /** close_document·탭 닫기로 표에서 빠졌다. 그 뒤 줄 차례가 온 도구는 없는 문서로 끝난다 */
@@ -238,10 +243,23 @@ export class DocumentSession {
     return this.current?.location.kind === 'file' ? this.lastFile : undefined;
   }
 
-  /** 저장할 파일(실제 경로)을 다른 열린 문서가 마지막 파일로 쓰고 있으면 거부한다(두 문서가 같은 파일을 가리키면 다시 열기·새로고침이 엉뚱한 문서로 간다) */
-  assertNotOpenElsewhere(fileKey: string, path: string): void {
+  /** 저장하는 중인 파일의 실제 경로(저장 중이 아니면 undefined) */
+  get savingFileKey(): string | undefined {
+    return this.saving;
+  }
+
+  /**
+   * 이 파일(실제 경로)로 저장을 시작한다. 다른 열린 문서가 마지막 파일로 쓰고 있거나 그 파일로 저장하는 중이면 거부한다
+   * (두 문서가 같은 파일을 가리키면 다시 열기·새로고침이 엉뚱한 문서로 간다). 끝나면(성공·실패 모두) endSave
+   */
+  beginSave(fileKey: string, path: string): void {
     const other = this.otherDocumentWith(fileKey);
-    if (other !== undefined) throw new Error(openElsewhereMessage(other, path));
+    if (other !== undefined) throw new Error(other.saving ? savingElsewhereMessage(other.doc, path) : openElsewhereMessage(other.doc, path));
+    this.saving = fileKey;
+  }
+
+  endSave(): void {
+    this.saving = undefined;
   }
 
   /** 되돌릴 수 있는 편집 수(최대 20). 문서가 없으면 0 */

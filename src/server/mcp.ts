@@ -264,9 +264,7 @@ export function createMcpServer(sessions: DocumentSessions): McpServer {
     },
     ({ from, to, ...args }) =>
       toolResult(async (setTarget) => {
-        const source = sessions.get(from);
-        // 대상이 마지막으로 쓴 문서가 된다(원본을 먼저 고른다)
-        const target = sessions.get(to);
+        const { source, target } = sessions.getPair(from, to);
         setTarget(target.name);
         return { doc: target.name, ...(await copyBlocks(source, target, args)) };
       }),

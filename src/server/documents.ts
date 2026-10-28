@@ -10,6 +10,7 @@ import {
   DocumentSession,
   NO_DOCUMENT,
   readDocumentFile,
+  savingElsewhereMessage,
   unknownDocumentMessage,
   userChangesMessage,
   VIEWER_NOT_CONNECTED,
@@ -165,13 +166,27 @@ export class DocumentSessions {
     return session;
   }
 
+  /**
+   * copy_blocks 의 원본·대상. 두 문서를 모두 확인한 뒤 고른다(없는 이름이 하나라도 있으면 마지막으로 쓴 문서는 그대로).
+   * 대상이 마지막으로 쓴 문서, 원본은 그 앞이 된다
+   */
+  getPair(from: string, to: string): { source: DocumentSession; target: DocumentSession } {
+    for (const doc of [from, to]) {
+      if (!this.sessions.has(doc)) throw new Error(unknownDocumentMessage(doc));
+    }
+    return { source: this.get(from), target: this.get(to) };
+  }
+
   /** 파일을 연다. 이미 열린 파일이면 그 문서에 다시 연다(같은 doc), 아니면 새 문서 탭에. 결과 맨 위에 doc */
   async open(inputPath: string): Promise<{ doc: string } & OpenResult> {
     const path = absolutePath(inputPath, process.cwd());
     // 같은 파일은 실제 경로로 가린다(링크·macOS /tmp ↔ /private/tmp). 부른 순간에 본다(읽는 사이 그 문서가 다른 이름으로 저장돼도 그 문서의 줄에 선다)
     const fileKey = await realFilePath(path);
+    this.assertNotSavingElsewhere(fileKey, path);
     const opened = this.find(fileKey);
     const bytes = await readDocumentFile(path, this.readFile);
+    // 읽는 사이 다른 문서가 이 파일로 저장을 시작했을 수 있다. 여기부터 session.open 이 여는 중 표시를 할 때까지 기다림이 없다
+    this.assertNotSavingElsewhere(fileKey, path);
     const session = (opened !== undefined && this.sessions.get(opened.name) === opened ? opened : this.find(fileKey)) ?? this.add();
     this.use(session.name);
     return { doc: session.name, ...(await session.open(path, bytes, fileKey)) };
@@ -229,9 +244,26 @@ export class DocumentSessions {
     });
   }
 
+  /** 이 파일(실제 경로)을 열었거나 그 파일로 저장하는 중인, except 가 아닌 문서(저장할 때 본다) */
+  private otherDocumentWith(fileKey: string, except: string): { doc: string; saving: boolean } | undefined {
+    const opened = this.find(fileKey, except);
+    if (opened !== undefined) return { doc: opened.name, saving: false };
+    const saver = [...this.sessions.values()].find((session) => session.name !== except && session.savingFileKey === fileKey);
+    return saver === undefined ? undefined : { doc: saver.name, saving: true };
+  }
+
   /** 이 파일(실제 경로)이 열린(또는 여는 중인) 문서. except 문서는 빼고 본다 */
   private find(fileKey: string, except?: string): DocumentSession | undefined {
     return [...this.sessions.values()].find((session) => session.name !== except && session.fileKey === fileKey);
+  }
+
+  /**
+   * 다른 문서가 이 파일로 저장하는 중이면(그 문서의 지금 파일이 아닌데) 열지 않는다. 그대로 열면 저장을 마친 뒤 두 문서가 같은 파일을 가리킨다.
+   * 자기 파일에 덮어 저장하는 중이면 같은 문서로 다시 여는 것이라 그 문서의 줄에서 저장 뒤에 연다
+   */
+  private assertNotSavingElsewhere(fileKey: string, path: string): void {
+    const saver = [...this.sessions.values()].find((session) => session.savingFileKey === fileKey && session.fileKey !== fileKey);
+    if (saver !== undefined) throw new Error(savingElsewhereMessage(saver.name, path));
   }
 
   /** 새 문서 이름으로 세션을 더한다. 8개면 거부 */
@@ -246,7 +278,7 @@ export class DocumentSessions {
       readFile: this.readFile,
       notify: (text) => this.notices.push({ doc: name, text }),
       gone: () => this.remove(name),
-      otherDocumentWith: (fileKey) => this.find(fileKey, name)?.name,
+      otherDocumentWith: (fileKey) => this.otherDocumentWith(fileKey, name),
     });
     this.sessions.set(name, session);
     return session;

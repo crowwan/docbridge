@@ -11,6 +11,8 @@ import { INACTIVE_VIEWER, startBridge, type Bridge } from '../src/server/bridge.
 import { DocumentSessions, MAX_DOCUMENTS, TOO_MANY_DOCUMENTS } from '../src/server/documents.ts';
 import { NOTHING_TO_UNDO } from '../src/server/edit-tools.ts';
 import { createMcpServer } from '../src/server/mcp.ts';
+import { writeSave, type SaveTarget } from '../src/server/save-path.ts';
+import { saveDocument } from '../src/server/save-tool.ts';
 import type { RequestMessage, UserResponseMessage } from '../src/shared/protocol.ts';
 import { FakeViewer, NO_RESPONSE, paragraphBlocks } from './fake-viewer.ts';
 import { fixturePath } from './fixtures.ts';
@@ -170,6 +172,77 @@ describe('SPEC-007 여러 문서 세션·탭과 doc 인자 (list_documents · cl
     expect(sessions.get('d1').unsavedEdits).toBe(1);
     // 자기 파일 덮어쓰기는 그대로 된다
     expect(await json('save_document', { doc: 'd1', path: first, overwrite: true })).toMatchObject({ doc: 'd1', path: first });
+  });
+
+  describe('한 문서가 저장하는 중(거부 확인 ~ 쓰기 사이)에는 그 경로를 다른 문서로 열거나 저장하지 않는다', () => {
+    /** d1 = 공문, d2 = 보고서를 열고, 열지 않은 파일 하나(신청서)를 둔다 — d2 가 그 파일에 덮어 저장한다 */
+    const openTwo = async () => {
+      await json('open_document', { path: await copy('notice.hwpx', '공문.hwpx') });
+      await json('open_document', { path: await copy('report.hwpx', '보고서.hwpx') });
+      return copy('application.hwpx', '신청서.hwpx');
+    };
+    const savingRefused = (path: string) => `d2 이 이 파일로 저장하는 중입니다: ${path}. 저장이 끝난 뒤 다시 하세요.`;
+
+    it('내보내기 응답을 기다리는 동안 그 경로를 열면 거부하고, 저장이 끝난 뒤 열면 저장한 문서(d2)다', async () => {
+      const path = await openTwo();
+      // d2 탭의 내보내기 응답을 붙잡는다
+      const d2 = tab('d2');
+      let release = () => {};
+      const held = new Promise<void>((resolve) => {
+        d2.socket.serve((request: RequestMessage) => {
+          const result = d2.rhwp.handle(request);
+          if (request.method !== 'export_hwpx') return result;
+          release = () => d2.socket.respondWith(request.id, result);
+          resolve();
+          return NO_RESPONSE;
+        });
+      });
+      const saving = json('save_document', { doc: 'd2', path, overwrite: true });
+      await held;
+
+      expect(await errorText('open_document', { path })).toBe(savingRefused(path));
+      expect(await errorText('save_document', { doc: 'd1', path, overwrite: true })).toBe(savingRefused(path));
+      release();
+      expect(await saving).toMatchObject({ doc: 'd2', path });
+
+      expect(await json('open_document', { path })).toMatchObject({ doc: 'd2' });
+      expect(await json('list_documents')).toMatchObject({ documents: [{ doc: 'd1' }, { doc: 'd2' }] });
+    });
+
+    it('파일을 쓰는 동안 그 경로를 열면 거부하고, 쓰기가 끝난 뒤 열면 저장한 문서(d2)다', async () => {
+      const path = await openTwo();
+      let release = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let writing = () => {};
+      const started = new Promise<void>((resolve) => {
+        writing = resolve;
+      });
+      // 쓰기를 붙잡는다(시작을 알리고 풀어 줄 때까지 기다린 뒤 실제로 쓴다)
+      const write = async (target: SaveTarget, bytes: Uint8Array) => {
+        writing();
+        await gate;
+        return writeSave(target, bytes);
+      };
+      const saving = saveDocument(sessions.get('d2'), { path, overwrite: true }, write);
+      await started;
+
+      expect(await errorText('open_document', { path })).toBe(savingRefused(path));
+      release();
+      expect(await saving).toMatchObject({ path });
+
+      expect(await json('open_document', { path })).toMatchObject({ doc: 'd2' });
+    });
+
+    it('저장이 실패해도 그 경로는 다시 열 수 있다(저장 중 표시가 남지 않는다)', async () => {
+      const path = await openTwo();
+      const write = () => Promise.reject(new Error('디스크 가득'));
+
+      await expect(saveDocument(sessions.get('d2'), { path, overwrite: true }, write)).rejects.toThrow('디스크 가득');
+
+      expect(await json('open_document', { path })).toMatchObject({ doc: 'd3' });
+    });
   });
 
   it('AC-2 doc 없이 부른 도구는 마지막으로 쓴 문서(마지막으로 열었거나 도구 대상이 된 문서)를 대상으로 한다', async () => {
