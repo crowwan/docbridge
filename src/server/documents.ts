@@ -186,13 +186,22 @@ export class DocumentSessions {
     // 같은 파일은 실제 경로로 가린다(링크·macOS /tmp ↔ /private/tmp). 부른 순간에 본다(읽는 사이 그 문서가 다른 이름으로 저장돼도 그 문서의 줄에 선다)
     const fileKey = await realFilePath(path);
     this.assertNotSavingElsewhere(fileKey, path);
+    const read = () => readDocumentFile(path, this.readFile);
     const opened = this.find(fileKey);
-    const bytes = await readDocumentFile(path, this.readFile);
+    if (opened !== undefined) {
+      // 같은 파일 다시 열기: 그 문서의 줄에서 앞 작업(자기 파일 덮어 저장 등)이 끝난 뒤에 읽는다 — 저장 전 내용을 열지 않게(#118)
+      this.use(opened.name);
+      return { doc: opened.name, ...(await opened.open(path, read, fileKey)) };
+    }
+    // 새 문서는 읽기에 성공한 뒤에 이름을 매긴다(열 수 없는 파일이 문서 이름을 쓰지 않게)
+    const bytes = await read();
     // 읽는 사이 다른 문서가 이 파일로 저장을 시작했을 수 있다. 여기부터 session.open 이 여는 중 표시를 할 때까지 기다림이 없다
     this.assertNotSavingElsewhere(fileKey, path);
-    const session = (opened !== undefined && this.sessions.get(opened.name) === opened ? opened : this.find(fileKey)) ?? this.add();
+    // 읽는 사이 같은 파일이 다른 부름으로 열렸으면 그 문서에 다시 연다(그 줄에서 다시 읽는다)
+    const reopened = this.find(fileKey);
+    const session = reopened ?? this.add();
     this.use(session.name);
-    return { doc: session.name, ...(await session.open(path, bytes, fileKey)) };
+    return { doc: session.name, ...(await session.open(path, reopened === undefined ? () => Promise.resolve(bytes) : read, fileKey)) };
   }
 
   /** 새 문서를 새 문서 탭에 만든다(SPEC-003). 경로·양식은 문서 이름을 매기기 전에 검사한다 */
