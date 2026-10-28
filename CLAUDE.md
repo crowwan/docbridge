@@ -20,7 +20,7 @@
 
 ## 스택
 
-- Web (TS, Node 24). 로컬 MCP 서버(stdio, `@modelcontextprotocol/sdk`) + 같은 프로세스의 127.0.0.1 HTTP·WebSocket(`ws`, 기본 포트 7790) + 브라우저 뷰어(Vite, `@rhwp/core` 0.8.7 고정 직접 사용) — 결정과 측정값: `docs/decisions/001-stack-and-rhwp.md`, 편집·저장 방식: `docs/decisions/002-edit-and-save.md`, 새 문서 만들기: `docs/decisions/003-create-document.md`, 문서 사이 복사: `docs/decisions/004-cross-document-copy.md`
+- Web (TS, Node 24). 로컬 MCP 서버(stdio, `@modelcontextprotocol/sdk`) + 같은 프로세스의 127.0.0.1 HTTP·WebSocket(`ws`, 기본 포트 7790) + 브라우저 뷰어(Vite, `@rhwp/core` 0.8.7 고정 직접 사용) — 결정과 측정값: `docs/decisions/001-stack-and-rhwp.md`, 편집·저장 방식: `docs/decisions/002-edit-and-save.md`, 새 문서 만들기: `docs/decisions/003-create-document.md`, 문서 사이 복사: `docs/decisions/004-cross-document-copy.md`, PDF 로 내보내기: `docs/decisions/005-export-pdf.md`(쪽 SVG + 글자 배치 → 서버 pdf-lib, 시스템 글꼴 윤곽 + 보이지 않는 글자 층 — `src/core/pdf-*.ts`, 테스트 `tests/pdf-spike.test.ts`)
 - `any`·타입 단언(`as`) 금지(`as const` 는 허용). rhwp 가 돌려주는 JSON 문자열은 zod 스키마로 읽는다(`src/core/json.ts` parseJson). 오류 문구 꺼내기는 `src/shared/errors.ts` errorMessage
 - 상대 import 는 `.ts` 확장자까지 쓴다(Node 가 TS 를 바로 실행하고, 빌드 때 `.js` 로 바뀐다)
 - stdout 은 MCP 전용. 서버 로그는 `src/server/log.ts`(stderr)로만 쓴다
@@ -48,6 +48,7 @@ node scripts/measure-edits.ts [문서…]   # 편집·되돌리기·HWPX 저장 
 node scripts/make-hwp-check.ts [폴더]   # 한글 프로그램 확인용 편집 HWPX (기본 ~/Downloads/docbridge-hwp-check, 레포에 넣지 않음)
 node scripts/make-create-check.ts [폴더] # 한글 프로그램 확인용 새로 만든 HWPX (기본 ~/Downloads/docbridge-create-check, ADR 003)
 node scripts/make-copy-check.ts [폴더]   # 한글 프로그램 확인용 다른 문서에서 복사해 넣은 HWPX (기본 ~/Downloads/docbridge-copy-check, ADR 004)
+node scripts/make-pdf-check.ts [폴더] [--runs N] [--doc 문서]…  # PDF 후보 측정(Playwright Chromium)·미리보기 확인용 PDF (기본 ~/Downloads/docbridge-pdf-check, ADR 005)
 npm run demo           # 빌드 후 데모 영상 녹화(scripts/demo/, 서버 포트 7900, 헤드리스 Chromium) → ~/Downloads/docbridge-demo (레포에 넣지 않음)
 ```
 
