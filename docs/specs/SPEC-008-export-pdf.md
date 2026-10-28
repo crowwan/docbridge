@@ -1,9 +1,9 @@
 ---
 id: SPEC-008
 title: PDF 로 내보내기
-status: draft          # draft | approved | in-progress | done | dropped
+status: in-progress        # draft | approved | in-progress | done | dropped
 milestone: v0.3
-issue:
+issue: "#106"
 prototype:
 updated: 2026-10-28
 ---
@@ -84,3 +84,4 @@ docbridge 사용 흐름은 "받아서 열기 → 조금 고치기 → 다시 보
 | 날짜 | 내용 |
 |---|---|
 | 2026-10-28 | 초안 (v0.3, "고쳐서 다시 보내기" 흐름) |
+| 2026-10-28 | 승인(사용자), 이슈 분해 (#106) |
