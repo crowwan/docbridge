@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { HwpDocument } from '@rhwp/core';
 import { extractBlocks } from '../src/core/blocks.ts';
-import { svgPagesToPdf, type PdfPageSource } from '../src/core/pdf-export.ts';
+import { PDFArray, PDFDocument, PDFRawStream } from 'pdf-lib';
+import { PdfBuilder, svgPagesToPdf, type PdfPageSource } from '../src/core/pdf-export.ts';
 import { bytesReader, extractFace, FontResolver, readCoverage, readFontFaces, type FontEntry, type FontLibrary } from '../src/core/pdf-fonts.ts';
 import { fontLibraryFromFiles, systemFontDirs } from '../src/core/pdf-fonts-node.ts';
 import { isElement, parseColor, parseFontFamilies, parseFontWeight, parseSvg, parseTransform, textContent, type SvgElement } from '../src/core/pdf-svg.ts';
@@ -394,5 +395,64 @@ describe('SPEC-008 쪽 SVG → PDF (기술 검증)', () => {
     expect(text).toContain('제목 2026년 하반기 주민 안전교육 일정 안내');
     expect(text).toContain('화재 대피 요령, 심폐소생술 실습');
     expect(text).toContain('가나다구청장');
+  });
+});
+
+describe('SPEC-008 쪽 묶음씩 그리기 (PdfBuilder, #114)', () => {
+  it('쪽을 묶음으로 나눠 그려도 한꺼번에 그린 PDF 와 쪽 수·쪽 크기·뽑은 글자·글리프 윤곽 수가 같다', async () => {
+    const doc = openFixture('outline-demo.hwpx');
+    const sources = pageSources(doc);
+    const library = await testLibrary();
+    const whole = await svgPagesToPdf(sources, library);
+
+    const builder = new PdfBuilder(await PDFDocument.create(), library);
+    await builder.addPages(sources.slice(0, 1));
+    await builder.addPages(sources.slice(1));
+    const batched = await builder.finish();
+
+    const [a, b] = [await inspectPdf(whole.bytes), await inspectPdf(batched.bytes)];
+    expect(a.pages).toHaveLength(3);
+    expect(b.pages.map((page) => [page.widthMm, page.heightMm, page.text])).toEqual(a.pages.map((page) => [page.widthMm, page.heightMm, page.text]));
+    expect(batched.stats).toEqual(whole.stats);
+    expect(batched.warnings).toEqual(whole.warnings);
+  });
+
+  it('뒤 묶음에서 처음 쓰는 글꼴도 넣고, 앞 묶음의 글리프 윤곽은 다시 만들지 않는다', async () => {
+    const library = await fontLibraryFromFiles([REGULAR, BOLD_ASCII], { serif: [], 'sans-serif': ['Noto Sans KR'], fallback: [] });
+    const regular = lineSvg([['가', 10]]);
+    const bold = lineSvg([['A', 10]], ' font-weight="bold"');
+    const builder = new PdfBuilder(await PDFDocument.create(), library);
+
+    await builder.addPages([{ svg: regular }]);
+    await builder.addPages([{ svg: bold }, { svg: regular }]);
+    const { bytes, stats } = await builder.finish();
+
+    expect(stats.pages).toBe(3);
+    expect(stats.fonts).toEqual([`${REGULAR}#0`, `${BOLD_ASCII}#0`]);
+    expect(stats.glyphForms).toBe(2);
+    expect((await inspectPdf(bytes)).pages.map((page) => compact(page.text))).toEqual(['가', 'A', '가']);
+  });
+
+  it('묶음마다 화면 글꼴 이름을 받아 쓰고, 서버 글꼴에 없으면 warnings 는 문서 전체에서 모아 센다', async () => {
+    const builder = new PdfBuilder(await PDFDocument.create(), await testLibrary());
+    const svg = lineSvg([['가', 10]]);
+
+    await builder.addPages([{ svg }], { 'Noto Sans KR': '없는 글꼴' });
+    await builder.addPages([{ svg }], { 'Noto Sans KR': '없는 글꼴' });
+    const { warnings } = await builder.finish();
+
+    expect(warnings).toEqual(['화면 글꼴 "없는 글꼴" 를 이 컴퓨터 글꼴에서 쓸 수 없음(다른 글꼴로 그림) 2곳']);
+  });
+
+  it('그린 쪽의 그리기 명령은 바로 압축한 내용 스트림으로 둔다(쪽마다 명령 객체를 저장할 때까지 들고 있지 않게)', async () => {
+    const pdf = await PDFDocument.create();
+    const builder = new PdfBuilder(pdf, await testLibrary());
+
+    await builder.addPages([{ svg: lineSvg([['가', 10]]) }]);
+
+    const contents = pdf.getPages()[0]?.node.Contents();
+    const streams = contents instanceof PDFArray ? contents.asArray().map((ref) => pdf.context.lookup(ref)) : [contents];
+    expect(streams.length).toBeGreaterThan(0);
+    for (const stream of streams) expect(stream).toBeInstanceOf(PDFRawStream);
   });
 });

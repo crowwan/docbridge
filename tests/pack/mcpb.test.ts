@@ -5,13 +5,14 @@ import { access, copyFile, mkdir, mkdtemp, readdir, readFile, rm } from 'node:fs
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough, type Readable } from 'node:stream';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { openDocumentFile } from '../../src/core/rhwp-node.ts';
-import { compact, inspectPdf } from '../../scripts/pdf-check/inspect.ts';
+import { compact, inspectPdf, pageContents } from '../../scripts/pdf-check/inspect.ts';
 import { mcpbCommand, mcpbPath, NODE_RUNTIME, oneLine, packageVersion, REPO_ROOT, registeredTools } from '../../scripts/pack/manifest.ts';
 import { FakeViewer } from '../fake-viewer.ts';
 import { fixturePath } from '../fixtures.ts';
@@ -22,6 +23,8 @@ const mcpb = (args: string[]) => {
   const { command, args: commandArgs } = mcpbCommand(args);
   return run(command, commandArgs);
 };
+/** 시험 글꼴 폴더(Noto Sans KR 부분 집합, OFL) */
+const TEST_FONTS = fileURLToPath(new URL('../fonts', import.meta.url));
 const dependenciesSchema = z.object({ dependencies: z.record(z.string(), z.string()) });
 
 const manifestSchema = z.object({
@@ -101,6 +104,21 @@ describe('SPEC-004 설치판(.mcpb)', () => {
     for (const name of Object.keys(dependencies)) expect(notices).toContain(`\n## ${name}\n\n`);
   });
 
+  it('THIRD_PARTY_NOTICES.txt 에 pdf-lib·fontkit 안에 함께 묶이거나 옮겨 온 코드의 고지도 들어 있다', async () => {
+    // #114: @pdf-lib/fontkit dist 는 rollup 으로 묶은 번들(Google brotli·buffer·iconv-lite·pako …), pdf-lib 은 pdf.js 코드, standard-fonts 는 Adobe AFM
+    const notices = await readFile(join(extracted, 'THIRD_PARTY_NOTICES.txt'), 'utf8');
+
+    expect(notices).toContain('확인한 판: @pdf-lib/fontkit@');
+    for (const bundled of ['### @pdf-lib/brotli', '### @pdf-lib/restructure', '### @pdf-lib/unicode-properties', '### buffer', '### ieee754', '### iconv-lite', '### deep-equal', '### base64-arraybuffer', '### tiny-inflate', '### unicode-trie', '### dfa', '### clone', '### HarfBuzz']) {
+      expect(notices).toContain(bundled);
+    }
+    expect(notices).toContain('Copyright 2013 Google Inc. All Rights Reserved.');
+    expect(notices).toContain('Copyright 2012 Mozilla Foundation');
+    expect(notices).toContain('Adobe Font Metrics (AFM) for PDF Core 14 Fonts');
+    expect(notices).toContain('Apache License');
+    expect(notices).toContain('Version 2.0, January 2004');
+  });
+
   it('manifest 의 version 은 package.json 과 같고, tools 는 서버에 실제 등록된 도구 전부와 같다', async () => {
     // AC-3: 도구 목록은 서버(mcp.ts)에 물어서 비교한다 — 도구를 더하거나 빼면 다시 pack 하면 맞는다
     const manifest = manifestSchema.parse(JSON.parse(await readFile(join(extracted, 'manifest.json'), 'utf8')));
@@ -127,7 +145,8 @@ describe('SPEC-004 설치판(.mcpb)', () => {
       command: process.execPath,
       args: [join(extracted, 'server', 'index.js')],
       cwd: extracted,
-      env: { ...getDefaultEnvironment(), PATH: emptyPath, DOCBRIDGE_PORT: '0' },
+      // 시험 글꼴 폴더를 더 훑게 한다 — 글꼴 없는 CI 리눅스에서도 번들 안 fontkit 으로 윤곽을 그린다(#114)
+      env: { ...getDefaultEnvironment(), PATH: emptyPath, DOCBRIDGE_PORT: '0', DOCBRIDGE_FONT_DIRS: TEST_FONTS },
       stderr: 'pipe',
     });
     const stderr = transport.stderr;
@@ -162,12 +181,16 @@ describe('SPEC-004 설치판(.mcpb)', () => {
       // 저장한 파일을 다시 열 수 있다
       expect(openDocumentFile(saved.path).pageCount()).toBe(1);
 
-      // 글꼴이 없는 CI 리눅스에서도 돈다: 보이는 글자는 빠지고(warnings) 글자 층은 남아 뽑힌다 — 글꼴에 기대는 단언은 하지 않는다
+      // 글꼴 없는 CI 리눅스에서도 시험 글꼴(DOCBRIDGE_FONT_DIRS)로 번들 안 fontkit 이 글리프 윤곽(Form)을 만들어 그린다(쪽 내용에 Do).
+      // 시험 글꼴은 부분 집합이라 리눅스에서는 빠지는 글자가 있을 수 있다 — 맥은 시스템 글꼴로 다 그려 "글꼴 없음" 경고가 없다
       const exported = exportResultSchema.parse(await json('export_pdf', {}));
-      const pdf = await inspectPdf(new Uint8Array(await readFile(exported.path)));
+      const bytes = new Uint8Array(await readFile(exported.path));
+      const pdf = await inspectPdf(bytes);
       expect(exported).toMatchObject({ path: join(work, '공문-수정.pdf'), pageCount: 1 });
       expect(pdf.pages).toHaveLength(1);
       expect(compact(pdf.pages[0]?.text ?? '')).toContain(compact('2026년 하반기 주민 안전교육 일정 안내'));
+      expect((await pageContents(bytes))[0]).toMatch(/ Do\n/);
+      if (process.platform === 'darwin') expect(exported.warnings ?? []).not.toContainEqual(expect.stringContaining('글꼴이 없어 그리지 못한 글자'));
     } finally {
       viewer.close();
       await client.close();
