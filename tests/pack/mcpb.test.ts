@@ -11,6 +11,7 @@ import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotoc
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { openDocumentFile } from '../../src/core/rhwp-node.ts';
+import { compact, inspectPdf } from '../../scripts/pdf-check/inspect.ts';
 import { mcpbCommand, mcpbPath, NODE_RUNTIME, oneLine, packageVersion, REPO_ROOT, registeredTools } from '../../scripts/pack/manifest.ts';
 import { FakeViewer } from '../fake-viewer.ts';
 import { fixturePath } from '../fixtures.ts';
@@ -42,6 +43,7 @@ const toolResultSchema = z.object({
 const openResultSchema = z.object({ doc: z.string(), fileName: z.string(), blockCount: z.number() });
 const readResultSchema = z.object({ blocks: z.array(z.object({ id: z.string(), text: z.string().optional() })) });
 const saveResultSchema = z.object({ path: z.string(), bytes: z.number(), verified: z.object({ blockCount: z.number() }) });
+const exportResultSchema = z.object({ path: z.string(), pageCount: z.number(), bytes: z.number(), warnings: z.array(z.string()).optional() });
 
 /** 서버가 stderr 에 남기는 "뷰어 주소: …" 줄에서 주소를 읽는다 */
 function viewerUrlFromLog(stderr: Readable): Promise<string> {
@@ -115,8 +117,8 @@ describe('SPEC-004 설치판(.mcpb)', () => {
     });
   });
 
-  it('node_modules 없는 폴더에 푼 서버가 node server/index.js 로 떠서 open_document → read_blocks → save_document 가 된다', async () => {
-    // AC-2. 브라우저를 열지 않도록 PATH 를 빈 폴더로 둔다(브라우저 여는 명령을 찾지 못하면 stderr 에 주소만 남긴다)
+  it('node_modules 없는 폴더에 푼 서버가 node server/index.js 로 떠서 open_document → read_blocks → save_document → export_pdf 가 된다', async () => {
+    // AC-2. export_pdf(SPEC-008)는 번들에 든 pdf-lib·fontkit 과 이 컴퓨터의 시스템 글꼴로 PDF 를 만든다. 브라우저를 열지 않도록 PATH 를 빈 폴더로 둔다(브라우저 여는 명령을 찾지 못하면 stderr 에 주소만 남긴다)
     const emptyPath = join(work, 'empty-path');
     await mkdir(emptyPath);
     const documentPath = join(work, '공문.hwpx');
@@ -159,6 +161,13 @@ describe('SPEC-004 설치판(.mcpb)', () => {
       expect(saved.verified.blockCount).toBe(opened.blockCount);
       // 저장한 파일을 다시 열 수 있다
       expect(openDocumentFile(saved.path).pageCount()).toBe(1);
+
+      // 글꼴이 없는 CI 리눅스에서도 돈다: 보이는 글자는 빠지고(warnings) 글자 층은 남아 뽑힌다 — 글꼴에 기대는 단언은 하지 않는다
+      const exported = exportResultSchema.parse(await json('export_pdf', {}));
+      const pdf = await inspectPdf(new Uint8Array(await readFile(exported.path)));
+      expect(exported).toMatchObject({ path: join(work, '공문-수정.pdf'), pageCount: 1 });
+      expect(pdf.pages).toHaveLength(1);
+      expect(compact(pdf.pages[0]?.text ?? '')).toContain(compact('2026년 하반기 주민 안전교육 일정 안내'));
     } finally {
       viewer.close();
       await client.close();
