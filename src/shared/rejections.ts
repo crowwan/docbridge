@@ -13,6 +13,9 @@ export const REJECTION_CODES = [
   'not_ready',
   'unreadable_request',
   'nothing_to_undo',
+  // PDF 버튼(SPEC-008 AC-7)
+  'export_failed',
+  'export_write_failed',
   // 지우기
   'section_first_paragraph',
   'hidden_objects',
@@ -63,6 +66,8 @@ export const USER_REJECTION_MESSAGES: Record<RejectionCode, Wording> = {
   not_ready: fixed('docbridge 가 뷰어 편집을 받을 준비가 되지 않았습니다.'),
   unreadable_request: fixed('docbridge 가 이 요청을 읽지 못했습니다. docbridge 를 다시 띄우고 뷰어 탭을 새로고침하세요.'),
   nothing_to_undo: fixed('되돌릴 편집이 없습니다.'),
+  export_failed: fixed('PDF 를 만들지 못했습니다. 다시 해 주세요. 계속 안 되면 Claude 에게 PDF 로 저장해 달라고 하세요.'),
+  export_write_failed: fixed('문서 폴더에 PDF 를 쓰지 못했습니다. 폴더에 쓸 수 있는지 확인하거나, Claude 에게 다른 경로로 저장해 달라고 하세요.'),
   section_first_paragraph: fixed('문서(구역)의 첫 문단은 지울 수 없습니다. 글자를 지우려면 더블클릭해 고치세요.'),
   hidden_objects: (objects) => `이 문단을 지우면 든 개체(${objects ?? '화면에서 고를 수 없는 개체'})도 같이 사라지므로 지울 수 없습니다.`,
   controls_unknown: fixed('이 문단에 든 개체를 확인하지 못해 지울 수 없습니다.'),

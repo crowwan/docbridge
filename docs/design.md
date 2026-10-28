@@ -1,6 +1,6 @@
 ---
 project: docbridge
-updated: 2026-10-27
+updated: 2026-10-28
 ---
 
 # docbridge 디자인
@@ -43,6 +43,10 @@ updated: 2026-10-27
 | `--toast-bg` · `--toast-fg` | 실패 알림 면·글자 | `--note-bg`·`--note-fg` 를 따른다 — note 와 같은 진한 면에 흰 글자(대비 약 18:1). 문서 위에 떠 있는 docbridge 말이라는 같은 뜻이라 같이 바뀐다 |
 | `--doc-name-border` | 도구 막대 문서 이름 꼬리표 테두리 | 개인 DS border(gray-300 근처) 옅은 회색. 누를 수 있는 단추로 보이지 않게 면은 칠하지 않고 선만 — 글자(`--muted`)가 이름을 전한다 |
 | `--danger` | 실패 알림 왼쪽 선 | 개인 DS error-500. 오류는 색 + 선 + 문장(PATTERNS F5). 진한 면 위 대비 약 4.7:1 |
+| `--toast-success-accent` | 성공 알림(PDF 로 저장함) 왼쪽 선 | `--edit-mark` 를 따른다(개인 DS success). 실패 빨강 선과 색·문장 둘 다로 갈린다. 진한 면 위 대비 약 5.9:1 |
+| `--toolbar-button-border` | 도구 막대 버튼(PDF) 테두리 | `--edit-hover` 를 따른다(개인 DS border-strong). 문서 이름 꼬리표(`--doc-name-border`)보다 진한 선 + 본문 글자라 눌리는 것으로 보인다 |
+| `--toolbar-button-hover-bg` | 도구 막대 버튼 마우스 올림 면 | `--menu-item-active-bg` 를 따른다(개인 DS bg-subtle). 메뉴 항목과 같은 "누를 수 있음" 면 |
+| `--toolbar-button-disabled-fg` | 만드는 동안(꺼짐) 버튼 글자 | `--menu-disabled-fg` 를 따른다(개인 DS fg-disabled). 비활성 표시라 본문 대비 기준 밖 |
 
 ### 글꼴
 
@@ -74,6 +78,8 @@ updated: 2026-10-27
 | `--menu-min-width` | 메뉴 최소 폭 | 120px — 두세 글자 항목이 좁아 보이지 않게 |
 | `--toast-accent-width` | 실패 알림 왼쪽 오류 선 두께 | 4px — 진한 면 위에서 색만이 아니라 선 모양으로도 "오류"가 보이게 |
 | `--doc-name-border-width` | 문서 이름 꼬리표 테두리 두께 | 개인 DS `border-w-thin` |
+| `--toolbar-button-height` · `--toolbar-button-border-width` | 도구 막대 버튼 최소 높이·테두리 두께 | 32px(아래 오버라이드)·개인 DS `border-w-thin` |
+| `--focus-ring-offset` | 버튼 포커스 링과 버튼 사이 | 2px — 링이 테두리에 붙어 한 선으로 보이지 않게 |
 | `--tab-unseen-mark` | 탭 제목 앞 표시 글자(`●`) | 보지 않는 탭에 하이라이트·편집이 생겼다는 표시. 브라우저 탭 제목은 글자만 되므로 작은 채운 원 하나 — 메신저 탭의 안 읽음 표시와 같은 읽힘. 뷰어 스크립트가 읽는다 |
 | `--radius-sm` | note 모서리 | 작은 꼬리표(개인 DS 태그 반경) |
 | `--radius` | 안내 카드·메뉴 모서리 | 카드(개인 DS md). 메뉴 항목은 `--radius-sm` |
@@ -105,7 +111,9 @@ updated: 2026-10-27
 | `--ds-text-sm` · `--ds-text-base` | `--text-size`·`--note-font-size` · `--title-size` | 같은 값 |
 | `--ds-shadow-*` | `--page-shadow` | 오버라이드 참고 |
 | `--ds-brand` | (없음) | 강조색 면·글자는 두지 않는다(PATTERNS C1). 포커스 링만 같은 값(`--focus-ring`) |
-| `--ds-ring` · `--ds-ring-w` | `--focus-ring` · `--focus-ring-width` | 같은 값. 입력칸 `:focus`, 메뉴 항목 `:focus-visible` |
+| `--ds-ring` · `--ds-ring-w` | `--focus-ring` · `--focus-ring-width` | 같은 값. 입력칸 `:focus`, 메뉴 항목·도구 막대 버튼 `:focus-visible` |
+| `--ds-border-strong` · `--ds-bg-subtle` · `--ds-fg-disabled` | `--toolbar-button-border` · `--toolbar-button-hover-bg` · `--toolbar-button-disabled-fg` | 같은 값(각각 `--edit-hover`·`--menu-item-active-bg`·`--menu-disabled-fg` 를 따른다). 도구 막대 PDF 버튼 |
+| `--ds-success` | `--toast-success-accent` | 같은 값(`--edit-mark` 를 따른다). 성공 알림 왼쪽 선 |
 | `--ds-brand`(= ring) | `--drop-line` | 같은 값(`--focus-ring` 참조). 놓일 자리 가로선 |
 | `--ds-bg-subtle` | `--menu-item-active-bg` | 같은 값(`#f5f5f5`). 앱 `--bg`(문서 바깥, `#e9e9ec`)와는 역할이 달라 따로 둔다 |
 | `--ds-fg-disabled` | `--menu-disabled-fg` | 같은 값. 꺼진 메뉴 항목 |
@@ -128,6 +136,9 @@ updated: 2026-10-27
 | 스크린 리더일 때 알림 | 저절로 닫지 않음(PATTERNS F7) | 3초 뒤 닫음 | 브라우저 뷰어는 스크린 리더가 켜졌는지 알 수 없다. 알림 칸(`role="alert"`)은 숨기지 않고 늘 두고 문구를 새 요소로 넣었다 비워서, 뜰 때 한 번 읽히고 3초 안에 같은 문구가 다시 와도 다시 읽힌다(F7 "결과당 한 번"). 실제 VoiceOver 로는 아직 확인하지 않았다 — 접근성 따로 하는 범위(SPEC-004 배포 뒤)에서 다시 본다 |
 | 실패 알림 선과 그림자 | 한 요소에 그림자와 테두리를 같이 쓰지 않음(PATTERNS X12) | 그림자 + 왼쪽 오류 선 | 왼쪽 선은 가장자리 테두리가 아니라 오류 표시(F5 "색 + 선 + 문장")다. 떠 있는 알림이라 그림자는 두고, 둘레 테두리는 두지 않는다 |
 | 알림·메뉴 쌓임 순서 | `--ds-z-toast`(1500) · `--ds-z-dropdown`(1000) | `z-index: 3`(둘 다) | 뷰어 층이 쪽·도구 막대(2)·note·입력칸·가로선(1)뿐이라 그 위 한 칸이면 된다. 메뉴는 누른 자리, 알림은 아래 가운데라 둘 사이 순서는 가르지 않는다 |
+| 도구 막대 버튼 높이 | `--ds-control-h-sm` 40px | 32px(`--toolbar-button-height`) | 데스크톱 브라우저 뷰어를 마우스로 쓰는 화면이고(터치 하한 대상 아님), 40px 이면 도구 막대(글자 한 줄 + 위아래 8px)가 버튼 하나 때문에 높아져 문서가 그만큼 가린다 |
+| 만드는 동안 버튼 끄기 | (규칙 없음) | `disabled` 대신 `aria-disabled` + `aria-busy` | `disabled` 를 걸면 키보드로 누른 버튼의 포커스가 문서 처음으로 튄다. 포커스는 그대로 두고 누름만 무시한다 |
+| 성공 알림 | 버튼 없는 알림 = 짧은 고정 시간(F6) | 실패 알림과 같은 자리·같은 3초, 왼쪽 선만 초록 | 한 번에 하나(F1)라 같은 자리를 쓴다. 저장 자리는 늘 문서 옆 `<이름>.pdf`(겹치면 `-2` …)라 알림이 사라져도 파일 탐색기에서 문서 옆에서 찾는다 — 시간을 늘리지 않는다 |
 | 메뉴 항목 순서 | (규칙 없음) | 위로 · 아래로 · 지우기 | 스펙은 "지우기·위로·아래로" 로 적었지만, 되돌릴 수는 있어도 블록이 사라지는 지우기를 손이 먼저 가는 첫 자리에 두지 않는다. 지우기 글자는 빨강으로 칠하지 않는다(흰 바탕 위 error-500 글자는 대비 4.5:1 미만) |
 
 ## 컴포넌트
@@ -144,7 +155,8 @@ updated: 2026-10-27
 | 입력칸(`.inline-edit`, `textarea`) | 블록을 더블클릭하면 그 블록 자리에 하나. 처음 글자는 블록(칸) 글자 전체 또는 누름틀 값, 커서는 더블클릭한 글자 자리. 글자가 늘면 높이가 늘어난다. 테두리 없이 그림자, 열려 있는 동안 포커스 링 | 열림(포커스 링) / 닫힘(Enter·바깥 누름 = 적용, Esc = 취소, 문서를 바꿈). Claude 편집이 와도 닫히지 않고 그 블록 새 자리(첫 글자 사각형·칸·빈 문단은 커서 줄, `edit-spot.ts` `spotBox`)로 옮겨 간다. 블록이 지워졌거나 되돌리기가 오면 바로 닫고, 고친 것이 있으면 실패 알림 | `aria-label="블록 글자 고치기"`, 열리면 포커스. Enter 적용·Esc 취소·Shift+Enter 무시는 키보드로 다 된다. 한글 조합 중 Enter 는 조합만 끝낸다 |
 | 놓일 자리 가로선(`.drop-line`) | 서버가 연 문서에서 본문 블록(문단·표, 누름틀·칸 위여도 그 블록째)을 누른 채 `--drag-threshold` 넘게 끌 때, 마우스가 있는 쪽에서 놓일 자리 하나 — 그 쪽 블록 중 마우스가 위 절반에 놓인 첫 블록 앞(없으면 쪽 마지막 블록 뒤), 앞뒤 블록 사이 가운데에 그 쪽 블록들 가로 범위만큼. 계산은 `src/core/block-moves.ts` `dropAt` | 있음 / 없음(놓아도 그대로인 자리 = 끄는 블록 바로 앞·뒤, 블록 없는 쪽, 쪽 밖, Esc, 놓음, 다시 그림). 끄는 동안 포인터는 잡은 손, 마우스 올림 테두리는 숨김 | 장식. 마우스를 막지 않음. 끌기는 마우스로만 — 키보드는 메뉴의 위로·아래로가 같은 일을 한다 |
 | 오른쪽 클릭 메뉴(`.block-menu`, `role="menu"` "블록") | 본문 블록 위 오른쪽 클릭(누른 자리), 또는 마우스가 블록 위에 있을 때 메뉴 키·Shift+F10(블록 왼쪽 아래). 블록 밖은 브라우저 메뉴 그대로. 항목은 위로·아래로·지우기(`menuitem`), 고르면 닫고 사람 편집(`move_blocks`·`delete_blocks`)을 보낸다 | 열림(첫 켜진 항목에 포커스) / 닫힘(항목 고름·Esc·Tab·밖을 누름·스크롤·창 크기·다시 그림). 항목: 보통 / 마우스 올림·포커스(옅은 면, 키보드면 포커스 링) / 꺼짐(`aria-disabled`, 첫 블록 위로·마지막 블록 아래로) | 위·아래 화살표(끝에서 돌아감)·Home·End 로 고르고 Enter·Space 로 한다(roving tabindex, 꺼진 항목은 건너뜀). Esc 는 닫고 열기 전 포커스로 돌아간다. 거부 문구는 실패 알림 |
-| 실패 알림(`#toast`) | 사람 편집이 안 된 이유(서버 거부·누름틀 걸침·그사이 그 블록이 바뀜·연결 끊김·응답 늦음). 뷰어 아래 가운데, 한 번에 하나. 끌어 옮기기·오른쪽 클릭(#60)도 `src/viewer/toast.ts` `showToast` 를 쓴다 | 보임(3초) / 비어 있음(자리 없음). 새 문구가 오면 바꿔 끼우고 시간을 다시 센다 | `role="alert"` 칸은 숨기지 않고 늘 둔다 — 문구를 새 요소로 넣어 뜰 때마다(같은 문구여도) 한 번 읽힌다. 색만이 아니라 왼쪽 선과 문장으로 오류를 알린다 |
+| 실패 알림(`#toast`) | 사람 편집이 안 된 이유(서버 거부·누름틀 걸침·그사이 그 블록이 바뀜·연결 끊김·응답 늦음). 뷰어 아래 가운데, 한 번에 하나. 끌어 옮기기·오른쪽 클릭(#60)도 `src/viewer/toast.ts` `showToast` 를 쓴다. PDF 버튼은 성공(`PDF 로 저장했습니다: <경로>`)도 이 자리에 `data-kind="success"` 로 | 보임(3초) / 비어 있음(자리 없음). 새 문구가 오면 바꿔 끼우고 시간을 다시 센다. 종류: 실패(빨강 선) / 성공(초록 선) | `role="alert"` 칸은 숨기지 않고 늘 둔다 — 문구를 새 요소로 넣어 뜰 때마다(같은 문구여도) 한 번 읽힌다. 색만이 아니라 왼쪽 선과 문장으로 오류를 알린다 |
+| 도구 막대 버튼(`.toolbar-button`, PDF) | 서버가 연 문서 탭의 도구 막대 오른쪽 끝, 글자 "PDF". 누르면 서버에 `user_export_pdf` 를 보내 `export_pdf` 기본 경로(문서 옆 `<이름>.pdf`, 겹치면 `-2` …)에 저장하고 알림에 경로를 보인다. 실패는 사람용 문구(`export_write_failed` 폴더에 쓸 수 없음·`export_failed` 그 밖, `src/shared/rejections.ts`). `src/viewer/pdf-button.ts` | 보통 / 마우스 올림(옅은 면) / 포커스(포커스 링) / 만드는 중(`aria-busy="true"`·`aria-disabled="true"`, 옅은 글자·기다림 커서, 눌러도 무시 — 요청이 겹치지 않는다) / 숨김(빈 탭·닫은 문서·개발 화면) | `button` 이름 "PDF 로 저장"(`aria-label`, 보이는 글자 "PDF" 를 포함). Enter·Space 로 누른다. 만드는 동안에도 포커스는 버튼에 남는다. 결과는 알림(`role="alert"`)으로 읽힌다 |
 
 ## 접근성
 
@@ -164,4 +176,5 @@ updated: 2026-10-27
 | 2026-10-27 | 끌어 옮기기·오른쪽 클릭 메뉴: 놓일 자리 가로선·메뉴 컴포넌트, 토큰 `--drop-line`·`--drop-line-width`·`--drag-threshold`·`--menu-*`, 개인 DS brand(ring)·bg-subtle·fg-disabled·border-w-thick 대응, 메뉴 z-index·항목 순서 오버라이드, 키보드 접근성. 시안 비교 생략(가로선은 포커스 링 색 2px 선 하나, 메뉴는 알림과 같은 떠 있는 면 + 그림자) | #60 |
 | 2026-10-27 | 더블클릭 편집 후속: 입력칸은 테두리 없이 그림자(PATTERNS X12)·Claude 편집 뒤 블록 새 자리로, `--toast-bg`·`--toast-fg` 는 note 토큰을 따름, 알림 칸은 늘 두고 문구를 새 요소로(같은 문구 다시 읽기), 알림 선 + 그림자 오버라이드 | #73 |
 | 2026-10-27 | 바뀐 블록 표시: 초록 테두리 토큰 `--edit-mark`·`--edit-mark-width`·`--edit-mark-offset`, 개인 DS success·border-w-thick 대응, 하이라이트와 서로 지우는 규칙. 시안 비교 생략(색은 스펙에서 초록, 모양은 하이라이트 면과 갈리는 테두리 하나) | #19 |
+| 2026-10-28 | 도구 막대 PDF 버튼(SPEC-008 AC-7): 도구 막대 버튼 컴포넌트·성공 알림 종류, 토큰 `--toolbar-button-*`·`--toast-success-accent`·`--focus-ring-offset`, 개인 DS border-strong·bg-subtle·fg-disabled·success 대응, 버튼 높이·`aria-disabled`·성공 알림 오버라이드. 시안 비교 생략(버튼 하나 — 메뉴 항목과 같은 면·글자, 문서 이름 꼬리표보다 진한 선) | #109 |
 | 2026-10-28 | note 줄바꿈: 한글 단어 중간에서 끊지 않게 `word-break: keep-all`, 폭 재기는 올림(1400px 창에서 "신청기 / 간" 으로 보이던 문제). 긴 단어는 `overflow-wrap: anywhere` 로 그대로 끊어 넘치지 않음 | #86 |

@@ -230,7 +230,8 @@ export async function writeSave(target: SaveTarget, bytes: Uint8Array): Promise<
     return await linkExclusively(temporary, target);
   } catch (error) {
     if (error instanceof ExistingFileError) throw error;
-    throw new Error(`저장하지 못했습니다: ${errorMessage(error)}`);
+    // cause: 파일 시스템 오류인지(권한 없음 등) 부르는 쪽이 가린다(PDF 버튼 사람용 문구, #109)
+    throw new Error(`저장하지 못했습니다: ${errorMessage(error)}`, { cause: error });
   } finally {
     await rm(temporary, { force: true }).catch(() => undefined);
   }

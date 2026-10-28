@@ -61,6 +61,16 @@ async function doubleClick(page: Page, target: TextTarget, keep = false): Promis
   await page.mouse.dblclick(x, y);
 }
 
+/**
+ * 입력칸 커서를 글자 끝으로. 맥 Chromium 의 End 키는 문서가 스크롤될 수 있으면 커서 대신 문서를 끝으로 스크롤해서
+ * (도구 막대에 PDF 버튼이 생겨 쪽이 창보다 몇 px 길어진 뒤로, #109) 키 대신 선택 범위를 직접 둔다
+ */
+async function caretToEnd(page: Page): Promise<void> {
+  await editBox(page).evaluate((el) => {
+    if (el instanceof HTMLTextAreaElement) el.setSelectionRange(el.value.length, el.value.length);
+  });
+}
+
 /** 화면에서 b7 을 고쳐 적용될 때까지 기다린다. 뷰어 → 서버 메시지는 차례대로라, 앞서 보낸 요청이 있었다면 이미 처리됐다 */
 async function editB7(page: Page): Promise<void> {
   await doubleClick(page, { id: 'b7' });
@@ -194,7 +204,7 @@ test.describe('SPEC-006 더블클릭으로 글자 고치기 (서버가 내주는
     const before = await blockText('b8');
 
     await doubleClick(page, { id: 'b8' });
-    await page.keyboard.press('End');
+    await caretToEnd(page);
     await page.keyboard.type(' 등');
     await page.keyboard.press('Shift+Enter');
     await expect(editBox(page)).toHaveValue(`${before} 등`);
@@ -212,7 +222,7 @@ test.describe('SPEC-006 더블클릭으로 글자 고치기 (서버가 내주는
 
     await doubleClick(page, { id: 'b12', cell });
     await expect(editBox(page)).toHaveValue(before ?? '');
-    await page.keyboard.press('End');
+    await caretToEnd(page);
     await page.keyboard.type(' (변경)');
     await firstPage(page).screenshot({ path: `${SCREENS}/dblclick-04-cell.png` });
     await page.keyboard.press('Enter');

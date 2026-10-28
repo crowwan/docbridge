@@ -6,6 +6,10 @@ import { PDFDocument } from 'pdf-lib';
 import { PdfBuilder } from '../core/pdf-export.ts';
 import type { FontLibrary } from '../core/pdf-fonts.ts';
 import { extraFontDirs, systemFontLibrary } from '../core/pdf-fonts-node.ts';
+import { z } from 'zod';
+import { errorMessage } from '../shared/errors.ts';
+import type { UserResult } from '../shared/protocol.ts';
+import { EditRejection } from '../shared/rejections.ts';
 import { log } from './log.ts';
 import { nextPdfName, pdfBase, resolvePdfPath, writeSave } from './save-path.ts';
 import type { DocumentSession, OpenedDocument } from './session.ts';
@@ -141,4 +145,24 @@ export async function exportPdf(session: DocumentSession, args: ExportPdfArgs, d
   log(`PDF 내보내기 ${drawn.pageCount}쪽 ${Math.round(performance.now() - started)}ms → ${path}`);
   const warnings = [...(drawn.unsavedEdits > 0 ? [unsavedEditsWarning(drawn.unsavedEdits)] : []), ...pdf.warnings];
   return { path, pageCount: drawn.pageCount, bytes: pdf.bytes.length, ...(warnings.length === 0 ? {} : { warnings }) };
+}
+
+/** 파일 읽기·쓰기 오류(fs 가 code·syscall 을 붙인다 — 권한 없음·디스크 가득·읽기 전용 등) */
+const fileSystemErrorSchema = z.object({ code: z.string(), syscall: z.string() });
+
+/**
+ * 뷰어 도구 막대 PDF 버튼(SPEC-008 AC-7, user_export_pdf): export_pdf 기본 경로(문서 옆 <이름>.pdf, 겹치면 번호)로 저장한다.
+ * 실패는 거부 코드로 바꿔 사람용 문구를 보이게 한다(#77 — 원래 문구는 bridge 가 로그에 남긴다)
+ */
+export async function exportPdfFromViewer(session: DocumentSession, fonts: ExportPdfDeps['fonts']): Promise<UserResult<'user_export_pdf'>> {
+  try {
+    const { path } = await exportPdf(session, {}, { fonts });
+    return { path };
+  } catch (error) {
+    if (error instanceof EditRejection) throw error;
+    // 쓰기 실패는 writeSave 가 "저장하지 못했습니다" 로 감싸 원래 오류를 cause 에 둔다
+    const written = fileSystemErrorSchema.safeParse(error instanceof Error ? error.cause : undefined).success;
+    const code = written ? 'export_write_failed' : 'export_failed';
+    throw new EditRejection(code, `PDF 버튼 내보내기 실패: ${errorMessage(error)}`);
+  }
 }

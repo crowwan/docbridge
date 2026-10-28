@@ -48,6 +48,41 @@ body {
   display: none;
 }
 
+/* 도구 막대 버튼(PDF, SPEC-008 AC-7): 오른쪽 끝, 테두리 있는 보조 버튼(문서 이름 꼬리표보다 진한 선·본문 글자 — 눌리는 것으로 보이게) */
+.toolbar-button {
+  align-self: center;
+  min-height: var(--toolbar-button-height);
+  margin-left: auto;
+  padding: 0 var(--space-4);
+  border: var(--toolbar-button-border-width) solid var(--toolbar-button-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-size);
+  cursor: pointer;
+}
+
+.toolbar-button:hover {
+  background: var(--toolbar-button-hover-bg);
+}
+
+.toolbar-button:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* 만드는 동안(aria-busy): 꺼진 글자색, 기다림 커서. 포커스는 그대로 둔다 */
+.toolbar-button[aria-disabled='true'] {
+  background: var(--surface);
+  color: var(--toolbar-button-disabled-fg);
+  cursor: progress;
+}
+
+.toolbar-button[hidden] {
+  display: none;
+}
+
 #pages {
   display: flex;
   flex-direction: column;
@@ -129,6 +164,11 @@ body {
 }
 
 /* 빈 알림은 자리를 차지하지 않지만 화면 읽기 도구가 바뀐 글자를 알 수 있게 늘 그려 둔다(display: none 이면 읽지 않는다) */
+/* 성공 알림(PDF 로 저장함): 왼쪽 선만 초록 — 실패(빨강 선)와 문장·색 둘 다로 갈린다 */
+.toast[data-kind='success'] {
+  border-left-color: var(--toast-success-accent);
+}
+
 .toast:empty {
   padding: 0;
   border: 0;

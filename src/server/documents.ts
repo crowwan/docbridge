@@ -20,6 +20,7 @@ import {
   type OpenResult,
 } from './session.ts';
 import { handleUserRequest } from './user-edit.ts';
+import { systemFonts, type ExportPdfDeps } from './export-pdf-tool.ts';
 
 /** 한 번에 열 수 있는 문서 수(탭마다 WASM 문서가 따로 있다 — 큰 문서 탭 메모리를 보고 다시 정한다) */
 export const MAX_DOCUMENTS = 8;
@@ -49,6 +50,8 @@ export interface SessionsOptions {
   readFile?: (path: string) => Promise<Uint8Array>;
   /** 탭이 닫혔다고 보기까지 기다리는 시간(기본 TAB_CLOSE_GRACE_MS) */
   tabCloseGraceMs?: number;
+  /** 뷰어 PDF 버튼이 쓸 글꼴(기본: 시스템 글꼴, 테스트: 시험 글꼴) */
+  fonts?: ExportPdfDeps['fonts'];
 }
 
 /** 다음 도구 결과에 붙일 알림. doc 이 있으면 그 문서의 알림(다른 문서 결과에 붙으면 "d2: " 를 앞에 붙인다) */
@@ -115,7 +118,7 @@ export class DocumentSessions {
     bridge.serveUserRequests((doc, request) => {
       const session = this.sessions.get(doc);
       if (session === undefined) return Promise.reject(new Error(unknownDocumentMessage(doc)));
-      return handleUserRequest(session, request);
+      return handleUserRequest(session, request, options.fonts ?? systemFonts);
     });
   }
 

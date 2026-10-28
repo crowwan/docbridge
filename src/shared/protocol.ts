@@ -254,6 +254,8 @@ export const userMethodSchemas = {
   user_edit: { params: z.object({ edit: userEditSchema, state: stateSchema }), result: z.object({}) },
   /** ⌘Z/Ctrl+Z: 공용 되돌리기 줄에서 마지막 편집 하나(사람·Claude 상관없이)를 되돌린다. 결과는 되돌린 편집 이름 */
   user_undo: { params: z.object({}), result: z.object({ undone: z.array(z.string()) }) },
+  /** 도구 막대 PDF 버튼(SPEC-008 AC-7): export_pdf 기본 경로로 저장한다(편집이 아니다). 결과는 저장한 경로 */
+  user_export_pdf: { params: z.object({}), result: z.object({ path: z.string() }) },
 } as const;
 
 type UserMethodSchemas = typeof userMethodSchemas;
@@ -268,6 +270,7 @@ const userRequestSchema = <M extends UserMethod, P extends z.ZodType>(method: M,
 export const userRequestMessageSchema = z.discriminatedUnion('method', [
   userRequestSchema('user_edit', userMethodSchemas.user_edit.params),
   userRequestSchema('user_undo', userMethodSchemas.user_undo.params),
+  userRequestSchema('user_export_pdf', userMethodSchemas.user_export_pdf.params),
 ]);
 export type UserRequestMessage = z.infer<typeof userRequestMessageSchema>;
 
@@ -279,6 +282,7 @@ void everyUserMethodHasRequestSchema;
 export const parseUserResult: { [M in UserMethod]: (result: unknown) => UserResult<M> } = {
   user_edit: (result) => userMethodSchemas.user_edit.result.parse(result),
   user_undo: (result) => userMethodSchemas.user_undo.result.parse(result),
+  user_export_pdf: (result) => userMethodSchemas.user_export_pdf.result.parse(result),
 };
 
 /**
@@ -347,8 +351,16 @@ export const timeoutMessage = (method: string, timeoutMs: number) =>
  * 뷰어가 보낸 사람 편집·⌘Z 의 응답이 늦을 때 뷰어에 보이는 문구(SPEC-006). 서버는 USER_REQUEST_DEADLINE_MS 넘게 늦은 요청을
  * 적용하지 않지만, 마감 전에 적용을 시작했다면 그 편집 요청으로 화면이 바뀐다 — 그래서 화면을 기준으로 다시 하게 한다
  */
-export const userRequestTimeoutMessage = (_method: string, timeoutMs: number) =>
-  `docbridge 가 ${timeoutMs / 1000}초 안에 답하지 않았습니다. 화면이 바뀌지 않았으면 다시 해 주세요.`;
+export const userRequestTimeoutMessage = (method: string, timeoutMs: number) =>
+  method === 'user_export_pdf'
+    ? `docbridge 가 ${timeoutMs / 1000}초 안에 PDF 를 다 만들지 못했습니다. 조금 뒤 문서 옆에 PDF 가 생겼는지 확인하세요.`
+    : `docbridge 가 ${timeoutMs / 1000}초 안에 답하지 않았습니다. 화면이 바뀌지 않았으면 다시 해 주세요.`;
+
+/**
+ * 뷰어가 PDF 버튼 요청(user_export_pdf)의 답을 기다리는 시간. 수백 쪽 문서는 수십 초 걸린다(SPEC-008 — 300쪽 공고문 약 8초,
+ * 처음에는 시스템 글꼴 훑기도). 서버는 늦어도 끝까지 만들어 쓰므로, 너무 일찍 끊으면 파일은 생기는데 화면은 실패라고 한다
+ */
+export const USER_EXPORT_PDF_TIMEOUT_MS = 5 * 60_000;
 
 /** 요청 하나의 끝(응답 메시지 종류와 상관없이 id·성공 여부·결과) */
 export type Settlement = { type?: string; id: number } & (
@@ -374,8 +386,8 @@ export class RequestTracker {
     this.timeoutText = timeoutText;
   }
 
-  /** 새 요청 id 와, 응답 결과를 parse 로 읽어 풀리는 Promise */
-  start<T>(method: string, parse: (result: unknown) => T): { id: number; promise: Promise<T> } {
+  /** 새 요청 id 와, 응답 결과를 parse 로 읽어 풀리는 Promise. timeoutMs 로 이 요청만 기다리는 시간을 바꾼다(PDF 버튼) */
+  start<T>(method: string, parse: (result: unknown) => T, timeoutMs = this.timeoutMs): { id: number; promise: Promise<T> } {
     const id = this.nextId;
     this.nextId += 1;
     const promise = new Promise<T>((resolve, reject) => {
@@ -385,8 +397,8 @@ export class RequestTracker {
       };
       const timer = setTimeout(() => {
         finish();
-        reject(new Error(this.timeoutText(method, this.timeoutMs)));
-      }, this.timeoutMs);
+        reject(new Error(this.timeoutText(method, timeoutMs)));
+      }, timeoutMs);
       this.pending.set(id, {
         settle: (response) => {
           finish();

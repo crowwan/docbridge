@@ -8,6 +8,7 @@ import { targetLabel } from '../core/text-targets.ts';
 import { USER_REQUEST_DEADLINE_MS, type UserEdit, type UserRequestMessage, type UserResult } from '../shared/protocol.ts';
 import { EditRejection, USER_REJECTION_MESSAGES } from '../shared/rejections.ts';
 import { NOTHING_TO_UNDO } from './edit-tools.ts';
+import { exportPdfFromViewer, type ExportPdfDeps } from './export-pdf-tool.ts';
 import { planMove } from './move-plan.ts';
 import type { DocumentSession, OpenedDocument } from './session.ts';
 
@@ -107,8 +108,8 @@ export async function undoFromViewer(session: DocumentSession, received: Receipt
   return { undone };
 }
 
-/** 뷰어 요청 처리(DocumentSessions 가 보낸 탭의 문서 세션으로 부른다) */
-export async function handleUserRequest(session: DocumentSession, request: UserRequestMessage): Promise<unknown> {
+/** 뷰어 요청 처리(DocumentSessions 가 보낸 탭의 문서 세션으로 부른다). fonts: PDF 버튼이 쓸 글꼴(서버는 시스템 글꼴) */
+export async function handleUserRequest(session: DocumentSession, request: UserRequestMessage, fonts: ExportPdfDeps['fonts']): Promise<unknown> {
   // 받은 순간의 문서와 시각(첫 await 전 — bridge 가 메시지를 받은 그 차례에 부른다)
   const received: Receipt = { document: session.document, at: Date.now() };
   switch (request.method) {
@@ -117,5 +118,8 @@ export async function handleUserRequest(session: DocumentSession, request: UserR
       return {};
     case 'user_undo':
       return undoFromViewer(session, received);
+    case 'user_export_pdf':
+      // 편집이 아니라 받은 순간 확인(문서 바뀜·늦음)을 하지 않는다 — 줄 차례가 온 지금 문서를 내보낸다
+      return exportPdfFromViewer(session, fonts);
   }
 }

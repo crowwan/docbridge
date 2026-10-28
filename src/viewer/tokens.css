@@ -28,6 +28,12 @@
   --menu-bg: var(--surface);
   --menu-item-active-bg: #f5f5f5;
   --menu-disabled-fg: #cccccc;
+  /* 도구 막대 버튼(PDF): 개인 DS border-strong 선·bg-subtle 마우스 올림·fg-disabled 꺼짐(만드는 동안) — 메뉴 항목과 같은 값을 따른다 */
+  --toolbar-button-border: var(--edit-hover);
+  --toolbar-button-hover-bg: var(--menu-item-active-bg);
+  --toolbar-button-disabled-fg: var(--menu-disabled-fg);
+  /* 성공 알림 왼쪽 선: 개인 DS success(= 바뀐 블록 초록). 진한 면(--toast-bg) 위 대비 약 5.9:1 */
+  --toast-success-accent: var(--edit-mark);
 
   /* 글자 */
   --font-sans: system-ui, sans-serif;
@@ -69,6 +75,11 @@
   /* 토스트가 보이는 시간(스펙 3초). 뷰어 스크립트가 읽는다 */
   --toast-duration: 3000ms;
   --doc-name-border-width: 1px;
+  /* 도구 막대 버튼: 데스크톱 마우스 뷰어라 개인 DS control-h-sm(40px)보다 낮게(도구 막대 높이를 지킨다 — design.md 오버라이드). 테두리는 border-w-thin */
+  --toolbar-button-height: 32px;
+  --toolbar-button-border-width: 1px;
+  /* 포커스 링과 버튼 사이 */
+  --focus-ring-offset: 2px;
 
   /* 탭 제목 표시: 탭을 보지 않는 사이 하이라이트·편집이 생기면 제목 앞에 붙인다(SPEC-007) — 뷰어 스크립트가 읽는다 */
   --tab-unseen-mark: '●';
