@@ -1,7 +1,7 @@
 ---
 id: SPEC-004
 title: 설치와 배포
-status: in-progress        # draft | approved | in-progress | done | dropped
+status: done        # draft | approved | in-progress | done | dropped
 milestone: v0.2
 issue: "#91"
 prototype:
@@ -123,3 +123,4 @@ updated: 2026-10-28
 | 2026-10-28 | #92 .mcpb 패키징: Desktop Node 기술 검증(24.22.0) → target node24·runtimes.node, 아이콘 생략, 서버는 rhwp WASM 을 띄우지 않음(WASM 은 viewer/), THIRD_PARTY_NOTICES.txt, AC-1·2·3 |
 | 2026-10-28 | #94 릴리스 흐름 구체화: Release 는 `/release` 가 태그 직후 만들고 워크플로는 붙이기만(없으면 실패, workflow_dispatch 로 다시·드라이런), 태그 = package.json 버전 확인. README 설치 절. AC-6 은 첫 태그에서 확인 |
 | 2026-10-28 | #99 릴리스 후속: 워크플로는 v0.2.0 태그부터, 업로드 실패를 Release 없음 / 그 밖의 오류로 나눠 안내. README 설치 절에 수동 설정을 지운 뒤 Desktop 재시작 |
+| 2026-10-28 | v0.2.0 릴리스 (#101), status done |

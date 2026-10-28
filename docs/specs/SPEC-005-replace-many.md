@@ -1,11 +1,11 @@
 ---
 id: SPEC-005
 title: 여러 자리 한 번에 바꾸기
-status: in-progress        # draft | approved | in-progress | done | dropped
+status: done        # draft | approved | in-progress | done | dropped
 milestone: v0.2
 issue: "#54"
 prototype:
-updated: 2026-10-27
+updated: 2026-10-28
 ---
 
 # SPEC-005 여러 자리 한 번에 바꾸기
@@ -93,3 +93,4 @@ SPEC-002 의 `replace_text` 는 한 번에 한 자리(블록 하나·칸 하나)
 | 2026-10-27 | #55 구현: `replace_text` 의 `targets` 상한 문구 끝 문장("여러 번으로 나눠 주세요."), 겹침 판정(전체 범위·같은 위치 넣기 둘·맞닿음), 칸마다 결과 항목·편집 이름 규칙을 적고, AC-4~8 완료 |
 | 2026-10-27 | #56 구현: `replace_all` 이 누름틀 값에 걸친 일치를 뺌, `ids` 없는 id·0개(ids 안 포함) 오류, 찾은 뒤 다른 편집이 끼면 거부, 편집 이름, 열린 질문(자리 목록 안 줌) 닫음. PR #67 리뷰: 문단·칸 자리가 누름틀 값에 걸치면 거부(한 자리여도), 같은 문단 문단 자리 + 누름틀 값 자리는 허용, 적용 중 실패 전체 되돌림. AC-1·2·3 완료 |
 | 2026-10-27 | PR #69 리뷰: `replace_all` 이 상태 번호를 블록 읽기를 보내는 순간에 잡음(편집 전 블록 + 편집 뒤 번호 짝 막기), 걸침 거부 문구에 누름틀 이름·값 자리 |
+| 2026-10-28 | v0.2.0 릴리스 (#101), status done |

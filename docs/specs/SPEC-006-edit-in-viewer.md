@@ -1,11 +1,11 @@
 ---
 id: SPEC-006
 title: 뷰어에서 직접 고치기
-status: in-progress        # draft | approved | in-progress | done | dropped
+status: done        # draft | approved | in-progress | done | dropped
 milestone: v0.2
 issue: "#57"
 prototype:
-updated: 2026-10-27
+updated: 2026-10-28
 ---
 
 # SPEC-006 뷰어에서 직접 고치기
@@ -153,3 +153,4 @@ updated: 2026-10-27
 | 2026-10-27 | #77: 사람 편집 거부는 거부 코드 → 사람용 문구 표로 알림(블록 id·도구 이름 없음), 뷰어에서 거부된 편집도 응답에 코드를 실음, 코드 없는 실패는 일반 문구 |
 | 2026-10-27 | PR #83 리뷰: 개체 종류 이름이 없으면 "개체", 옮겨 두지 않은 옮기기 거부 이유는 일반 문구, 원래 문구는 거부도 서버 로그에 |
 | 2026-10-28 | #86: 조합 확정 Enter 를 `isComposing=false`·`keyCode 229` 로 보내는 Safari(WebKit)도 적용하지 않음 |
+| 2026-10-28 | v0.2.0 릴리스 (#101), status done |

@@ -1,6 +1,6 @@
 ---
 id: 003
-status: proposed       # proposed | accepted | superseded — 한글 프로그램 확인(사용자) 뒤 accepted
+status: accepted       # 2026-10-28 사용자가 docbridge-create-check 00~07 을 HWPViewer 로 열어 경고 없음 확인
 date: 2026-10-27
 ---
 
