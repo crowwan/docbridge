@@ -20,7 +20,7 @@ export type CommandRunner = (
 /**
  * cmd 의 특수 문자(& | < > ( ) ^)를 ^ 로 막는다 — 주소의 & 에서 명령이 끊기지 않게.
  * 따옴표로 싸면 그 안의 ^ 가 글자 그대로 남아 따옴표 없이 막는다.
- * % 는 막을 수 없지만 우리 주소(토큰 UUID·doc 이름 d1…)에는 %이름% 꼴이 생기지 않는다
+ * % 는 막을 수 없지만 우리 주소(토큰 UUID·doc 이름 d1…)에는 % 가 없다(tests/browser.test.ts 가 이 전제를 고정한다)
  */
 const escapeForCmd = (url: string) => url.replace(/[&|<>()^]/g, '^$&');
 

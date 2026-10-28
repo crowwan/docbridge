@@ -11,13 +11,17 @@ import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotoc
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { openDocumentFile } from '../../src/core/rhwp-node.ts';
-import { mcpbPath, NODE_RUNTIME, oneLine, packageVersion, REPO_ROOT, registeredTools } from '../../scripts/pack/manifest.ts';
+import { mcpbCommand, mcpbPath, NODE_RUNTIME, oneLine, packageVersion, REPO_ROOT, registeredTools } from '../../scripts/pack/manifest.ts';
 import { FakeViewer } from '../fake-viewer.ts';
 import { fixturePath } from '../fixtures.ts';
 import { rhwpViewerHandler } from '../rhwp-viewer.ts';
 
 const run = promisify(execFile);
-const mcpb = `${REPO_ROOT}node_modules/.bin/mcpb`;
+const mcpb = (args: string[]) => {
+  const { command, args: commandArgs } = mcpbCommand(args);
+  return run(command, commandArgs);
+};
+const dependenciesSchema = z.object({ dependencies: z.record(z.string(), z.string()) });
 
 const manifestSchema = z.object({
   manifest_version: z.string(),
@@ -68,7 +72,7 @@ describe('SPEC-004 설치판(.mcpb)', () => {
     });
     work = await mkdtemp(join(tmpdir(), 'docbridge-mcpb-'));
     extracted = join(work, 'extension');
-    await run(mcpb, ['unpack', file, extracted]);
+    await mcpb(['unpack', file, extracted]);
   });
 
   afterAll(async () => {
@@ -77,12 +81,22 @@ describe('SPEC-004 설치판(.mcpb)', () => {
 
   it('npm run pack 이 dist/docbridge-<버전>.mcpb 를 만들고, 그 안의 manifest 가 mcpb validate 를 통과한다', async () => {
     // AC-1
-    await run(mcpb, ['validate', join(extracted, 'manifest.json')]);
+    await mcpb(['validate', join(extracted, 'manifest.json')]);
 
     expect((await readdir(extracted)).sort()).toEqual(['LICENSE', 'THIRD_PARTY_NOTICES.txt', 'manifest.json', 'server', 'viewer']);
     expect(await readdir(join(extracted, 'server'))).toEqual(['index.js']);
     expect((await readdir(join(extracted, 'viewer', 'assets'))).some((name) => name.endsWith('.wasm'))).toBe(true);
     expect(await readFile(join(extracted, 'LICENSE'), 'utf8')).toContain('rhwp');
+  });
+
+  it('THIRD_PARTY_NOTICES.txt 에 package.json dependencies 패키지 전부의 라이선스가 들어 있다', async () => {
+    // PR #97 리뷰: NOTICES 는 서버 번들만 보고 모은다. 뷰어에만 쓰는 의존성이 생겨 빠지면 여기서 실패한다
+    const notices = await readFile(join(extracted, 'THIRD_PARTY_NOTICES.txt'), 'utf8');
+    const { dependencies } = dependenciesSchema.parse(JSON.parse(await readFile(`${REPO_ROOT}package.json`, 'utf8')));
+
+    // 지금은 @modelcontextprotocol/sdk·@rhwp/core·ws·zod
+    expect(Object.keys(dependencies)).toContain('@rhwp/core');
+    for (const name of Object.keys(dependencies)) expect(notices).toContain(`\n## ${name}\n\n`);
   });
 
   it('manifest 의 version 은 package.json 과 같고, tools 는 서버에 실제 등록된 도구 전부와 같다', async () => {

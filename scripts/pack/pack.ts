@@ -2,12 +2,12 @@
 // dist/mcpb/ 에 manifest.json · server/index.js(의존성까지 한 파일) · viewer/(dist/viewer 그대로, rhwp WASM 포함) ·
 // LICENSE · THIRD_PARTY_NOTICES.txt(번들에 든 패키지의 라이선스 전문)를 모으고 mcpb validate → mcpb pack 으로 dist/docbridge-<버전>.mcpb 를 만든다.
 import { execFileSync } from 'node:child_process';
-import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { cp, mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { build, type Metafile } from 'esbuild';
-import { buildManifest, mcpbPath, packageVersion, REPO_ROOT, registeredTools } from './manifest.ts';
+import { buildManifest, mcpbCommand, mcpbPath, packageVersion, REPO_ROOT, registeredTools } from './manifest.ts';
+import { bundledPackages, thirdPartyNotices } from './notices.ts';
 
 const stageDir = `${REPO_ROOT}dist/mcpb/`;
-const mcpb = `${REPO_ROOT}node_modules/.bin/mcpb`;
 
 /** 번들 target: Claude Desktop 에 든 Node(24.22.0) 와 같은 큰 버전 */
 const NODE_TARGET = 'node24';
@@ -15,6 +15,8 @@ const NODE_TARGET = 'node24';
 /** 서버를 의존성까지 ESM 한 파일로 묶는다. 서버는 rhwp WASM 을 띄우지 않는다(rhwp 는 뷰어에서만 돈다 — 번들에는 JS 글루만 들어간다) */
 async function bundleServer(): Promise<Metafile> {
   const { metafile } = await build({
+    // metafile 입력 경로를 레포 기준으로(THIRD_PARTY_NOTICES 가 그 경로로 패키지 폴더를 찾는다)
+    absWorkingDir: REPO_ROOT,
     entryPoints: [`${REPO_ROOT}src/server/index.ts`],
     outfile: `${stageDir}server/index.js`,
     bundle: true,
@@ -31,28 +33,6 @@ async function bundleServer(): Promise<Metafile> {
   return metafile;
 }
 
-/** 번들에 들어간 node_modules 패키지 폴더들(이름순). 뷰어가 쓰는 패키지(@rhwp/core·zod)도 서버 번들에 들어 있다 */
-function bundledPackages(metafile: Metafile): string[] {
-  const packages = new Set<string>();
-  for (const input of Object.keys(metafile.inputs)) {
-    const match = /(?:^|\/)node_modules\/((?:@[^/]+\/)?[^/]+)\//.exec(input);
-    if (match?.[1] !== undefined) packages.add(match[1]);
-  }
-  return [...packages].sort();
-}
-
-async function thirdPartyNotices(packages: string[]): Promise<string> {
-  const sections = await Promise.all(
-    packages.map(async (name) => {
-      const dir = `${REPO_ROOT}node_modules/${name}/`;
-      const licenseFile = (await readdir(dir)).find((file) => /^licen[cs]e/i.test(file));
-      if (licenseFile === undefined) throw new Error(`라이선스 파일이 없습니다: ${name}`);
-      return `## ${name}\n\n${(await readFile(`${dir}${licenseFile}`, 'utf8')).trim()}\n`;
-    }),
-  );
-  return `docbridge 의 server/index.js · viewer/ 에 함께 묶인 패키지와 라이선스\n\n${sections.join('\n')}`;
-}
-
 const version = await packageVersion();
 await rm(stageDir, { recursive: true, force: true });
 await mkdir(stageDir, { recursive: true });
@@ -60,12 +40,18 @@ const metafile = await bundleServer();
 // 서버는 server/index.js 기준 ../viewer/ 를 내준다(src/server/index.ts)
 await cp(`${REPO_ROOT}dist/viewer`, `${stageDir}viewer`, { recursive: true });
 await cp(`${REPO_ROOT}LICENSE`, `${stageDir}LICENSE`);
-await writeFile(`${stageDir}THIRD_PARTY_NOTICES.txt`, await thirdPartyNotices(bundledPackages(metafile)));
+// 뷰어가 쓰는 패키지(@rhwp/core·zod)도 서버 번들에 들어 있어 서버 metafile 로 모은다.
+// 뷰어에만 쓰는 의존성이 생기면 빠지므로 test:pack 이 package.json dependencies 전부가 들어 있는지 본다
+await writeFile(`${stageDir}THIRD_PARTY_NOTICES.txt`, await thirdPartyNotices(bundledPackages(Object.keys(metafile.inputs)), REPO_ROOT));
 await writeFile(`${stageDir}manifest.json`, `${JSON.stringify(buildManifest(version, await registeredTools()), null, 2)}\n`);
 
-execFileSync(mcpb, ['validate', `${stageDir}manifest.json`], { stdio: 'inherit' });
+const mcpb = (args: string[]) => {
+  const { command, args: commandArgs } = mcpbCommand(args);
+  execFileSync(command, commandArgs, { stdio: 'inherit' });
+};
+mcpb(['validate', `${stageDir}manifest.json`]);
 const output = mcpbPath(version);
 await rm(output, { force: true });
-execFileSync(mcpb, ['pack', stageDir, output], { stdio: 'inherit' });
+mcpb(['pack', stageDir, output]);
 const { size } = await stat(output);
 process.stderr.write(`만들었습니다: ${output} (${(size / 1024 / 1024).toFixed(1)}MB)\n`);

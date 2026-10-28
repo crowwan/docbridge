@@ -12,52 +12,20 @@ Claude 채팅 ──stdio── docbridge (내 PC) ──127.0.0.1── 브라�
 
 ## 설치
 
-Node 24 가 필요합니다.
+### Claude Desktop (맥·윈도우)
 
-```bash
-git clone https://github.com/crowwan/docbridge.git
-cd docbridge
-npm ci
-npm run build
-```
+1. [Releases](https://github.com/crowwan/docbridge/releases/latest) 에서 `docbridge-<버전>.mcpb` 를 받습니다.
+2. 받은 파일을 더블클릭하거나, Claude Desktop 의 **설정 › 확장** 화면에 끌어다 놓고 **설치**를 누릅니다.
+3. 채팅 입력창의 도구 목록에 docbridge 가 보이면 됩니다. Node 설치나 설정 파일 편집은 필요 없습니다.
 
-빌드가 끝나면 `dist/server/index.js` 가 docbridge 실행 파일입니다. 아래 등록에는 이 파일의 **절대 경로**를 씁니다 (`pwd` 로 확인).
+- 예전에 `claude_desktop_config.json` 에 docbridge 를 손으로 넣었다면 그 항목을 지우세요. 둘 다 켜 두면 docbridge 가 두 번 뜹니다.
+- 새 버전은 새 `.mcpb` 를 받아 같은 방법으로 다시 설치합니다.
 
-## Claude 에 등록
+![docbridge 데모: 채팅에서 회신 기한을 묻자 뷰어의 그 부분이 하이라이트된 화면](https://raw.githubusercontent.com/crowwan/docbridge/assets/pr/48/02-highlight.png)
 
-### Claude Desktop
+<sub>데모 화면. 왼쪽 채팅은 녹화용으로 꾸민 화면이고, 오른쪽이 실제 docbridge 뷰어입니다.</sub>
 
-1. Claude Desktop 설정 파일을 엽니다: `~/Library/Application Support/Claude/claude_desktop_config.json` (Windows: `%APPDATA%\Claude\claude_desktop_config.json`). 없으면 만듭니다.
-2. `mcpServers` 에 docbridge 를 넣습니다.
-
-   ```json
-   {
-     "mcpServers": {
-       "docbridge": {
-         "command": "node",
-         "args": ["/절대/경로/docbridge/dist/server/index.js"]
-       }
-     }
-   }
-   ```
-
-   `node` 를 nvm 등으로 설치했으면 `command` 에 `which node` 결과(절대 경로)를 넣습니다. Claude Desktop 은 셸 설정을 읽지 않아 `node` 를 못 찾을 수 있습니다.
-3. Claude Desktop 을 완전히 종료했다가 다시 엽니다. 채팅 입력창의 도구 목록에 docbridge 가 보이면 됩니다.
-
-### Claude Code
-
-```bash
-claude mcp add docbridge -s user -- node /절대/경로/docbridge/dist/server/index.js
-```
-
-- `-s user` 는 모든 프로젝트에서 쓰게 등록합니다. 빼면 지금 프로젝트에서만 씁니다.
-- nvm 을 쓰면 `node` 대신 `which node` 결과(절대 경로)를 넣습니다.
-- 등록은 새 세션부터 적용됩니다(`/mcp` 로 연결 상태 확인).
-- Claude Code 가 파일을 직접 읽으려 하면 "docbridge 로 열어줘"라고 하면 됩니다.
-
-### 함께 쓸 때
-
-Claude Desktop 과 Claude Code 를 동시에 쓰면 docbridge 가 각각 따로 뜹니다(포트 7790, 7791 …). 뷰어 탭도 따로라서, 한쪽에서 연 문서는 다른 쪽에서 보이지 않습니다.
+Claude Code 에서 쓰거나 직접 빌드하려면 아래 [개발·Claude Code](#개발claude-code) 를 보세요.
 
 ## 사용
 
@@ -109,7 +77,7 @@ Claude Desktop 과 Claude Code 를 동시에 쓰면 docbridge 가 각각 따로 
 |---|---|---|
 | `DOCBRIDGE_PORT` | `7790` | 뷰어 서버 시작 포트. 사용 중이면 다음 포트로 넘어가 10개까지 시도합니다 |
 
-Claude Desktop 에서는 `mcpServers.docbridge.env` 에 넣습니다.
+`.mcpb` 확장은 설정 없이 기본값으로 돕니다. 바꿔야 하면 [손으로 등록](#claude-desktop-에-빌드-결과를-손으로-등록)한 설정의 `mcpServers.docbridge.env` 에 넣습니다.
 
 ## 문제 해결
 
@@ -122,7 +90,58 @@ Claude Desktop 에서는 `mcpServers.docbridge.env` 에 넣습니다.
 - **새로고침했더니 고친 내용이 사라졌어요**: 저장하지 않은 편집은 뷰어 메모리에만 있어서 새로고침하면 사라집니다(마지막으로 저장한 파일로 돌아갑니다). 채팅에서 다시 고쳐 달라고 하세요.
 - **로그**: docbridge 는 로그를 stderr 로 남깁니다. Claude Desktop 은 `~/Library/Logs/Claude/mcp-server-docbridge.log` 에 모읍니다.
 
-## 개발
+## 개발·Claude Code
+
+레포를 받아 빌드해 등록합니다. Node 24 가 필요합니다.
+
+```bash
+git clone https://github.com/crowwan/docbridge.git
+cd docbridge
+npm ci
+npm run build
+```
+
+빌드가 끝나면 `dist/server/index.js` 가 docbridge 실행 파일입니다. 아래 등록에는 이 파일의 **절대 경로**를 씁니다 (`pwd` 로 확인).
+
+### Claude Code
+
+```bash
+claude mcp add docbridge -s user -- node /절대/경로/docbridge/dist/server/index.js
+```
+
+- `-s user` 는 모든 프로젝트에서 쓰게 등록합니다. 빼면 지금 프로젝트에서만 씁니다.
+- nvm 을 쓰면 `node` 대신 `which node` 결과(절대 경로)를 넣습니다.
+- 등록은 새 세션부터 적용됩니다(`/mcp` 로 연결 상태 확인).
+- Claude Code 가 파일을 직접 읽으려 하면 "docbridge 로 열어줘"라고 하면 됩니다.
+
+### Claude Desktop 에 빌드 결과를 손으로 등록
+
+개발 중인 빌드를 Desktop 에서 볼 때만 씁니다. 위 `.mcpb` 확장과 같이 켜지 마세요(docbridge 가 두 번 뜹니다).
+
+1. Claude Desktop 설정 파일을 엽니다: `~/Library/Application Support/Claude/claude_desktop_config.json` (Windows: `%APPDATA%\Claude\claude_desktop_config.json`). 없으면 만듭니다.
+2. `mcpServers` 에 docbridge 를 넣습니다.
+
+   ```json
+   {
+     "mcpServers": {
+       "docbridge": {
+         "command": "node",
+         "args": ["/절대/경로/docbridge/dist/server/index.js"]
+       }
+     }
+   }
+   ```
+
+   `node` 를 nvm 등으로 설치했으면 `command` 에 `which node` 결과(절대 경로)를 넣습니다. Claude Desktop 은 셸 설정을 읽지 않아 `node` 를 못 찾을 수 있습니다.
+3. Claude Desktop 을 완전히 종료했다가 다시 엽니다.
+
+`.mcpb` 를 직접 만들려면 `npm run pack`(→ `dist/docbridge-<버전>.mcpb`). 릴리스 때는 태그를 올리면 CI 가 만들어 Release 에 붙입니다.
+
+### 함께 쓸 때
+
+Claude Desktop 과 Claude Code 를 동시에 쓰면 docbridge 가 각각 따로 뜹니다(포트 7790, 7791 …). 뷰어 탭도 따로라서, 한쪽에서 연 문서는 다른 쪽에서 보이지 않습니다.
+
+### 개발 문서
 
 개발 명령과 폴더 구조는 [`CLAUDE.md`](CLAUDE.md), 기획과 스펙은 [`docs/`](docs/) 에 있습니다.
 
