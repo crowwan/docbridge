@@ -32,3 +32,5 @@ jobs:
         run: npm test --if-present
       - name: 빌드
         run: npm run build
+      - name: 설치판(.mcpb) 검사
+        run: npm run test:pack
