@@ -75,8 +75,8 @@
   /* 토스트가 보이는 시간(스펙 3초). 뷰어 스크립트가 읽는다 */
   --toast-duration: 3000ms;
   --doc-name-border-width: 1px;
-  /* 도구 막대 버튼: 데스크톱 마우스 뷰어라 개인 DS control-h-sm(40px)보다 낮게(도구 막대 높이를 지킨다 — design.md 오버라이드). 테두리는 border-w-thin */
-  --toolbar-button-height: 32px;
+  /* 도구 막대 버튼: 도구 막대 높이(40px)를 그대로 지키는 가장 큰 값 — 개인 DS control-h-sm(40px)보다 낮다(design.md 오버라이드, WCAG 2.5.8 최소 24px). 테두리는 border-w-thin */
+  --toolbar-button-height: 24px;
   --toolbar-button-border-width: 1px;
   /* 포커스 링과 버튼 사이 */
   --focus-ring-offset: 2px;

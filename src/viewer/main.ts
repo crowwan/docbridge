@@ -64,7 +64,7 @@ const noticeEl = document.getElementById('notice');
 const docNameEl = document.getElementById('doc-name');
 /** 도구 막대 PDF 버튼(SPEC-008 AC-7). 서버가 연 문서가 있을 때만 보인다 */
 const pdfButton =
-  pdfButtonEl instanceof HTMLButtonElement ? setupPdfButton(pdfButtonEl, { exportPdf: () => exportPdfFromButton(), report: showToast }) : undefined;
+  pdfButtonEl instanceof HTMLButtonElement ? setupPdfButton(pdfButtonEl, { exportPdf: () => exportPdfFromButton(), report: showToast, progress: showPdfProgress }) : undefined;
 
 function setStatus(text: string): void {
   if (statusEl) statusEl.textContent = text;
@@ -650,6 +650,14 @@ const blockActions =
           requestUserEdit(edit).catch(reportEditFailure);
         },
       });
+
+const PDF_PROGRESS = 'PDF 만드는 중…';
+
+/** PDF 버튼 진행: 만드는 동안 상태 줄에 진행 문구, 끝나면 원래 상태 줄(파일 이름·쪽 수) */
+function showPdfProgress(busy: boolean): void {
+  if (busy) setStatus(PDF_PROGRESS);
+  else if (currentDoc !== undefined) showStatus(currentDoc);
+}
 
 const PDF_DISCONNECTED = 'docbridge 와 연결이 끊겨 PDF 로 저장할 수 없습니다. Claude 채팅에서 open_document 로 다시 여세요.';
 

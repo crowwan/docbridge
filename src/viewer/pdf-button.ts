@@ -14,6 +14,8 @@ export interface PdfButtonOptions {
   /** 서버에 PDF 저장을 부탁하고 저장한 경로를 받는다 */
   exportPdf: () => Promise<string>;
   report: (message: string, kind: ToastKind) => void;
+  /** 만들기 시작(true)·끝(false) — 상태 줄에 진행 문구를 둔다. 버튼 이름·글자는 바꾸지 않는다 */
+  progress: (busy: boolean) => void;
 }
 
 export const savedPdfMessage = (path: string) => `PDF 로 저장했습니다: ${path}`;
@@ -26,16 +28,21 @@ export function setupPdfButton(button: HTMLButtonElement, options: PdfButtonOpti
     button.setAttribute('aria-disabled', String(value));
   };
   setBusy(false);
+  const finish = (): void => {
+    setBusy(false);
+    options.progress(false);
+  };
   button.addEventListener('click', () => {
     if (busy) return;
     setBusy(true);
+    options.progress(true);
     options
       .exportPdf()
       .then(
         (path) => options.report(savedPdfMessage(path), 'success'),
         (error: unknown) => options.report(errorMessage(error), 'error'),
       )
-      .finally(() => setBusy(false));
+      .finally(finish);
   });
   return {
     setAvailable(available) {

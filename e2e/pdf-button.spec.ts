@@ -66,6 +66,9 @@ test.describe('SPEC-008 뷰어 PDF 버튼 (서버가 내주는 뷰어)', () => {
     await button.click();
     await expect(button).toHaveAttribute('aria-busy', 'true');
     await expect(button).toBeDisabled();
+    // 진행 문구는 상태 줄에(버튼 이름·글자는 그대로)
+    await expect(page.getByRole('status')).toHaveText('PDF 만드는 중…');
+    await expect(button).toHaveText('PDF');
     await page.screenshot({ path: `${SCREENS}/pdf-button-03-busy.png` });
     // 꺼진 동안 누른 것은 보내지 않는다(PDF 가 하나만 생긴다)
     await button.click({ force: true });
@@ -75,7 +78,25 @@ test.describe('SPEC-008 뷰어 PDF 버튼 (서버가 내주는 뷰어)', () => {
     await expect(page.getByRole('alert')).toHaveText(`PDF 로 저장했습니다: ${join(dir, '공문.pdf')}`);
     await expect(button).toHaveAttribute('aria-busy', 'false');
     await expect(button).toBeEnabled();
+    await expect(page.getByRole('status')).toHaveText('공문.hwpx — 1쪽');
     expect(await readFile(join(dir, '공문-2.pdf')).then(() => true, () => false)).toBe(false);
+  });
+
+  test('AC-7 키보드(Enter)로 누르면 만드는 동안에도 끝난 뒤에도 포커스가 버튼에 남는다(disabled 속성이면 포커스가 빠진다)', async ({ page }) => {
+    const button = pdfButton(page);
+    await expect(button).toBeEnabled();
+    let release: () => void = () => undefined;
+    const held = sessions.get().exclusive(() => new Promise<void>((resolve) => (release = resolve)));
+
+    await button.focus();
+    await page.keyboard.press('Enter');
+    await expect(button).toHaveAttribute('aria-busy', 'true');
+    await expect(button).toBeFocused();
+    release();
+    await held;
+
+    await expect(page.getByRole('alert')).toHaveText(`PDF 로 저장했습니다: ${join(dir, '공문.pdf')}`);
+    await expect(button).toBeFocused();
   });
 
   test('AC-7 저장하지 못하면 알림에 사람용 문구가 보인다(Claude 용 원래 문구가 아니다)', async ({ page }) => {
