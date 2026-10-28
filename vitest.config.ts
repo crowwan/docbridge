@@ -11,6 +11,8 @@ const HANG_LIMIT_MS = 20_000;
 export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts'],
+    // 설치판 검사는 npm run test:pack 으로 따로 돈다(vitest.pack.config.ts)
+    exclude: ['tests/pack/**'],
     environment: 'node',
     testTimeout: HANG_LIMIT_MS,
     hookTimeout: HANG_LIMIT_MS,

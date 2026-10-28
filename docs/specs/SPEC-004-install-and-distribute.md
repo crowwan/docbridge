@@ -26,9 +26,10 @@ updated: 2026-10-28
 
 | 배포물 | 대상 | 들어 있는 것 | 실행 |
 |---|---|---|---|
-| `docbridge-<버전>.mcpb` | Claude Desktop(맥·윈도우) | `manifest.json`, 서버 번들(의존성 포함 JS 한 파일), 뷰어(`viewer/`: HTML·JS·CSS·rhwp WASM), 아이콘, `LICENSE` | Claude Desktop 에 들어 있는 Node 로 `${__dirname}/server/index.js` |
+| `docbridge-<버전>.mcpb` | Claude Desktop(맥·윈도우) | `manifest.json`, 서버 번들(`server/index.js`, 의존성 포함 JS 한 파일), 뷰어(`viewer/`: HTML·JS·CSS·rhwp WASM), `LICENSE`, `THIRD_PARTY_NOTICES.txt`(번들에 든 패키지 라이선스 전문) | Claude Desktop 에 들어 있는 Node 로 `${__dirname}/server/index.js` |
 
-- 서버는 의존성(`@modelcontextprotocol/sdk`·`ws`·`zod`·`@rhwp/core`)을 한 파일로 묶어 `node_modules` 없이 돈다. rhwp WASM 은 번들 옆 파일로 둔다.
+- 서버는 의존성(`@modelcontextprotocol/sdk`·`ws`·`zod`·`@rhwp/core` JS)을 esbuild 로 ESM 한 파일로 묶어 `node_modules` 없이 돈다(target `node24`). 서버는 rhwp WASM 을 띄우지 않으므로(편집·저장 검증은 뷰어가 한다) WASM 은 뷰어 빌드 결과대로 `viewer/assets/` 에 있다.
+- 아이콘은 넣지 않는다(Desktop 기본 아이콘).
 - 네이티브 모듈이 없으므로 플랫폼별 파일을 따로 만들지 않는다.
 
 ### manifest.json
@@ -36,7 +37,8 @@ updated: 2026-10-28
 - `manifest_version` 은 mcpb 현재 버전(0.3), `server.type: "node"`, `entry_point: "server/index.js"`, `mcp_config: { command: "node", args: ["${__dirname}/server/index.js"] }`.
 - `name: docbridge`, `display_name: docbridge`, `version` 은 package.json 과 같다(빌드 때 채움, 손으로 두 군데 고치지 않는다).
 - `description`: "받은 한글(HWP/HWPX) 문서를 Claude 채팅에서 묻고 고칩니다. 문서는 브라우저에 띄워 보여 줍니다."
-- `tools`: MCP 도구 16개 이름과 한 줄 설명(설치 화면에 보인다). 도구 목록은 `src/server/mcp.ts` 에서 뽑아 만들고 손으로 적지 않는다.
+- `tools`: 등록된 MCP 도구 전부(지금 20개)의 이름과 한 줄 설명(설치 화면에 보인다, 도구 설명의 첫 문장). 도구 목록은 빌드 때 서버(`src/server/mcp.ts`)에 물어 만들고 손으로 적지 않는다.
+- `compatibility.runtimes.node: ">=24.0.0"`(Desktop 에 든 Node 가 24.22.0).
 - `compatibility.platforms: ["darwin", "win32"]`. 리눅스는 Claude Desktop 이 없어 넣지 않는다(레포 빌드로는 된다).
 - `user_config` 는 두지 않는다. 포트는 기본 7790~7799 자동 선택으로 충분하다.
 
@@ -69,9 +71,9 @@ updated: 2026-10-28
 
 ## 수용 기준
 
-- [ ] AC-1 `npm run pack` 이 `dist/docbridge-<버전>.mcpb` 를 만들고, `mcpb validate`(또는 manifest 스키마 검사)를 통과한다 (자동)
-- [ ] AC-2 서버 번들은 `node_modules` 없는 빈 폴더에 풀어도 `node server/index.js` 로 뜨고, MCP 클라이언트로 `open_document` → `read_blocks` → `save_document` 가 된다 (자동)
-- [ ] AC-3 manifest 의 `version` 이 package.json 과 같고, `tools` 가 실제 등록 도구 전부(지금 20개)와 같다 (자동)
+- [x] AC-1 `npm run pack` 이 `dist/docbridge-<버전>.mcpb` 를 만들고, `mcpb validate`(또는 manifest 스키마 검사)를 통과한다 (자동)
+- [x] AC-2 서버 번들은 `node_modules` 없는 빈 폴더에 풀어도 `node server/index.js` 로 뜨고, MCP 클라이언트로 `open_document` → `read_blocks` → `save_document` 가 된다 (자동)
+- [x] AC-3 manifest 의 `version` 이 package.json 과 같고, `tools` 가 실제 등록 도구 전부(지금 20개)와 같다 (자동)
 - [x] AC-4 브라우저 열기가 플랫폼별 명령(맥 `open`, 윈도우 `cmd /c start`, 리눅스 `xdg-open`)을 고른다 (자동)
 - [x] AC-5 경로 규칙(`~`, 절대 경로 판정, 기본 저장 이름)이 윈도우 경로에서도 맞다 (자동)
 - [ ] AC-6 태그를 올리면 CI 가 Release 에 `.mcpb` 를 붙인다 (수동 QA — 첫 릴리스에서 확인)
@@ -91,15 +93,17 @@ updated: 2026-10-28
 
 - mcpb: Node 는 맥·윈도우용 Claude 에 들어 있다(mcpb README). `npx @anthropic-ai/mcpb init` 으로 manifest 초안, `mcpb pack <폴더>` 로 묶는다. 의존성은 번들 안에 있어야 한다 → 서버를 esbuild 로 한 파일로 묶으면 `node_modules` 를 통째로 넣지 않아도 된다.
 - 서버는 `dist/server/index.js` 기준 `../viewer/` 를 연다(`src/server/index.ts`). 번들 폴더도 `server/`·`viewer/` 를 나란히 둬서 이 규칙을 지킨다.
-- `@rhwp/core` 는 서버에서도 쓴다(저장 검증 등). WASM 로딩 경로가 번들 후에도 맞는지 AC-2 로 확인한다.
+- `@rhwp/core` 는 서버 번들에 JS 만 들어가고(코어 모듈이 `HwpDocument` 를 가져온다) WASM 은 띄우지 않는다 — 저장 검증은 뷰어의 `export_hwpx` 가 한다. 번들 후에도 서버가 돌고 `viewer/` 의 WASM 을 내주는지 AC-2 로 확인한다.
+- 번들은 ESM 이라 CommonJS 의존성(`ws`)의 `require` 를 위해 맨 위에 `createRequire` 를 둔다. `ws` 의 선택 네이티브 의존성(`bufferutil`·`utf-8-validate`)은 넣지 않는다.
+- Desktop Node 기술 검증(2026-10-28, 이 Mac 의 Claude 4.29.0): 앱에 따로 든 `node` 실행 파일은 없고, Electron 44.9.3 의 Node 24.22.0 을 확장 실행에 쓴다(앱 코드: 설치된 Node 중 `compatibility.runtimes.node` 를 맞추는 것이 없으면 내장 Node 버전으로 판정). 윈도우판도 같은 Electron 이다.
 - 크기: 지금 `dist` 12MB(대부분 WASM 과 뷰어). `.mcpb` 는 zip 이라 더 작다.
 - 라이선스: 레포에 `LICENSE` 가 없다. rhwp 가 MIT 이므로 MIT 로 하고 `LICENSE` 를 넣는다(PRD 열린 질문 해소).
 - 공개 레포라 Actions 분 제한은 없다. Release 업로드는 기본 `GITHUB_TOKEN` 으로 된다.
 
 ## 열린 질문
 
-- Claude Desktop 에 든 Node 버전과 번들 target — 결정: 기술 검증 후
-- 아이콘 — 결정: 구현 중 (없으면 기본 아이콘)
+- ~~Claude Desktop 에 든 Node 버전과 번들 target~~ — 결정(#92): 내장 Node 24.22.0(Electron 44.9.3) → esbuild `--target=node24`, `compatibility.runtimes.node: ">=24.0.0"`. Desktop 도 Node 24 라 지금 코드(engines >=24)에서 바꿀 API 는 없다
+- ~~아이콘~~ — 결정(#92): 넣지 않는다(Desktop 기본 아이콘). 필요해지면 따로
 - Cowork 에서 확장이 그대로 보이는지 — 결정: v0.2 사용 후
 
 ## 변경 이력
@@ -110,3 +114,4 @@ updated: 2026-10-28
 | 2026-10-27 | 리뷰 반영: npm 배포는 이번 범위에서 뺌(.mcpb 만), AC 8개로 |
 | 2026-10-28 | 스펙 리뷰 승인(사용자), AC-3 도구 수를 "전부(지금 20개)"로, 이슈 분해 (#91) |
 | 2026-10-28 | AC-4·5 구현(#93): 윈도우 start 의 `&` 막기, 윈도우 경로 규칙(`~\`·`C:이름` 거부·`\\server\share`·폴더 판정·확장자·같은 파일) 구체화 |
+| 2026-10-28 | #92 .mcpb 패키징: Desktop Node 기술 검증(24.22.0) → target node24·runtimes.node, 아이콘 생략, 서버는 rhwp WASM 을 띄우지 않음(WASM 은 viewer/), THIRD_PARTY_NOTICES.txt, AC-1·2·3 |
