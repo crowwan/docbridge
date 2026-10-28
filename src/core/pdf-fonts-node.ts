@@ -1,23 +1,16 @@
-// Node(서버·테스트·스크립트)에서 PDF 글꼴 모으기 — PDF 내보내기 기술 검증(#107, ADR 005).
+// Node(서버·테스트·스크립트)에서 PDF 글꼴 모으기 — PDF 내보내기(SPEC-008, ADR 005).
 // 브라우저는 시스템 글꼴 파일을 읽지 못하지만 같은 컴퓨터의 서버는 읽을 수 있다.
 // 시스템 글꼴 폴더를 훑어 글꼴 이름·굵기만 읽고(파일 머리만 — 55MB .ttc 도 있다), 바이트는 쓸 때 읽는다.
-import { closeSync, openSync, readFileSync, readSync, readdirSync, statSync } from 'node:fs';
+// 모두 비동기(fs.promises): 서버는 MCP(stdio)·뷰어(HTTP·WebSocket)와 같은 프로세스라, 글꼴 1,000여 개를 읽는 동안 이벤트 루프를 막지 않는다(PR #112 리뷰).
+import { open, readdir, readFile, stat, type FileHandle } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { bytesReader, extractFace, faceOffsets, readFontFaces, type ByteReader, type FontEntry, type FontLibrary } from './pdf-fonts.ts';
 
-/** 플랫폼별 시스템 글꼴 폴더(사용자 폴더 포함) */
+/** 플랫폼별 시스템 글꼴 폴더(사용자 폴더 포함). 맥 내려받는 글꼴 폴더(AssetsV2)는 systemFontLibrary 가 훑을 때 더한다 */
 export function systemFontDirs(platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env, home = homedir()): string[] {
   if (platform === 'darwin') {
-    // 나눔명조 등 "내려받는 시스템 글꼴"은 AssetsV2 아래에 있다(브라우저는 이름으로 쓴다).
-    // FontServices …/Subsets 의 같은 이름 파일은 글리프가 몇 개뿐인 자리표시라 훑지 않는다
-    return [
-      '/System/Library/Fonts',
-      '/System/Library/Fonts/Supplemental',
-      '/Library/Fonts',
-      join(home, 'Library/Fonts'),
-      ...macAssetFontDirs(),
-    ];
+    return ['/System/Library/Fonts', '/System/Library/Fonts/Supplemental', '/Library/Fonts', join(home, 'Library/Fonts')];
   }
   if (platform === 'win32') {
     const windows = env['WINDIR'] ?? 'C:\\Windows';
@@ -38,23 +31,32 @@ export const GENERIC_FAMILIES: FontLibrary['generic'] = {
   fallback: ['Apple Symbols', 'Hiragino Sans', 'Arial Unicode MS', 'Segoe UI Symbol', 'Segoe UI', 'MS Gothic', 'DejaVu Sans', 'Noto Sans Symbols2', 'Noto Sans Symbols'],
 };
 
-const FONT_FILE = /\.(ttf|otf|ttc)$/i;
-const MAC_ASSETS = '/System/Library/AssetsV2';
+/**
+ * 읽어 둔 글꼴 바이트(떼어 낸 글꼴 하나씩)를 서버 수명 동안 이만큼까지만 둔다. 넘으면 가장 오래 안 쓴 것부터 버린다(LRU).
+ * 96MB: 실제 공고문(8쪽)이 쓴 글꼴 7개가 74.3MB(ADR 005) — 한 문서를 다시 내보낼 때는 다시 읽지 않고,
+ * 다른 문서로 넘어가도 Claude Desktop 서버 프로세스가 100MB 남짓 넘게 붙잡지 않는다. 버린 글꼴은 다음에 디스크에서 다시 읽는다(SSD 수십 ms)
+ */
+export const FONT_CACHE_BYTES = 96 * 1024 * 1024;
 
-function macAssetFontDirs(): string[] {
+/** 맥 "내려받는 시스템 글꼴"(나눔명조 등 — 브라우저는 이름으로 쓴다). Apple 이 공개하지 않은 경로라 macOS 판을 올리면 다시 본다(ADR 005) */
+const MAC_ASSETS = '/System/Library/AssetsV2';
+const FONT_FILE = /\.(ttf|otf|ttc)$/i;
+/** 머리 읽기를 동시에 이만큼(파일 1,000여 개 — 파일 핸들을 너무 많이 열지 않게) */
+const READ_CONCURRENCY = 16;
+
+async function macAssetFontDirs(): Promise<string[]> {
   try {
-    return readdirSync(MAC_ASSETS)
-      .filter((name) => name.startsWith('com_apple_MobileAsset_Font'))
-      .map((name) => join(MAC_ASSETS, name));
+    // FontServices …/Subsets 의 같은 이름 파일은 글리프가 몇 개뿐인 자리표시라 훑지 않는다
+    return (await readdir(MAC_ASSETS)).filter((name) => name.startsWith('com_apple_MobileAsset_Font')).map((name) => join(MAC_ASSETS, name));
   } catch {
     return [];
   }
 }
 
-function fontFiles(dir: string, depth = 0): string[] {
+async function fontFiles(dir: string, depth = 0): Promise<string[]> {
   let names: string[];
   try {
-    names = readdirSync(dir);
+    names = await readdir(dir);
   } catch {
     return [];
   }
@@ -62,71 +64,143 @@ function fontFiles(dir: string, depth = 0): string[] {
   for (const name of names) {
     const path = join(dir, name);
     if (FONT_FILE.test(name)) files.push(path);
-    else if (depth < 3) {
-      try {
-        if (statSync(path).isDirectory()) files.push(...fontFiles(path, depth + 1));
-      } catch {
-        // 읽을 수 없는 폴더는 건너뛴다
-      }
-    }
+    else if (depth < 3 && (await stat(path).catch(() => undefined))?.isDirectory() === true) files.push(...(await fontFiles(path, depth + 1)));
   }
   return files;
 }
 
-function fileReader(fd: number): ByteReader {
-  return (offset, length) => {
-    const buffer = new Uint8Array(length);
-    readSync(fd, buffer, 0, length, offset);
-    return buffer;
-  };
-}
-
-/** 글꼴 파일들의 머리를 읽어 글꼴 목록을 만든다. 읽지 못하는 파일은 건너뛴다 */
-export function fontEntries(paths: string[]): FontEntry[] {
-  const entries: FontEntry[] = [];
-  for (const path of paths) {
-    let fd: number | undefined;
-    try {
-      fd = openSync(path, 'r');
-      for (const face of readFontFaces(fileReader(fd))) {
-        // 맥의 "." 로 시작하는 숨은 시스템 글꼴(.Apple SD Gothic NeoI 등)은 한글 이름이 보통 글꼴과 같아 섞이지 않게 뺀다
-        if (face.postscriptName.startsWith('.')) continue;
-        entries.push({ ...face, id: `${path}#${face.index}` });
-      }
-    } catch {
-      // 깨졌거나 모르는 형식(.dfont 등)
-    } finally {
-      if (fd !== undefined) closeSync(fd);
-    }
+/** 파일 하나의 글꼴들(읽지 못하는 파일은 빈 목록) */
+async function fileEntries(path: string): Promise<FontEntry[]> {
+  let handle: FileHandle | undefined;
+  try {
+    handle = await open(path, 'r');
+    const file = handle;
+    const read: ByteReader = async (offset, length) => {
+      const buffer = new Uint8Array(length);
+      await file.read(buffer, 0, length, offset);
+      return buffer;
+    };
+    // 맥의 "." 로 시작하는 숨은 시스템 글꼴(.Apple SD Gothic NeoI 등)은 한글 이름이 보통 글꼴과 같아 섞이지 않게 뺀다
+    return (await readFontFaces(read)).filter((face) => !face.postscriptName.startsWith('.')).map((face) => ({ ...face, id: `${path}#${face.index}` }));
+  } catch {
+    // 깨졌거나 모르는 형식(.dfont 등)
+    return [];
+  } finally {
+    await handle?.close();
   }
-  return entries;
 }
 
-/** 글꼴 파일들 → FontLibrary. 바이트는 처음 쓸 때 읽어 둔다(모음은 그 글꼴만 떼어 낸다) */
-export function fontLibraryFromFiles(paths: string[], generic: FontLibrary['generic'] = GENERIC_FAMILIES): FontLibrary {
-  const faces = fontEntries(paths);
-  const loaded = new Map<string, Promise<Uint8Array>>();
+/** 글꼴 파일들의 머리를 읽어 글꼴 목록을 만든다(파일 차례 그대로). 읽지 못하는 파일은 건너뛴다 */
+export async function fontEntries(paths: string[]): Promise<FontEntry[]> {
+  const results: FontEntry[][] = new Array(paths.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < paths.length) {
+      const index = next;
+      next += 1;
+      results[index] = await fileEntries(paths[index] ?? '');
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(READ_CONCURRENCY, paths.length) }, worker));
+  return results.flat();
+}
+
+/** 글꼴 바이트 캐시: 바이트 합이 limit 를 넘으면 가장 오래 안 쓴 것부터 버린다 */
+export class FontBytesCache {
+  private readonly entries = new Map<string, Uint8Array>();
+  private total = 0;
+  private readonly limit: number;
+
+  constructor(limit = FONT_CACHE_BYTES) {
+    this.limit = limit;
+  }
+
+  get(id: string): Uint8Array | undefined {
+    const bytes = this.entries.get(id);
+    if (bytes !== undefined) {
+      // 맨 뒤(가장 최근)로
+      this.entries.delete(id);
+      this.entries.set(id, bytes);
+    }
+    return bytes;
+  }
+
+  set(id: string, bytes: Uint8Array): void {
+    this.delete(id);
+    // 한도보다 큰 글꼴 하나는 두지 않는다(쓸 때마다 읽는다)
+    if (bytes.length > this.limit) return;
+    for (const [oldest] of this.entries) {
+      if (this.total + bytes.length <= this.limit) break;
+      this.delete(oldest);
+    }
+    this.entries.set(id, bytes);
+    this.total += bytes.length;
+  }
+
+  private delete(id: string): void {
+    const bytes = this.entries.get(id);
+    if (bytes === undefined) return;
+    this.entries.delete(id);
+    this.total -= bytes.length;
+  }
+
+  /** 지금 들고 있는 바이트 합 */
+  get bytes(): number {
+    return this.total;
+  }
+
+  get ids(): string[] {
+    return [...this.entries.keys()];
+  }
+}
+
+/** 글꼴 하나를 따로 선 바이트로 읽는다(모음은 그 글꼴만 떼어 낸다 — 55MB 모음 전체를 붙잡지 않는다) */
+async function loadFace(id: string): Promise<Uint8Array> {
+  const hash = id.lastIndexOf('#');
+  const index = Number(id.slice(hash + 1));
+  const file = new Uint8Array(await readFile(id.slice(0, hash)));
+  const read = bytesReader(file);
+  return (await faceOffsets(read)).length > 1 || index > 0 ? extractFace(read, index) : file;
+}
+
+/** 글꼴 파일들 → FontLibrary. 바이트는 처음 쓸 때 읽어 cache 에 둔다(같은 글꼴을 동시에 읽으면 한 번만) */
+export async function fontLibraryFromFiles(
+  paths: string[],
+  generic: FontLibrary['generic'] = GENERIC_FAMILIES,
+  cache = new FontBytesCache(),
+): Promise<FontLibrary> {
+  const faces = await fontEntries(paths);
+  const reading = new Map<string, Promise<Uint8Array>>();
   return {
     faces,
     generic,
     load(id) {
-      let bytes = loaded.get(id);
-      if (bytes === undefined) {
-        const hash = id.lastIndexOf('#');
-        const path = id.slice(0, hash);
-        const index = Number(id.slice(hash + 1));
-        const file = new Uint8Array(readFileSync(path));
-        const read = bytesReader(file);
-        bytes = Promise.resolve(faceOffsets(read).length > 1 || index > 0 ? extractFace(read, index) : file);
-        loaded.set(id, bytes);
+      const cached = cache.get(id);
+      if (cached !== undefined) return Promise.resolve(cached);
+      let pending = reading.get(id);
+      if (pending === undefined) {
+        pending = loadFace(id).then(
+          (bytes) => {
+            reading.delete(id);
+            cache.set(id, bytes);
+            return bytes;
+          },
+          (error: unknown) => {
+            reading.delete(id);
+            throw error;
+          },
+        );
+        reading.set(id, pending);
       }
-      return bytes;
+      return pending;
     },
   };
 }
 
 /** 이 컴퓨터의 시스템 글꼴 전부 */
-export function systemFontLibrary(): FontLibrary {
+export async function systemFontLibrary(cache?: FontBytesCache): Promise<FontLibrary> {
+  const dirs = [...systemFontDirs(), ...(process.platform === 'darwin' ? await macAssetFontDirs() : [])];
   // 폴더가 겹치므로(/System/Library/Fonts 아래 Supplemental) 같은 파일은 한 번만
-  return fontLibraryFromFiles([...new Set(systemFontDirs().flatMap((dir) => fontFiles(dir)))]);
+  const files = [...new Set((await Promise.all(dirs.map((dir) => fontFiles(dir)))).flat())];
+  return fontLibraryFromFiles(files, GENERIC_FAMILIES, cache);
 }

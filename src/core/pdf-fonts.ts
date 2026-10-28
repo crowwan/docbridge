@@ -4,11 +4,14 @@
 // 이름(name: 모든 언어의 글꼴 이름)·굵기(OS/2)·넣어도 되는지(OS/2 fsType)·글자 있는지(cmap) 읽기,
 // 모음에서 글꼴 하나 떼어 내기, 그리고 SVG font-family 차례 + 굵기 + 글자 → 글꼴(브라우저 CSS 글꼴 고르기 흉내).
 
-/** 파일의 [offset, offset+length) 를 돌려준다. 파일을 다 읽지 않고 머리·표만 읽게(55MB .ttc 도 있다) */
-export type ByteReader = (offset: number, length: number) => Uint8Array;
+/**
+ * 파일의 [offset, offset+length) 를 돌려준다. 파일을 다 읽지 않고 머리·표만 읽게(55MB .ttc 도 있다).
+ * 비동기: 서버는 MCP·뷰어 연결과 같은 프로세스라 파일 읽기로 이벤트 루프를 막지 않는다(PR #112 리뷰)
+ */
+export type ByteReader = (offset: number, length: number) => Promise<Uint8Array>;
 
 export function bytesReader(bytes: Uint8Array): ByteReader {
-  return (offset, length) => bytes.subarray(offset, offset + length);
+  return async (offset, length) => bytes.subarray(offset, offset + length);
 }
 
 interface TableRecord {
@@ -41,9 +44,9 @@ function tag(bytes: Uint8Array, at: number): string {
 }
 
 /** 글꼴 하나(sfnt 머리 위치)의 표 목록 */
-function tableRecords(read: ByteReader, faceOffset: number): TableRecord[] {
-  const numTables = view(read(faceOffset + 4, 2)).getUint16(0);
-  const directory = read(faceOffset + 12, numTables * 16);
+async function tableRecords(read: ByteReader, faceOffset: number): Promise<TableRecord[]> {
+  const numTables = view(await read(faceOffset + 4, 2)).getUint16(0);
+  const directory = await read(faceOffset + 12, numTables * 16);
   const data = view(directory);
   const records: TableRecord[] = [];
   for (let i = 0; i < numTables; i += 1) {
@@ -53,11 +56,11 @@ function tableRecords(read: ByteReader, faceOffset: number): TableRecord[] {
 }
 
 /** 파일 안 글꼴들의 sfnt 머리 위치(.ttc 면 여럿) */
-export function faceOffsets(read: ByteReader): number[] {
-  const header = read(0, 12);
+export async function faceOffsets(read: ByteReader): Promise<number[]> {
+  const header = await read(0, 12);
   if (tag(header, 0) !== 'ttcf') return [0];
   const count = view(header).getUint32(8);
-  const offsets = view(read(12, count * 4));
+  const offsets = view(await read(12, count * 4));
   return Array.from({ length: count }, (_, i) => offsets.getUint32(i * 4));
 }
 
@@ -72,8 +75,8 @@ function latin1(bytes: Uint8Array): string {
 }
 
 /** name 표 → nameID 별 이름들(윈도우 UTF-16 모든 언어 + 맥 로마자) */
-function readNames(read: ByteReader, table: TableRecord): Map<number, string[]> {
-  const bytes = read(table.offset, table.length);
+async function readNames(read: ByteReader, table: TableRecord): Promise<Map<number, string[]>> {
+  const bytes = await read(table.offset, table.length);
   const data = view(bytes);
   const count = data.getUint16(2);
   const stringOffset = data.getUint16(4);
@@ -98,28 +101,29 @@ function readNames(read: ByteReader, table: TableRecord): Map<number, string[]> 
 }
 
 /** 파일 안 글꼴마다 이름·굵기·넣어도 되는지 */
-export function readFontFaces(read: ByteReader): FontFaceInfo[] {
-  return faceOffsets(read).map((faceOffset, index) => {
-    const tables = tableRecords(read, faceOffset);
+export async function readFontFaces(read: ByteReader): Promise<FontFaceInfo[]> {
+  const faces: FontFaceInfo[] = [];
+  for (const [index, faceOffset] of (await faceOffsets(read)).entries()) {
+    const tables = await tableRecords(read, faceOffset);
     const name = tables.find((table) => table.tag === 'name');
     const os2 = tables.find((table) => table.tag === 'OS/2');
     const head = tables.find((table) => table.tag === 'head');
-    const names = name === undefined ? new Map<number, string[]>() : readNames(read, name);
+    const names = name === undefined ? new Map<number, string[]>() : await readNames(read, name);
     const families = [...new Set([...(names.get(16) ?? []), ...(names.get(1) ?? [])])];
     let weight = 400;
     let fsType = 0;
     let italic = false;
     if (os2 !== undefined) {
-      const data = view(read(os2.offset, Math.min(os2.length, 64)));
+      const data = view(await read(os2.offset, Math.min(os2.length, 64)));
       weight = data.getUint16(4);
       fsType = data.getUint16(8);
       italic = (data.getUint16(62) & 1) === 1;
     } else if (head !== undefined) {
-      const macStyle = view(read(head.offset + 44, 2)).getUint16(0);
+      const macStyle = view(await read(head.offset + 44, 2)).getUint16(0);
       weight = (macStyle & 1) === 1 ? 700 : 400;
       italic = (macStyle & 2) === 2;
     }
-    return {
+    faces.push({
       index,
       families,
       postscriptName: names.get(6)?.[0] ?? '',
@@ -128,21 +132,22 @@ export function readFontFaces(read: ByteReader): FontFaceInfo[] {
       // 비트 1(값 2)만 켜지고 2·3(4·8, 미리 보기·편집 허용)이 꺼지면 넣으면 안 된다(OpenType OS/2 fsType)
       embeddable: (fsType & 0x000e) !== 0x0002,
       fsType,
-    };
-  });
+    });
+  }
+  return faces;
 }
 
 /** 모음(.ttc) 안 글꼴 하나를 따로 선 .ttf 바이트로. pdf-lib(fontkit)는 모음을 바로 넣지 못한다 */
-export function extractFace(read: ByteReader, index: number): Uint8Array {
-  const faceOffset = faceOffsets(read)[index];
+export async function extractFace(read: ByteReader, index: number): Promise<Uint8Array> {
+  const faceOffset = (await faceOffsets(read))[index];
   if (faceOffset === undefined) throw new Error(`글꼴 모음에 ${index}번 글꼴이 없습니다`);
-  const tables = tableRecords(read, faceOffset);
+  const tables = await tableRecords(read, faceOffset);
   const headerLength = 12 + tables.length * 16;
   const padded = (length: number): number => (length + 3) & ~3;
   const total = tables.reduce((sum, table) => sum + padded(table.length), headerLength);
   const out = new Uint8Array(total);
   const data = view(out);
-  out.set(read(faceOffset, 4), 0);
+  out.set(await read(faceOffset, 4), 0);
   data.setUint16(4, tables.length);
   let power = 1;
   let log = 0;
@@ -153,26 +158,27 @@ export function extractFace(read: ByteReader, index: number): Uint8Array {
   data.setUint16(6, power * 16);
   data.setUint16(8, log);
   data.setUint16(10, tables.length * 16 - power * 16);
-  const sourceDirectory = read(faceOffset + 12, tables.length * 16);
+  const sourceDirectory = await read(faceOffset + 12, tables.length * 16);
   let offset = headerLength;
-  tables.forEach((table, i) => {
+  for (const [i, table] of tables.entries()) {
     out.set(sourceDirectory.subarray(i * 16, i * 16 + 8), 12 + i * 16);
     data.setUint32(12 + i * 16 + 8, offset);
     data.setUint32(12 + i * 16 + 12, table.length);
-    out.set(read(table.offset, table.length), offset);
+    out.set(await read(table.offset, table.length), offset);
     offset += padded(table.length);
-  });
+  }
   return out;
 }
 
 /** 글자(코드 포인트) → 글꼴에 글리프가 있는지. cmap 형식 4(BMP)·12(전체)를 읽는다 */
 export type Coverage = (codePoint: number) => boolean;
 
-export function readCoverage(fontBytes: Uint8Array): Coverage {
+export async function readCoverage(fontBytes: Uint8Array): Promise<Coverage> {
   const read = bytesReader(fontBytes);
-  const cmap = tableRecords(read, 0).find((table) => table.tag === 'cmap');
+  const cmap = (await tableRecords(read, 0)).find((table) => table.tag === 'cmap');
   if (cmap === undefined) return () => false;
-  const bytes = read(cmap.offset, cmap.length);
+  // cmap 표만 따로 떠 둔다 — 글꼴 바이트 전체(수 MB)를 붙잡지 않게
+  const bytes = (await read(cmap.offset, cmap.length)).slice();
   const data = view(bytes);
   const count = data.getUint16(2);
   let format4: number | undefined;

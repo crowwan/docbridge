@@ -23,11 +23,11 @@ const CFF = fontPath('NotoSansKR-cff-test.otf');
 const FIXTURES = ['notice.hwpx', 'notice.hwp', 'application.hwpx', 'outline-demo.hwpx', 'report.hwpx'];
 
 /** 시험 글꼴 하나만 있는 글꼴 목록(일반 이름도 모두 그 글꼴) */
-function testLibrary(): FontLibrary {
+function testLibrary(): Promise<FontLibrary> {
   return fontLibraryFromFiles([REGULAR], { serif: ['Noto Sans KR'], 'sans-serif': ['Noto Sans KR'], fallback: [] });
 }
 
-function cffLibrary(): FontLibrary {
+function cffLibrary(): Promise<FontLibrary> {
   return fontLibraryFromFiles([CFF], { serif: ['Noto Sans KR'], 'sans-serif': ['Noto Sans KR'], fallback: [] });
 }
 
@@ -126,29 +126,29 @@ describe('SPEC-008 쪽 SVG 읽기 (기술 검증)', () => {
 });
 
 describe('SPEC-008 PDF 글꼴 고르기 (기술 검증)', () => {
-  it('글꼴 파일에서 이름·굵기·넣어도 되는지·글자 있는지를 읽는다', () => {
+  it('글꼴 파일에서 이름·굵기·넣어도 되는지·글자 있는지를 읽는다', async () => {
     const bytes = new Uint8Array(readFileSync(REGULAR));
-    const [face] = readFontFaces(bytesReader(bytes));
+    const [face] = await readFontFaces(bytesReader(bytes));
 
     expect(face?.families).toContain('Noto Sans KR');
     expect(face?.weight).toBe(400);
     expect(face?.embeddable).toBe(true);
-    const has = readCoverage(bytes);
+    const has = await readCoverage(bytes);
     expect(has('가'.codePointAt(0) ?? 0)).toBe(true);
     expect(has('A'.codePointAt(0) ?? 0)).toBe(true);
     expect(has('똠'.codePointAt(0) ?? 0)).toBe(false);
   });
 
-  it('글꼴 모음(.ttc)에서 글꼴 하나를 떼어 내면 따로 선 글꼴로 읽힌다', () => {
+  it('글꼴 모음(.ttc)에서 글꼴 하나를 떼어 내면 따로 선 글꼴로 읽힌다', async () => {
     const regular = new Uint8Array(readFileSync(REGULAR));
     const bold = new Uint8Array(readFileSync(BOLD_ASCII));
     const collection = bytesReader(makeCollection([regular, bold]));
 
-    expect(readFontFaces(collection).map((face) => face.weight)).toEqual([400, 700]);
-    const extracted = extractFace(collection, 1);
-    expect(readFontFaces(bytesReader(extracted)).map((face) => face.weight)).toEqual([700]);
-    expect(readCoverage(extracted)('A'.codePointAt(0) ?? 0)).toBe(true);
-    expect(readCoverage(extracted)('가'.codePointAt(0) ?? 0)).toBe(false);
+    expect((await readFontFaces(collection)).map((face) => face.weight)).toEqual([400, 700]);
+    const extracted = await extractFace(collection, 1);
+    expect((await readFontFaces(bytesReader(extracted))).map((face) => face.weight)).toEqual([700]);
+    expect((await readCoverage(extracted))('A'.codePointAt(0) ?? 0)).toBe(true);
+    expect((await readCoverage(extracted))('가'.codePointAt(0) ?? 0)).toBe(false);
   });
 
   it('차례 앞 글꼴에 그 글자가 없으면 다음 글꼴에서 찾는다(브라우저 글자별 대체 글꼴처럼)', async () => {
@@ -197,7 +197,7 @@ describe('SPEC-008 PDF 글꼴 고르기 (기술 검증)', () => {
 describe('SPEC-008 쪽 SVG → PDF (기술 검증)', () => {
   it.each(FIXTURES)('%s: 쪽 수가 문서와 같고 쪽 크기는 문서 쪽 설정(A4 210×297mm) 그대로다', async (name) => {
     const doc = openFixture(name);
-    const { bytes, stats } = await svgPagesToPdf(pageSources(doc), testLibrary());
+    const { bytes, stats } = await svgPagesToPdf(pageSources(doc), await testLibrary());
     const pdf = await inspectPdf(bytes);
 
     expect(stats.pages).toBe(doc.pageCount());
@@ -210,7 +210,7 @@ describe('SPEC-008 쪽 SVG → PDF (기술 검증)', () => {
 
   it.each(FIXTURES)('%s: PDF 에서 뽑은 글자에 문서 본문 글자 묶음이 차례대로 모두 들어 있다(선택·검색 가능)', async (name) => {
     const doc = openFixture(name);
-    const { bytes, stats } = await svgPagesToPdf(pageSources(doc), testLibrary());
+    const { bytes, stats } = await svgPagesToPdf(pageSources(doc), await testLibrary());
     const text = compact((await inspectPdf(bytes)).pages.map((page) => page.text).join(''));
 
     expect(stats.missingGlyphs).toBe(0);
@@ -229,7 +229,7 @@ describe('SPEC-008 쪽 SVG → PDF (기술 검증)', () => {
     const sources = pageSources(doc);
     expect(sources.map((source) => source.svg).join('')).toContain('<image');
 
-    const { bytes, warnings } = await svgPagesToPdf(sources, testLibrary());
+    const { bytes, warnings } = await svgPagesToPdf(sources, await testLibrary());
     expect(warnings).toEqual([]);
     expect(Buffer.from(bytes).toString('latin1')).toMatch(/\/Subtype\s*\/Image/);
   });
@@ -240,7 +240,7 @@ describe('SPEC-008 쪽 SVG → PDF (기술 검증)', () => {
       '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100" viewBox="0 0 200 100">' +
       '<circle cx="10" cy="10" r="2" fill="#000000"/><text x="8" y="14" font-size="16" fill="#000000" fill-opacity="0">*</text>' +
       '<text x="20" y="14" font-family="&apos;Noto Sans KR&apos;,sans-serif" font-size="16" fill="#000000">가</text></svg>';
-    const { bytes } = await svgPagesToPdf([{ svg }], testLibrary());
+    const { bytes } = await svgPagesToPdf([{ svg }], await testLibrary());
 
     expect(compact((await inspectPdf(bytes)).pages[0]?.text ?? '')).toBe('*가');
   });
@@ -249,7 +249,7 @@ describe('SPEC-008 쪽 SVG → PDF (기술 검증)', () => {
     const svg = (length: string) =>
       `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"><text x="10" y="50" font-size="20" fill="#000000"${length}>가</text></svg>`;
     const widthOf = async (length: string) => {
-      const { bytes } = await svgPagesToPdf([{ svg: svg(length) }], testLibrary());
+      const { bytes } = await svgPagesToPdf([{ svg: svg(length) }], await testLibrary());
       const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
       const doc = await getDocument({ data: bytes, verbosity: 0 }).promise;
       const item = (await (await doc.getPage(1)).getTextContent()).items[0];
@@ -268,14 +268,24 @@ describe('SPEC-008 쪽 SVG → PDF (기술 검증)', () => {
       '<pattern id="p" width="4" height="4"><rect width="2" height="2" fill="#000"/></pattern></defs>' +
       '<rect x="0" y="0" width="50" height="50" fill="url(#g)"/><rect x="60" y="0" width="50" height="50" fill="url(#p)"/>' +
       '<g filter="url(#shadow)"><rect x="120" y="0" width="10" height="10" fill="#000"/></g></svg>';
-    const { warnings } = await svgPagesToPdf([{ svg }], testLibrary());
+    const { warnings } = await svgPagesToPdf([{ svg }], await testLibrary());
 
     expect(warnings).toEqual(['그러데이션(첫 색 단색으로) 1곳', 'pattern 채우기(그리지 않음) 1곳', '그림자 등 필터(그리지 않음) 1곳']);
   });
 
+  it('화살표 끝(marker)과 PNG·JPEG 가 아닌 그림은 그리지 않고 warnings 로 알린다', async () => {
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100">' +
+      '<line x1="0" y1="10" x2="100" y2="10" stroke="#000000" marker-end="url(#arrow)"/>' +
+      '<image x="0" y="20" width="10" height="10" preserveAspectRatio="none" href="data:image/bmp;base64,Qk0="/></svg>';
+    const { warnings } = await svgPagesToPdf([{ svg }], await testLibrary());
+
+    expect(warnings).toEqual(['선 끝 모양(화살표 등, 그리지 않음) 1곳', '그림(image/bmp, 그리지 않음) 1곳']);
+  });
+
   it('글꼴이 없는 글자는 빠지고 missingGlyphs 로 센다', async () => {
     const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"><text x="10" y="50" font-size="20">똠</text></svg>';
-    const { stats } = await svgPagesToPdf([{ svg }], testLibrary());
+    const { stats } = await svgPagesToPdf([{ svg }], await testLibrary());
 
     expect(stats.missingGlyphs).toBe(1);
   });
@@ -283,7 +293,7 @@ describe('SPEC-008 쪽 SVG → PDF (기술 검증)', () => {
   it('보이는 글자는 쓴 글리프만 윤곽(Form)으로 넣고, PDF 글꼴은 보이지 않는 글자 층 하나뿐이다', async () => {
     const doc = openFixture('notice.hwpx');
     const sources = pageSources(doc);
-    const { bytes, stats } = await svgPagesToPdf(sources, testLibrary());
+    const { bytes, stats } = await svgPagesToPdf(sources, await testLibrary());
     const pdf = await inspectPdf(bytes);
     const svgChars = new Set([...sources.map((source) => source.svg).join('').matchAll(/>([^<\s])<\/text>/g)].map((match) => match[1]));
 
@@ -300,7 +310,7 @@ describe('SPEC-008 쪽 SVG → PDF (기술 검증)', () => {
 
   it('CFF 글꼴(맥 Apple SD Gothic Neo 같은)도 같은 윤곽 방식으로 그리고 글자가 뽑힌다 — pdf-lib CFF 부분 집합은 미리보기가 못 읽는다', async () => {
     const doc = openFixture('notice.hwpx');
-    const { bytes, stats } = await svgPagesToPdf(pageSources(doc), cffLibrary());
+    const { bytes, stats } = await svgPagesToPdf(pageSources(doc), await cffLibrary());
     const text = compact((await inspectPdf(bytes)).pages.map((page) => page.text).join(''));
 
     expect(stats.missingGlyphs).toBe(0);
@@ -314,7 +324,7 @@ describe('SPEC-008 쪽 SVG → PDF (기술 검증)', () => {
       '<text x="10" y="50" font-family="&apos;Noto Sans KR&apos;" font-size="20" fill="#000000">가</text>' +
       '<text x="60" y="50" font-family="&apos;Noto Sans KR&apos;" font-size="20" fill="#000000" stroke="#ff0000" stroke-width="1">가</text>' +
       '<text x="110" y="50" font-family="&apos;Noto Sans KR&apos;" font-size="20" fill="#000000">가</text></svg>';
-    const { stats } = await svgPagesToPdf([{ svg }], cffLibrary());
+    const { stats } = await svgPagesToPdf([{ svg }], await cffLibrary());
 
     expect(stats.glyphForms).toBe(2);
   });
@@ -323,7 +333,7 @@ describe('SPEC-008 쪽 SVG → PDF (기술 검증)', () => {
     const svg =
       '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100">' +
       '<text x="10" y="50" font-family="&apos;Noto Sans KR&apos;" font-size="20" fill="#000000" stroke="#000000" stroke-width="0.4">A</text></svg>';
-    const library = fontLibraryFromFiles([REGULAR, BOLD_ASCII], { serif: [], 'sans-serif': ['Noto Sans KR'], fallback: [] });
+    const library = await fontLibraryFromFiles([REGULAR, BOLD_ASCII], { serif: [], 'sans-serif': ['Noto Sans KR'], fallback: [] });
     const { stats } = await svgPagesToPdf([{ svg }], library);
 
     expect(stats.fonts).toEqual([`${BOLD_ASCII}#0`]);
@@ -332,14 +342,14 @@ describe('SPEC-008 쪽 SVG → PDF (기술 검증)', () => {
 
   it('글자 층 글꼴은 255자마다 하나 더 만든다(한 바이트 코드)', async () => {
     // 시험 글꼴에 든 글자 전부(ASCII + 한글 약 320자)
-    const has = readCoverage(new Uint8Array(readFileSync(CFF)));
+    const has = await readCoverage(new Uint8Array(readFileSync(CFF)));
     const covered: string[] = [];
     for (let code = 0x21; code <= 0xd7a3; code += 1) if (has(code) && code !== 0x3c && code !== 0x26) covered.push(String.fromCodePoint(code));
     expect(covered.length).toBeGreaterThan(255);
     // 15자씩 줄을 바꿔 쪽 안에 둔다
     const texts = covered.map((char, i) => `<text x="${10 + (i % 15) * 25}" y="${30 + Math.floor(i / 15) * 30}" font-size="20">${char}</text>`);
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="${60 + Math.ceil(covered.length / 15) * 30}">${texts.join('')}</svg>`;
-    const { bytes } = await svgPagesToPdf([{ svg }], cffLibrary());
+    const { bytes } = await svgPagesToPdf([{ svg }], await cffLibrary());
     const pdf = await inspectPdf(bytes);
 
     expect(pdf.type3Fonts).toHaveLength(Math.ceil(covered.length / 255));
@@ -355,11 +365,13 @@ describe('SPEC-008 쪽 SVG → PDF (기술 검증)', () => {
     ]);
     // 글자 배치: "가나 다"(나 와 다 사이에만 빈칸)
     const textLayout = JSON.stringify({ runs: [{ text: '가나 다', x: 10, y: 35, h: 20, charX: [0, 30, 50, 60, 80] }] });
-    const { bytes } = await svgPagesToPdf([{ svg, textLayout }], testLibrary());
+    const { bytes } = await svgPagesToPdf([{ svg, textLayout }], await testLibrary());
     const content = (await pageContents(bytes))[0] ?? '';
 
     // 글자마다 자리 폭에 맞춘 가로 배율: 가 30px·나 20px·빈칸 10px·다 20px, 글자 크기 20
     expect(content.match(/[\d.]+ Tz/g)).toEqual(['150 Tz', '100 Tz', '50 Tz', '100 Tz']);
+    // 글자 자리: x = run.x + charX, 기준선 = run.y + h × LAYER_BASELINE(0.85) = 35 + 17 = 52 (PR #112 리뷰)
+    expect(content.match(/1 0 0 -1 [\d.]+ [\d.]+ Tm/g)).toEqual(['1 0 0 -1 10 52 Tm', '1 0 0 -1 40 52 Tm', '1 0 0 -1 60 52 Tm', '1 0 0 -1 70 52 Tm']);
     expect((await inspectPdf(bytes)).pages[0]?.text).toBe('가나 다');
   });
 
@@ -368,14 +380,14 @@ describe('SPEC-008 쪽 SVG → PDF (기술 검증)', () => {
       ['가', 10],
       ['나', 40],
     ]);
-    const { bytes } = await svgPagesToPdf([{ svg }], testLibrary());
+    const { bytes } = await svgPagesToPdf([{ svg }], await testLibrary());
 
     expect(compact((await inspectPdf(bytes)).pages[0]?.text ?? '')).toBe('가나');
   });
 
   it('fixture 의 쪽 글자 배치로 만든 PDF 에서 뽑은 글자는 본문 빈칸 그대로다(빈칸 하나로 모아 비교)', async () => {
     const doc = openFixture('notice.hwpx');
-    const { bytes } = await svgPagesToPdf(pageSources(doc), testLibrary());
+    const { bytes } = await svgPagesToPdf(pageSources(doc), await testLibrary());
     const text = (await inspectPdf(bytes)).pages.map((page) => page.text).join(' ').replace(/\s+/g, ' ');
 
     expect(text).toContain('제목 2026년 하반기 주민 안전교육 일정 안내');
