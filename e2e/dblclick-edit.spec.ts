@@ -154,6 +154,21 @@ test.describe('SPEC-006 더블클릭으로 글자 고치기 (서버가 내주는
     expect(sessions.editCount).toBe(1);
   });
 
+  test('Safari 처럼 조합을 확정하는 Enter 가 isComposing=false·keyCode 229 로 와도 적용하지 않는다(#86)', async ({ page }) => {
+    await sessions.open(fixturePath('notice.hwpx'));
+
+    await doubleClick(page, { id: 'b11' });
+    await editBox(page).fill(B11_AFTER);
+    await editBox(page).dispatchEvent('keydown', { key: 'Enter', keyCode: 229, isComposing: false, bubbles: true });
+    await expect(editBox(page)).toBeVisible();
+    await expect(editBox(page)).toHaveValue(B11_AFTER);
+    expect(sessions.editCount).toBe(0);
+
+    await page.keyboard.press('Enter');
+    await expect.poll(() => blockText('b11')).toBe(B11_AFTER);
+    expect(sessions.editCount).toBe(1);
+  });
+
   test('AC-2 Esc 면 취소하고, 같은 글자로 Enter 해도 편집이 생기지 않는다', async ({ page }) => {
     await sessions.open(fixturePath('notice.hwpx'));
 

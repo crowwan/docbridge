@@ -93,6 +93,30 @@ async function firstMatch(query: string): Promise<TextTarget> {
   return target;
 }
 
+/**
+ * note 글자가 화면에서 몇 줄로 그려졌는지와, 줄이 바뀐 자리(새 줄 첫 글자 바로 앞 글자)들.
+ * 글자마다 Range 사각형의 top 으로 줄을 가른다
+ */
+async function noteLines(page: Page): Promise<{ lines: number; breaksBefore: string[] }> {
+  return page.getByRole('note').evaluate((note) => {
+    const text = note.firstChild;
+    if (text === null || text.nodeType !== Node.TEXT_NODE) throw new Error('note 에 글자가 없다');
+    const content = text.textContent ?? '';
+    const range = document.createRange();
+    const tops: number[] = [];
+    for (let i = 0; i < content.length; i += 1) {
+      range.setStart(text, i);
+      range.setEnd(text, i + 1);
+      tops.push(Math.round(range.getBoundingClientRect().top));
+    }
+    const breaksBefore: string[] = [];
+    for (let i = 1; i < content.length; i += 1) {
+      if ((tops[i] ?? 0) > (tops[i - 1] ?? 0)) breaksBefore.push(content[i - 1] ?? '');
+    }
+    return { lines: new Set(tops).size, breaksBefore };
+  });
+}
+
 test.describe('SPEC-001 근거 하이라이트 (서버가 내주는 뷰어)', () => {
   test('find_text 로 찾은 문단 일부(날짜)를 highlight 하면 그 글자만 덮는다', async ({ page }) => {
     await sessions.open(fixturePath('notice.hwpx'));
@@ -179,6 +203,40 @@ test.describe('SPEC-001 근거 하이라이트 (서버가 내주는 뷰어)', ()
     // 쪽 밖이라 폭이 쪼그라들지 않고(최소 폭 160px 이상) 화면 안에 들어온다
     expect(noteBox.width).toBeGreaterThanOrEqual(160);
     expect(noteBox.x + noteBox.width).toBeLessThanOrEqual(page.viewportSize()?.width ?? 0);
+  });
+
+  test('쪽 바깥 여백에 둔 짧은 note "신청기간" 은 한 줄로 보인다 — 한글 단어 중간에서 줄을 바꾸지 않는다(#86)', async ({ page }) => {
+    await page.setViewportSize({ width: 1400, height: 1200 });
+    await sessions.open(fixturePath('notice.hwpx'));
+
+    await highlight(sessions.get(), [{ id: 'b7' }], '신청기간');
+
+    await expect(page.getByRole('note')).toHaveAttribute('data-side', 'margin');
+    expect(await noteLines(page)).toEqual({ lines: 1, breaksBefore: [] });
+  });
+
+  test('쪽 바깥 여백에 둔 긴 note 는 단어 사이(빈칸 뒤)에서만 줄을 바꾼다(#86)', async ({ page }) => {
+    await page.setViewportSize({ width: 1400, height: 1200 });
+    await sessions.open(fixturePath('notice.hwpx'));
+
+    await highlight(sessions.get(), [{ id: 'b7' }], LONG_NOTE);
+
+    await expect(page.getByRole('note')).toHaveAttribute('data-side', 'margin');
+    const { lines, breaksBefore } = await noteLines(page);
+    expect(lines).toBeGreaterThan(1);
+    expect(breaksBefore.every((char) => char === ' ')).toBe(true);
+  });
+
+  test('빈칸 없는 아주 긴 note 도 note 폭을 넘치지 않고 감긴다(#86)', async ({ page }) => {
+    await page.setViewportSize({ width: 1400, height: 1200 });
+    await sessions.open(fixturePath('notice.hwpx'));
+
+    await highlight(sessions.get(), [{ id: 'b7' }], '주민안전교육참석인원회신요청'.repeat(4));
+
+    const note = page.getByRole('note');
+    await expect(note).toHaveAttribute('data-side', 'margin');
+    expect((await noteLines(page)).lines).toBeGreaterThan(1);
+    expect(await note.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
   });
 
   test('앞 줄에 글자가 있고 바깥 여백도 좁으면 note 를 하이라이트 마지막 사각형 아래에 둔다(#51)', async ({ page }) => {

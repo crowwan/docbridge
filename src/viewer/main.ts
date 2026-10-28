@@ -166,10 +166,12 @@ function placeNote(pageEl: HTMLElement, firstRects: SelectionRect[], text: strin
   note.dataset['testid'] = 'highlight-note';
   note.textContent = text;
   pageEl.append(note);
+  // offsetWidth 는 소수 폭을 반올림해, 내림되면 여백 폭으로 다시 걸 때 마지막 글자가 다음 줄로 밀린다("신청기 / 간", #86) → 올림
+  const measured = note.getBoundingClientRect();
   const placement = notePlacement(
     zoomed(first),
     zoomed(last),
-    { width: note.offsetWidth, height: note.offsetHeight },
+    { width: Math.ceil(measured.width), height: Math.ceil(measured.height) },
     {
       page: { width: pageEl.clientWidth, height: pageEl.clientHeight },
       rightMargin: document.documentElement.clientWidth - pageEl.getBoundingClientRect().right,
