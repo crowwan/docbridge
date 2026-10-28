@@ -6,9 +6,9 @@ import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { chmod, copyFile, link, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, dirname, extname, isAbsolute, join } from 'node:path';
+import nodePath, { basename, dirname, extname, join } from 'node:path';
 import { errorMessage } from '../shared/errors.ts';
-import { absolutePath } from './paths.ts';
+import { absolutePath, endsWithSeparator, isAbsoluteInput, type PathRules } from './paths.ts';
 
 const SAVE_EXTENSION = '.hwpx';
 
@@ -27,8 +27,20 @@ const folderMessage = (path: string) => `폴더입니다: ${path}. 파일 경로
 
 
 /** 원본 옆 기본 이름의 n 번째(1 이면 <이름>-수정.hwpx, 아니면 <이름>-수정-n.hwpx) */
-const numberedPath = (sourcePath: string, n: number) =>
-  join(dirname(sourcePath), `${basename(sourcePath, extname(sourcePath))}-수정${n === 1 ? '' : `-${n}`}${SAVE_EXTENSION}`);
+export const defaultSaveName = (sourcePath: string, n: number, rules: PathRules = nodePath) =>
+  rules.join(rules.dirname(sourcePath), `${rules.basename(sourcePath, rules.extname(sourcePath))}-수정${n === 1 ? '' : `-${n}`}${SAVE_EXTENSION}`);
+
+/** 구분자로 끝나는 경로(윈도우는 \ 와 / 둘 다)는 폴더를 준 것이다 */
+export const isFolderInput = (raw: string, rules: PathRules = nodePath) => endsWithSeparator(raw, rules);
+
+/** 확장자 규칙: 없으면 .hwpx 를 붙이고, .hwpx(대소문자 무관)가 아니면 던진다. 폴더 이름의 점(C:\v1.2\회신)은 확장자가 아니다 */
+export function withSaveExtension(given: string, rules: PathRules = nodePath): string {
+  const extension = rules.extname(given);
+  if (extension !== '' && extension.toLowerCase() !== SAVE_EXTENSION) {
+    throw new Error(`HWPX 로만 저장합니다(${extension}). 경로를 .hwpx 로 끝내거나 확장자를 빼세요.`);
+  }
+  return extension === '' ? given + SAVE_EXTENSION : given;
+}
 
 /** 기본 이름 다음 번호(<이름>-수정.hwpx → -수정-2, -수정-2 → -수정-3) */
 function nextNumbered(path: string): string {
@@ -41,7 +53,7 @@ function nextNumbered(path: string): string {
 /** 원본 옆 <이름>-수정.hwpx. 이미 있으면 -수정-2, -수정-3 … 중 처음 비어 있는 것 */
 async function defaultPath(sourcePath: string): Promise<string> {
   for (let n = 1; ; n += 1) {
-    const candidate = numberedPath(sourcePath, n);
+    const candidate = defaultSaveName(sourcePath, n);
     if ((await statOf(candidate)) === undefined) return candidate;
   }
 }
@@ -86,15 +98,11 @@ interface GivenPathRules {
 async function checkGivenPath(raw: string, given: string, rules: GivenPathRules): Promise<string> {
   const { overwrite, sourcePath, existing: existingMessage = existingFileMessage } = rules;
   // 폴더를 먼저 본다. 확장자를 붙인 뒤에 보면 ~/Downloads 가 ~/Downloads.hwpx 가 된다
-  if (raw.endsWith('/') || (await statOf(given))?.isDirectory() === true) throw new Error(folderMessage(given));
+  if (isFolderInput(raw) || (await statOf(given))?.isDirectory() === true) throw new Error(folderMessage(given));
   const hwpSource = sourcePath === undefined ? undefined : protectedSource(sourcePath);
   // 원본 경로를 그대로 준 경우(.hwp 라 아래 확장자 검사에 걸리기 전에 이유를 알린다)
   if (hwpSource !== undefined && (await sameFile(given, hwpSource))) throw new Error(await hwpSourceMessage(hwpSource));
-  const extension = extname(given);
-  if (extension !== '' && extension.toLowerCase() !== SAVE_EXTENSION) {
-    throw new Error(`HWPX 로만 저장합니다(${extension}). 경로를 .hwpx 로 끝내거나 확장자를 빼세요.`);
-  }
-  const path = extension === '' ? given + SAVE_EXTENSION : given;
+  const path = withSaveExtension(given);
   // .hwpx 이름의 링크(심볼릭·하드)가 .hwp 원본을 가리킬 수 있다 — 붙인 뒤의 경로로 다시 본다
   if (hwpSource !== undefined && (await sameFile(path, hwpSource))) throw new Error(await hwpSourceMessage(hwpSource));
   const folder = await statOf(dirname(path));
@@ -123,9 +131,9 @@ export const newDocumentTakenMessage = (path: string) =>
  * 절대 경로나 ~ 로 시작하는 경로만 절대 경로로 바꾼다. 상대 경로면 message 로 던진다
  * (새 문서·양식에는 상대 경로의 기준인 원본 폴더가 없고, MCP 서버 작업 폴더는 사용자가 모른다)
  */
-export function requireAbsolutePath(raw: string, message: string, home = homedir()): string {
-  if (!(raw === '~' || raw.startsWith('~/') || isAbsolute(raw))) throw new Error(message);
-  return absolutePath(raw, home, home);
+export function requireAbsolutePath(raw: string, message: string, home = homedir(), rules: PathRules = nodePath): string {
+  if (!isAbsoluteInput(raw, rules)) throw new Error(message);
+  return absolutePath(raw, home, home, rules);
 }
 export const newDocumentExistsMessage = (path: string) => `이미 있는 파일입니다: ${path}. 새 문서는 없는 파일 자리에 만듭니다 — 다른 경로를 주세요.`;
 
