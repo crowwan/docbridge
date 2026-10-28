@@ -1,7 +1,7 @@
 ---
 id: SPEC-008
 title: PDF 로 내보내기
-status: in-progress        # draft | approved | in-progress | done | dropped
+status: done        # draft | approved | in-progress | done | dropped
 milestone: v0.3
 issue: "#106"
 prototype:
@@ -97,3 +97,4 @@ docbridge 사용 흐름은 "받아서 열기 → 조금 고치기 → 다시 보
 | 2026-10-28 | `export_pdf`(#108): AC-1~6 자동 테스트. 기본 이름 기준을 마지막 파일로, `.hwp`/`.hwpx` 경로는 늘 거부, `overwrite` 입력, 화면 글꼴 이름 맞추기(뷰어 Canvas → 서버)·글꼴 없음 warnings 추가, 큰 문서 시간을 #108 측정(쪽당 8~20ms, 20쪽 묶음, 진행 알림)으로 고침 |
 | 2026-10-28 | `export_pdf` 후속(#114): 쪽 묶음마다 그리고 버리기(큰 문서 메모리), 진행 알림 total = 쪽 수 + 1·알림마다 증가, `DOCBRIDGE_FONT_DIRS`, 안에 묶인 패키지 라이선스 고지 — 예외(큰 문서)·기술 메모 고침 |
 | 2026-10-28 | 뷰어 PDF 버튼(#109): AC-7 자동 테스트(E2E·단위). 화면 절에 요청 길(`user_export_pdf`)·만드는 동안 꺼짐·기다리는 시간·실패 문구·버튼이 보이는 때 |
+| 2026-10-28 | v0.3.0 릴리스, status done |

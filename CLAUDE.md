@@ -14,8 +14,8 @@
 
 ## 현재 상태
 
-- 마일스톤: v0.3 (v0.2.0 릴리스 2026-10-28)
-- 진행 중 스펙: SPEC-001·002 done(v0.1.0), SPEC-003·004·005·006 done(v0.2.0), SPEC-007 여러 문서와 문서 사이 복사 (in-progress, #61, v0.3 — 기능은 v0.2.0 에 포함, 후속 #80), SPEC-008 PDF 로 내보내기 (in-progress, #106)
+- 마일스톤: 다음 미정 (v0.3.0 릴리스 2026-10-28, 남은 일은 backlog)
+- 스펙: SPEC-001·002 done(v0.1.0), SPEC-003~006 done(v0.2.0), SPEC-007·008 done(v0.3.0). 진행 중 스펙 없음
 - Projects 보드: #6 (https://github.com/users/crowwan/projects/6)
 
 ## 스택

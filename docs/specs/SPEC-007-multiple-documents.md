@@ -1,7 +1,7 @@
 ---
 id: SPEC-007
 title: 여러 문서 동시에 열기와 문서 사이 복사
-status: in-progress        # draft | approved | in-progress | done | dropped
+status: done        # draft | approved | in-progress | done | dropped
 milestone: v0.3
 issue: "#61"
 prototype:
@@ -115,3 +115,4 @@ updated: 2026-10-28
 | 2026-10-28 | #80: 저장 중에는 그 파일을 다른 문서가 열거나 저장하지 않는다(결정 — 막는다), `copy_blocks` 는 `from`·`to` 를 모두 확인한 뒤 마지막으로 쓴 문서를 바꾼다. 대소문자만 다른 경로는 qa-checklist 로. PR #90 리뷰 후속: 열 때 다시 배치 기준(경고 목록) 스키마를 좁히고 여러 구역·머리말 문서(fixture `sections.hwpx`)로 확인 |
 | 2026-10-28 | #111: 구역 둘 fixture(`sections.hwpx`)의 구역 목록 — `header.xml` `secCnt`·`container.rdf`·`content.hpf` — 을 구역 파일과 맞춤, 자기 파일 덮어 저장 중 다시 열기(막지 않음) 테스트 |
 | 2026-10-28 | #118: 자기 파일 덮어 저장 중 다시 열면 파일을 저장이 끝난 뒤에 읽는다(저장 전 내용이 열리던 것). 저장 실패면 디스크의 옛 파일 |
+| 2026-10-28 | v0.3.0 릴리스, status done |
