@@ -275,11 +275,14 @@ describe('SPEC-007 여러 문서 세션·탭과 doc 인자 (list_documents · cl
       expect(JSON.parse(reopened.content[0]?.text ?? '')).toMatchObject({ doc: 'd1' });
       expect(order).toEqual(['저장', '다시 열기']);
       expect(await json('list_documents')).toMatchObject({ documents: [{ doc: 'd1', unsavedEdits: 0 }] });
+      // 다시 연 내용 = 저장본(저장 전 파일을 읽어 두지 않는다, #118)
+      expect(await textOf('d1', 'b1')).toBe('라마바구청');
     });
 
-    it('자기 파일에 덮어 쓰는 중(쓰기 대기) 그 파일을 다시 열면 거부하지 않고 쓰기가 끝난 뒤 그 문서(d1)로 연다', async () => {
+    it('자기 파일에 덮어 쓰는 중(쓰기 대기) 그 파일을 다시 열면 거부하지 않고 쓰기가 끝난 뒤 그 문서(d1)로 저장본을 연다', async () => {
       const path = await copy('notice.hwpx', '공문.hwpx');
       await json('open_document', { path });
+      await json('replace_text', { doc: 'd1', target: { id: 'b1' }, text: '라마바구청' });
       let release = () => {};
       const gate = new Promise<void>((resolve) => {
         release = resolve;
@@ -306,6 +309,41 @@ describe('SPEC-007 여러 문서 세션·탭과 doc 인자 (list_documents · cl
       expect(reopened.isError).toBeUndefined();
       expect(JSON.parse(reopened.content[0]?.text ?? '')).toMatchObject({ doc: 'd1' });
       expect(order).toEqual(['저장', '다시 열기']);
+      expect(await textOf('d1', 'b1')).toBe('라마바구청');
+    });
+
+    it('자기 파일에 덮어 쓰다 실패하면 그 사이 다시 연 문서는 디스크의 옛 파일 내용이다', async () => {
+      const path = await copy('notice.hwpx', '공문.hwpx');
+      await json('open_document', { path });
+      await json('replace_text', { doc: 'd1', target: { id: 'b1' }, text: '라마바구청' });
+      let release = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let writing = () => {};
+      const started = new Promise<void>((resolve) => {
+        writing = resolve;
+      });
+      // 쓰기를 붙잡았다가 실패시킨다(파일은 그대로)
+      const write = async () => {
+        writing();
+        await gate;
+        throw new Error('디스크 가득');
+      };
+      const { order, track } = settledOrder();
+      const saving = track('저장', saveDocument(sessions.get('d1'), { path, overwrite: true }, write).catch((error: unknown) => error));
+      await started;
+
+      const reopening = track('다시 열기', call('open_document', { path }));
+      release();
+
+      expect(await saving).toBeInstanceOf(Error);
+      const reopened = await reopening;
+      expect(reopened.isError).toBeUndefined();
+      expect(JSON.parse(reopened.content[0]?.text ?? '')).toMatchObject({ doc: 'd1', warnings: [expect.any(String)] });
+      expect(order).toEqual(['저장', '다시 열기']);
+      expect(await textOf('d1', 'b1')).toBe('가나다구청');
+      expect(await json('list_documents')).toMatchObject({ documents: [{ doc: 'd1', unsavedEdits: 0 }] });
     });
 
     it('저장이 실패해도 그 경로는 다시 열 수 있다(저장 중 표시가 남지 않는다)', async () => {

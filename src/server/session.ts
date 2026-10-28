@@ -348,15 +348,17 @@ export class DocumentSession {
   }
 
   /**
-   * 파일을 이 문서 탭에 띄운다(path·bytes 는 표가 검사하고 읽었다, fileKey = path 의 실제 경로). 탭이 없으면 빈 탭을 쓰거나 브라우저로 이 문서 탭 주소를 열고 붙기를 기다린다.
+   * 파일을 이 문서 탭에 띄운다(read = 표가 준 파일 읽기, fileKey = path 의 실제 경로). 탭이 없으면 빈 탭을 쓰거나 브라우저로 이 문서 탭 주소를 열고 붙기를 기다린다.
+   * 파일은 줄 차례가 온 뒤에 읽는다 — 앞에 선 저장(같은 파일 덮어쓰기)이 끝난 내용을 연다(#118).
    * 이미 문서가 있으면(같은 파일 다시 열기) SPEC-002 "새 문서를 열면" 규칙대로 그 문서를 대신한다 — 편집 기록·되돌리기는 사라지고 버린 편집 수를 알린다.
    * 열지 못해 문서가 없으면 표에서 빠진다
    */
-  open(path: string, bytes: Uint8Array, fileKey = path): Promise<OpenResult> {
+  open(path: string, read: () => Promise<Uint8Array>, fileKey = path): Promise<OpenResult> {
     const fileName = basename(path);
     this.opening = fileKey;
     return this.enqueue(async () => {
       try {
+        const bytes = await read();
         await this.ensureViewer();
         // 뷰어는 새로 열며 이 탭의 이전 문서와 그 되돌리기 스냅샷을 닫는다(SPEC-002 AC-12)
         const discarded = this.discardNotice();
