@@ -4,7 +4,7 @@
 // 모두 비동기(fs.promises): 서버는 MCP(stdio)·뷰어(HTTP·WebSocket)와 같은 프로세스라, 글꼴 1,000여 개를 읽는 동안 이벤트 루프를 막지 않는다(PR #112 리뷰).
 import { open, readdir, readFile, stat, type FileHandle } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { bytesReader, extractFace, faceOffsets, readFontFaces, type ByteReader, type FontEntry, type FontLibrary } from './pdf-fonts.ts';
 
 /** 플랫폼별 시스템 글꼴 폴더(사용자 폴더 포함). 맥 내려받는 글꼴 폴더(AssetsV2)는 systemFontLibrary 가 훑을 때 더한다 */
@@ -33,7 +33,7 @@ export const GENERIC_FAMILIES: FontLibrary['generic'] = {
 
 /**
  * 읽어 둔 글꼴 바이트(떼어 낸 글꼴 하나씩)를 서버 수명 동안 이만큼까지만 둔다. 넘으면 가장 오래 안 쓴 것부터 버린다(LRU).
- * 96MB: 실제 공고문(8쪽)이 쓴 글꼴 7개가 74.3MB(ADR 005) — 한 문서를 다시 내보낼 때는 다시 읽지 않고,
+ * 96MB: 실제 공고문(8쪽)이 쓴 글꼴 7개가 70.9MB(모음은 떼어 낸 글꼴만, ADR 005) — 한 문서를 다시 내보낼 때는 다시 읽지 않고,
  * 다른 문서로 넘어가도 Claude Desktop 서버 프로세스가 100MB 남짓 넘게 붙잡지 않는다. 버린 글꼴은 다음에 디스크에서 다시 읽는다(SSD 수십 ms)
  */
 export const FONT_CACHE_BYTES = 96 * 1024 * 1024;
@@ -197,9 +197,17 @@ export async function fontLibraryFromFiles(
   };
 }
 
-/** 이 컴퓨터의 시스템 글꼴 전부 */
-export async function systemFontLibrary(cache?: FontBytesCache): Promise<FontLibrary> {
-  const dirs = [...systemFontDirs(), ...(process.platform === 'darwin' ? await macAssetFontDirs() : [])];
+/**
+ * 더 훑을 글꼴 폴더 — 환경 변수 DOCBRIDGE_FONT_DIRS(경로 구분자 : / 윈도우 ; 로 여럿). 시스템 글꼴이 없는 CI 에서 설치판 테스트가
+ * 시험 글꼴(tests/fonts)로 윤곽 그리기를 타게 하고(#114), 사용자가 시스템에 설치하지 않은 글꼴 폴더를 더할 때도 쓴다
+ */
+export function extraFontDirs(value: string | undefined): string[] {
+  return (value ?? '').split(delimiter).filter((dir) => dir.length > 0);
+}
+
+/** 이 컴퓨터의 시스템 글꼴 전부(+ extraDirs 폴더) */
+export async function systemFontLibrary(cache?: FontBytesCache, extraDirs: string[] = []): Promise<FontLibrary> {
+  const dirs = [...systemFontDirs(), ...(process.platform === 'darwin' ? await macAssetFontDirs() : []), ...extraDirs];
   // 폴더가 겹치므로(/System/Library/Fonts 아래 Supplemental) 같은 파일은 한 번만
   const files = [...new Set((await Promise.all(dirs.map((dir) => fontFiles(dir)))).flat())];
   return fontLibraryFromFiles(files, GENERIC_FAMILIES, cache);

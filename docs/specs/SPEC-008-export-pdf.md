@@ -46,7 +46,7 @@ docbridge 사용 흐름은 "받아서 열기 → 조금 고치기 → 다시 보
 ### 예외와 경계 상황
 
 - 뷰어가 연결되지 않았으면 기존 "뷰어가 없습니다" 오류.
-- 아주 큰 문서(수백 쪽)는 시간이 걸린다(#108 측정: 서버 쪽당 약 8~20ms — 실제 공고문 쪽을 되풀이한 300쪽 6.0초 + 뷰어 SVG 쪽당 약 6ms + 전송, 10초 안팎). 뷰어에서 쪽을 20쪽 묶음으로 받고 묶음마다 기존 요청 제한 시간(30초)을 쓴다. 클라이언트가 진행 알림(MCP progress)을 받으면 묶음마다와 PDF 를 만들기 전에 알린다 — MCP 요청 제한 시간은 바꾸지 않는다(ADR 005).
+- 아주 큰 문서(수백 쪽)는 시간이 걸린다(#114 측정, 서버 프로세스: 실제 공고문 쪽을 되풀이한 300쪽 7.4~7.8초 — 쪽 받기 포함, 공문 300쪽 2.7~3.0초). 뷰어에서 쪽을 20쪽 묶음으로 받아 **묶음마다 바로 그리고 버린다**(모든 쪽 SVG 를 한꺼번에 들지 않는다 — 300쪽 공고문 서버 RSS 최대 2.3GB → 0.9~1.1GB, #114). 묶음마다 기존 요청 제한 시간(30초)을 쓴다. 그리는 동안 이 문서의 다른 도구는 기다린다(받은 쪽이 모두 같은 편집 시점이게). 클라이언트가 진행 알림(MCP progress)을 받으면 묶음을 그릴 때마다(`쪽 n/N 그림`)와 PDF 를 쓰기 전에(`PDF 쓰는 중`) 알린다 — `total` 은 쪽 수 + 1, `progress` 는 알림마다 는다(MCP 규격 MUST). MCP 요청 제한 시간은 바꾸지 않는다(ADR 005).
 - `.hwp`/`.hwpx` 경로를 주면(덮어쓰기여도) 거부(PDF 로 원본을 덮지 않게).
 
 ## 수용 기준
@@ -69,9 +69,10 @@ docbridge 사용 흐름은 "받아서 열기 → 조금 고치기 → 다시 보
 
 ## 기술 메모
 
-- 방식(ADR 005, #107 기술 검증): **뷰어**는 쪽마다 `renderPageSvg`(모양) + `getPageTextLayout`(글자·빈칸·자리)을 서버로 보내고, **서버**가 `src/core/pdf-export.ts` `svgPagesToPdf`(pdf-lib + @pdf-lib/fontkit, MIT)로 PDF 를 만들어 쓴다.
-  - 글꼴은 서버가 이 컴퓨터의 시스템 글꼴 폴더에서 읽는다(`src/core/pdf-fonts-node.ts`, 맥 내려받는 글꼴 AssetsV2 포함 — 모두 비동기, 처음 내보낼 때 한 번 훑는다, 글꼴 바이트 캐시 96MB 상한 LRU). 뷰어 번들에 글꼴을 넣지 않는다(.mcpb 는 pdf-lib·fontkit 로 +0.67MB, #108).
-  - 도구: `src/server/export-pdf-tool.ts`(쪽 범위·묶음 받기·PDF 만들기·쓰기), 뷰어 요청 `export_pdf_pages`(`src/core/pdf-pages.ts` 쪽 SVG·글자 배치, `src/core/screen-fonts.ts` 화면 글꼴 이름).
+- 방식(ADR 005, #107 기술 검증): **뷰어**는 쪽마다 `renderPageSvg`(모양) + `getPageTextLayout`(글자·빈칸·자리)을 서버로 보내고, **서버**가 `src/core/pdf-export.ts` `PdfBuilder`(pdf-lib + @pdf-lib/fontkit, MIT — 쪽 묶음씩 그리고, 그린 쪽 명령은 바로 압축)로 PDF 를 만들어 쓴다.
+  - 글꼴은 서버가 이 컴퓨터의 시스템 글꼴 폴더에서 읽는다(`src/core/pdf-fonts-node.ts`, 맥 내려받는 글꼴 AssetsV2 포함 — 모두 비동기, 처음 내보낼 때 한 번 훑는다, 글꼴 바이트 캐시 96MB 상한 LRU). 환경 변수 `DOCBRIDGE_FONT_DIRS`(경로 구분자로 여럿)의 폴더도 함께 훑는다 — 설치판 테스트가 글꼴 없는 CI 에서 시험 글꼴로 윤곽 그리기를 타게(#114). 뷰어 번들에 글꼴을 넣지 않는다(.mcpb 는 pdf-lib·fontkit 로 +0.67MB, #108).
+  - 라이선스: @pdf-lib/fontkit dist 는 rollup 으로 의존성을 안에 묶은 번들이고(Google brotli(Apache-2.0)·buffer·ieee754(BSD-3-Clause)·iconv-lite·pako·deep-equal 등 30여 개), pdf-lib 은 pdf.js·XPDF(Apache-2.0)·PDFKit 코드를, @pdf-lib/standard-fonts 는 Adobe Core 14 AFM 을 안에 갖고 있다. esbuild metafile 로는 안 보여 `scripts/pack/licenses/<이름>.bundled.txt` 로 THIRD_PARTY_NOTICES 에 붙인다(확인한 판이 설치된 판과 다르면 pack 이 실패, #114).
+  - 도구: `src/server/export-pdf-tool.ts`(쪽 범위·묶음 받아 그리기·쓰기), 뷰어 요청 `export_pdf_pages`(`src/core/pdf-pages.ts` 쪽 SVG·글자 배치, `src/core/screen-fonts.ts` 화면 글꼴 이름).
   - 글꼴 고르기는 SVG `font-family` 차례에서 브라우저처럼(`src/core/pdf-fonts.ts` FontResolver): 있고 그 글자가 있는 첫 글꼴, CSS 굵기 규칙, 없으면 serif·sans-serif 기본 → 기호 글꼴. 넣지 말라는(fsType Restricted) 글꼴은 건너뛴다.
 - 탈락: jsPDF + svg2pdf.js(TrueType 만 읽어 맥 고딕이 깨지고 DOM 이 있어야 함), 서버 헤드리스 브라우저 인쇄(.mcpb 에 브라우저를 넣을 수 없음), 뷰어 `window.print()`(사람이 대화 상자에서 골라야 해 도구로 못 씀 — 화면 버튼 보조로만), 쪽 그림(글자 선택 불가).
 - 확인 파일: `node scripts/make-pdf-check.ts [폴더] --doc <문서>` (기본 `~/Downloads/docbridge-pdf-check`, 레포에 넣지 않음).
@@ -90,3 +91,4 @@ docbridge 사용 흐름은 "받아서 열기 → 조금 고치기 → 다시 보
 | 2026-10-28 | 승인(사용자), 이슈 분해 (#106) |
 | 2026-10-28 | 기술 검증(#107, ADR 005): 서버에서 pdf-lib 로 그리기, 글꼴 = 시스템 글꼴 윤곽 + 보이지 않는 글자 층으로 품질(글꼴)·예외(큰 문서 시간)·기술 메모 고침, 열린 질문 둘 닫음 |
 | 2026-10-28 | `export_pdf`(#108): AC-1~6 자동 테스트. 기본 이름 기준을 마지막 파일로, `.hwp`/`.hwpx` 경로는 늘 거부, `overwrite` 입력, 화면 글꼴 이름 맞추기(뷰어 Canvas → 서버)·글꼴 없음 warnings 추가, 큰 문서 시간을 #108 측정(쪽당 8~20ms, 20쪽 묶음, 진행 알림)으로 고침 |
+| 2026-10-28 | `export_pdf` 후속(#114): 쪽 묶음마다 그리고 버리기(큰 문서 메모리), 진행 알림 total = 쪽 수 + 1·알림마다 증가, `DOCBRIDGE_FONT_DIRS`, 안에 묶인 패키지 라이선스 고지 — 예외(큰 문서)·기술 메모 고침 |

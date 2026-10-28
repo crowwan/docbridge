@@ -159,82 +159,128 @@ export interface PdfExportOptions {
   pause?: () => Promise<void>;
 }
 
-/** 쪽들 → PDF 바이트. 쪽 크기는 SVG width·height(px) 그대로 */
+/**
+ * 쪽을 묶음씩 받아 그리고 버리는 PDF 만들기(#114). 묶음마다 SVG 읽기 → 글자 글꼴 고르기 → 새로 쓰인 글꼴 열기 → 쪽 그리기를 하고,
+ * 쪽 그리기 명령은 바로 압축한 내용 스트림으로 바꿔 둔다. 그래서 문서 전체의 SVG 문자열·요소 나무·명령 객체를 한꺼번에 들지 않는다
+ * (남는 것: 쓴 글꼴(fontkit)·글리프 윤곽·글자 층 글꼴·그림, 그리고 압축된 쪽 내용).
+ * 글꼴 고르기는 쪽마다 독립이라(글자마다 차례에서 고름, FontResolver 가 문서 전체에서 캐시) 묶음으로 나눠도 결과가 같다
+ */
+export class PdfBuilder {
+  private readonly pdf: PDFDocument;
+  private readonly library: FontLibrary;
+  private readonly resolver: FontResolver;
+  private readonly pause: () => Promise<void>;
+  private readonly glyphs: GlyphForms;
+  private readonly textLayer: TextLayerFont;
+  private readonly images = new Map<string, PDFImage>();
+  private readonly warnings = new Map<string, number>();
+  private readonly usedIds = new Set<string>();
+  private readonly screenFonts: Record<string, string> = {};
+  private readonly saveObjectsPerTick: number;
+  private pageCount = 0;
+  private textElements = 0;
+  private missingGlyphs = 0;
+
+  constructor(pdf: PDFDocument, library: FontLibrary, options: PdfExportOptions = {}) {
+    this.pdf = pdf;
+    this.library = library;
+    this.resolver = new FontResolver(library);
+    this.pause = options.pause ?? (async () => undefined);
+    // objectsPerTick: 큰 PDF 를 쓰는 동안에도 사이사이 다른 일이 돈다(pdf-lib 가 그만큼마다 쉰다)
+    this.saveObjectsPerTick = options.pause === undefined ? Infinity : 50;
+    this.glyphs = new GlyphForms(pdf);
+    this.textLayer = new TextLayerFont(pdf);
+    Object.assign(this.screenFonts, options.screenFonts);
+  }
+
+  private readonly warn = (kind: string): void => {
+    this.warnings.set(kind, (this.warnings.get(kind) ?? 0) + 1);
+  };
+
+  /** 쪽 묶음을 그려 PDF 에 더한다. screenFonts: 이 묶음과 함께 온 화면 글꼴 이름(앞 묶음 것과 합친다) */
+  async addPages(sources: PdfPageSource[], screenFonts: Record<string, string> = {}): Promise<void> {
+    Object.assign(this.screenFonts, screenFonts);
+    const pages: SvgElement[] = [];
+    for (const source of sources) {
+      pages.push(parseSvg(source.svg));
+      await this.pause();
+    }
+
+    // 1) 글자마다 글꼴을 고른다(글꼴 바이트를 읽어 글자가 있는지 봐야 해서 그리기 전에 묶음 전체를 한다)
+    const runs: TextRun[] = [];
+    for (const svg of pages) {
+      collectText(svg, runs);
+      await this.pause();
+    }
+    this.textElements += runs.length;
+    for (const run of runs) {
+      const screen = this.screenFonts[fontStackKey(run.families)];
+      if (screen === undefined) continue;
+      run.families = [screen, ...run.families.filter((name) => name !== screen)];
+      if (!this.resolver.hasFamily(screen)) this.warn(`화면 글꼴 "${screen}" 를 이 컴퓨터 글꼴에서 쓸 수 없음(다른 글꼴로 그림)`);
+    }
+    const glyphFonts = new Map<SvgElement, Array<FontChoice | undefined>>();
+    for (const [index, run] of runs.entries()) {
+      // 글꼴을 이미 고른 글자는 기다림 없이(마이크로태스크로만) 지나가 큰 문서면 루프가 길게 멈춘다 — 글자 묶음마다 쉰다
+      if (index % RESOLVE_PAUSE_EVERY === 0) await this.pause();
+      const choices: Array<FontChoice | undefined> = [];
+      for (const char of run.text) {
+        const choice = await this.resolver.resolve(run.families, run.weight, run.italic, char);
+        if (choice === undefined && char.trim().length > 0) this.missingGlyphs += 1;
+        choices.push(choice);
+      }
+      glyphFonts.set(run.element, choices);
+    }
+
+    // 2) 이 묶음에서 처음 쓰인 글꼴을 연다(윤곽은 쓸 때 글리프마다 Form 으로 — 앞 묶음에서 만든 Form 은 다시 쓴다)
+    for (const choices of glyphFonts.values()) {
+      for (const choice of choices) {
+        if (choice === undefined || this.usedIds.has(choice.id)) continue;
+        this.usedIds.add(choice.id);
+        this.glyphs.addFont(choice.id, await this.library.load(choice.id));
+        await this.pause();
+      }
+    }
+
+    // 3) 쪽마다 그리고, 글자 층을 얹는다
+    for (const [index, svg] of pages.entries()) {
+      const width = numberAttr(svg, 'width');
+      const height = numberAttr(svg, 'height');
+      const page = this.pdf.addPage([width * PX_TO_PT, height * PX_TO_PT]);
+      const textLayout = sources[index]?.textLayout;
+      const { pdf, glyphs, textLayer, images, warn } = this;
+      const painter = new PagePainter({ pdf, page, svg, glyphs, textLayer, glyphFonts, images, warn });
+      await painter.paint(textLayout === undefined ? undefined : layoutChars(textLayout));
+      this.pageCount += 1;
+      await this.pause();
+    }
+  }
+
+  /** 글자 층 글꼴을 쓰고 PDF 바이트로 저장한다(한 번만) */
+  async finish(): Promise<PdfExportResult> {
+    this.textLayer.finish();
+    // 그 글자가 든 글꼴이 이 컴퓨터에 하나도 없다(글꼴 없는 리눅스 등) — 보이지 않을 뿐 글자 층에는 있다
+    if (this.missingGlyphs > 0) this.warnings.set('글꼴이 없어 그리지 못한 글자(선택·검색은 됨)', this.missingGlyphs);
+    const bytes = await this.pdf.save({ objectsPerTick: this.saveObjectsPerTick });
+    return {
+      bytes,
+      stats: {
+        pages: this.pageCount,
+        textElements: this.textElements,
+        missingGlyphs: this.missingGlyphs,
+        fonts: [...this.usedIds],
+        glyphForms: this.glyphs.count,
+      },
+      warnings: [...this.warnings].map(([kind, count]) => `${kind} ${count}곳`),
+    };
+  }
+}
+
+/** 쪽들 → PDF 바이트(한 묶음으로). 쪽 크기는 SVG width·height(px) 그대로 */
 export async function svgPagesToPdf(sources: PdfPageSource[], library: FontLibrary, options: PdfExportOptions = {}): Promise<PdfExportResult> {
-  const pdf = await PDFDocument.create();
-  const resolver = new FontResolver(library);
-  const pause = options.pause ?? (async () => undefined);
-  const pages: SvgElement[] = [];
-  for (const source of sources) {
-    pages.push(parseSvg(source.svg));
-    await pause();
-  }
-  const warnings = new Map<string, number>();
-  const warn = (kind: string): void => {
-    warnings.set(kind, (warnings.get(kind) ?? 0) + 1);
-  };
-
-  // 1) 글자마다 글꼴을 고른다(글꼴 바이트를 읽어 글자가 있는지 봐야 해서 먼저 다 한다)
-  const runs: TextRun[] = [];
-  for (const svg of pages) {
-    collectText(svg, runs);
-    await pause();
-  }
-  for (const run of runs) {
-    const screen = options.screenFonts?.[fontStackKey(run.families)];
-    if (screen === undefined) continue;
-    run.families = [screen, ...run.families.filter((name) => name !== screen)];
-    if (!resolver.hasFamily(screen)) warn(`화면 글꼴 "${screen}" 를 이 컴퓨터 글꼴에서 쓸 수 없음(다른 글꼴로 그림)`);
-  }
-  const glyphFonts = new Map<SvgElement, Array<FontChoice | undefined>>();
-  let missingGlyphs = 0;
-  for (const [index, run] of runs.entries()) {
-    // 글꼴을 이미 고른 글자는 기다림 없이(마이크로태스크로만) 지나가 큰 문서면 루프가 길게 멈춘다 — 글자 묶음마다 쉰다
-    if (index % RESOLVE_PAUSE_EVERY === 0) await pause();
-    const choices: Array<FontChoice | undefined> = [];
-    for (const char of run.text) {
-      const choice = await resolver.resolve(run.families, run.weight, run.italic, char);
-      if (choice === undefined && char.trim().length > 0) missingGlyphs += 1;
-      choices.push(choice);
-    }
-    glyphFonts.set(run.element, choices);
-  }
-  // 그 글자가 든 글꼴이 이 컴퓨터에 하나도 없다(글꼴 없는 리눅스 등) — 보이지 않을 뿐 글자 층에는 있다
-  if (missingGlyphs > 0) warnings.set('글꼴이 없어 그리지 못한 글자(선택·검색은 됨)', missingGlyphs);
-
-  // 2) 쓰인 글꼴을 연다(윤곽은 쓸 때 글리프마다 Form 으로)
-  const glyphs = new GlyphForms(pdf);
-  const usedIds = new Set<string>();
-  for (const choices of glyphFonts.values()) {
-    for (const choice of choices) {
-      if (choice === undefined || usedIds.has(choice.id)) continue;
-      usedIds.add(choice.id);
-      glyphs.addFont(choice.id, await library.load(choice.id));
-      await pause();
-    }
-  }
-
-  // 3) 쪽마다 그리고, 글자 층을 얹는다
-  const textLayer = new TextLayerFont(pdf);
-  const images = new Map<string, PDFImage>();
-  for (const [index, svg] of pages.entries()) {
-    const width = numberAttr(svg, 'width');
-    const height = numberAttr(svg, 'height');
-    const page = pdf.addPage([width * PX_TO_PT, height * PX_TO_PT]);
-    const textLayout = sources[index]?.textLayout;
-    const painter = new PagePainter({ pdf, page, svg, glyphs, textLayer, glyphFonts, images, warn });
-    await painter.paint(textLayout === undefined ? undefined : layoutChars(textLayout));
-    await pause();
-  }
-  textLayer.finish();
-
-  // objectsPerTick: 큰 PDF 를 쓰는 동안에도 사이사이 다른 일이 돈다(pdf-lib 가 그만큼마다 쉰다)
-  const bytes = await pdf.save({ objectsPerTick: options.pause === undefined ? Infinity : 50 });
-  return {
-    bytes,
-    stats: { pages: pages.length, textElements: runs.length, missingGlyphs, fonts: [...usedIds], glyphForms: glyphs.count },
-    warnings: [...warnings].map(([kind, count]) => `${kind} ${count}곳`),
-  };
+  const builder = new PdfBuilder(await PDFDocument.create(), library, options);
+  await builder.addPages(sources);
+  return builder.finish();
 }
 
 /**
@@ -342,7 +388,9 @@ class PagePainter {
     for (const child of svg.children) if (isElement(child)) await this.paintElement(child, ops);
     this.paintTextLayer(layer ?? this.svgChars, ops);
     ops.push(popGraphicsState());
-    page.pushOperators(...ops);
+    // 명령 객체를 저장할 때까지 들고 있지 않게 바로 글로 바꿔 압축한 내용 스트림으로 둔다(page.pushOperators 는 저장할 때 압축한다, #114)
+    const { context } = this.input.pdf;
+    page.node.addContentStream(context.register(context.flateStream(ops.map((operator) => operator.toString()).join('\n'))));
   }
 
   private xobjectName(ref: PDFRef): PDFName {

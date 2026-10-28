@@ -2,9 +2,10 @@
 // 내보내기는 편집이 아니다 — 되돌리기 칸·저장하지 않은 편집 수를 건드리지 않고, 지금 화면 그대로(저장 전 편집 포함) 내보낸다.
 // 경로 규칙은 save_document 와 같다(save-path.ts resolvePdfPath — 확장자만 .pdf, 한글 문서 경로는 거부).
 import { dirname } from 'node:path';
-import { svgPagesToPdf, type PdfPageSource } from '../core/pdf-export.ts';
+import { PDFDocument } from 'pdf-lib';
+import { PdfBuilder } from '../core/pdf-export.ts';
 import type { FontLibrary } from '../core/pdf-fonts.ts';
-import { systemFontLibrary } from '../core/pdf-fonts-node.ts';
+import { extraFontDirs, systemFontLibrary } from '../core/pdf-fonts-node.ts';
 import { log } from './log.ts';
 import { nextPdfName, pdfBase, resolvePdfPath, writeSave } from './save-path.ts';
 import type { DocumentSession, OpenedDocument } from './session.ts';
@@ -26,7 +27,7 @@ export interface ExportPdfResult {
 export interface ExportPdfDeps {
   /** PDF 에 그릴 글꼴(서버: 시스템 글꼴, 처음 한 번 훑는다. 테스트: 시험 글꼴) */
   fonts: () => Promise<FontLibrary>;
-  /** 진행 알림(뷰어에서 받은 쪽 수 / 전체, 그다음 PDF 만들기) — MCP progress 로 보낸다 */
+  /** 진행 알림(그린 쪽 수 / 쪽 수 + 1, 마지막에 PDF 쓰기) — MCP progress 로 보낸다. done 은 알림마다 는다 */
   progress?: (done: number, total: number, message: string) => void;
   write?: typeof writeSave;
 }
@@ -42,11 +43,11 @@ export const unsavedEditsWarning = (count: number) => `저장하지 않은 편�
 let scannedFonts: Promise<FontLibrary> | undefined;
 
 /**
- * 이 컴퓨터의 시스템 글꼴 목록 — 처음 내보낼 때 한 번 훑고(비동기, 맥 1,200여 개) 서버 수명 동안 쓴다.
+ * 이 컴퓨터의 시스템 글꼴 목록(+ DOCBRIDGE_FONT_DIRS 폴더) — 처음 내보낼 때 한 번 훑고(비동기, 맥 1,200여 개) 서버 수명 동안 쓴다.
  * 글꼴 바이트는 목록이 들고 있는 캐시(96MB 상한, pdf-fonts-node.ts FONT_CACHE_BYTES)에 둔다. 훑기에 실패하면 다음에 다시 훑는다
  */
 export function systemFonts(): Promise<FontLibrary> {
-  scannedFonts ??= systemFontLibrary().catch((error: unknown) => {
+  scannedFonts ??= systemFontLibrary(undefined, extraFontDirs(process.env['DOCBRIDGE_FONT_DIRS'])).catch((error: unknown) => {
     scannedFonts = undefined;
     throw error;
   });
@@ -83,9 +84,8 @@ function pdfPlace(document: OpenedDocument): { documentPath: string; baseDir: st
 /** 다음 이벤트 루프 차례로 넘긴다(PDF 를 만드는 동안 MCP·뷰어 연결이 멈추지 않게) */
 const nextTurn = () => new Promise<void>((resolve) => setImmediate(resolve));
 
-interface CollectedPages {
-  sources: PdfPageSource[];
-  screenFonts: Record<string, string>;
+interface DrawnPages {
+  builder: PdfBuilder;
   pageCount: number;
   unsavedEdits: number;
   path: string;
@@ -94,10 +94,10 @@ interface CollectedPages {
 }
 
 /**
- * 문서 줄(session.exclusive)에 서서 경로를 정하고 쪽을 받는다 — 받은 쪽은 모두 같은 편집 시점이다.
- * PDF 만들기·쓰기는 줄 밖에서 한다(큰 문서는 수 초 — 그동안 이 문서의 다른 도구를 막지 않는다)
+ * 문서 줄(session.exclusive)에 서서 경로를 정하고, 쪽을 묶음씩 받아 바로 그리고 버린다(#114 — 모든 쪽 SVG 를 한꺼번에 들지 않게).
+ * 받은 쪽은 모두 같은 편집 시점이다. 그리는 동안 이 문서의 다른 도구는 기다린다(300쪽 공고문 수 초). 다른 문서와 MCP 연결은 돈다(묶음 안에서도 쉰다)
  */
-function collectPages(session: DocumentSession, args: ExportPdfArgs, deps: ExportPdfDeps): Promise<CollectedPages> {
+function drawPages(session: DocumentSession, args: ExportPdfArgs, deps: ExportPdfDeps, fonts: FontLibrary): Promise<DrawnPages> {
   return session.exclusive(async (document, send) => {
     const pages = args.pages === undefined ? Array.from({ length: document.pageCount }, (_, page) => page) : parsePages(args.pages, document.pageCount);
     // overwrite 는 path 를 줬을 때만 뜻이 있다(save_document 와 같다)
@@ -105,37 +105,40 @@ function collectPages(session: DocumentSession, args: ExportPdfArgs, deps: Expor
     const place = pdfPlace(document);
     // 경로가 틀렸으면 쪽을 받지 않는다
     const path = await resolvePdfPath({ ...place, ...(args.path === undefined ? {} : { path: args.path }), overwrite });
-    const sources: PdfPageSource[] = [];
-    const screenFonts: Record<string, string> = {};
+    const builder = new PdfBuilder(await PDFDocument.create(), fonts, { pause: nextTurn });
+    // progress 는 알림마다 늘어야 한다(MCP 규격 MUST) — 쪽마다 하나 + PDF 쓰기 한 단계
+    const total = pages.length + 1;
+    let drawn = 0;
     for (let start = 0; start < pages.length; start += PAGE_BATCH) {
       const batch = pages.slice(start, start + PAGE_BATCH);
       const result = await send('export_pdf_pages', { pages: batch });
-      sources.push(...result.pages);
-      Object.assign(screenFonts, result.screenFonts);
-      deps.progress?.(sources.length, pages.length, `쪽 ${sources.length}/${pages.length} 받음`);
+      await builder.addPages(result.pages, result.screenFonts);
+      drawn += batch.length;
+      deps.progress?.(drawn, total, `쪽 ${drawn}/${pages.length} 그림`);
     }
-    return { sources, screenFonts, pageCount: pages.length, unsavedEdits: document.edits.unsavedEdits, path, place, overwrite };
+    return { builder, pageCount: pages.length, unsavedEdits: document.edits.unsavedEdits, path, place, overwrite };
   });
 }
 
 export async function exportPdf(session: DocumentSession, args: ExportPdfArgs, deps: ExportPdfDeps): Promise<ExportPdfResult> {
   const started = performance.now();
-  const collected = await collectPages(session, args, deps);
-  deps.progress?.(collected.pageCount, collected.pageCount, 'PDF 만드는 중');
+  // 시스템 글꼴 목록(처음 한 번 훑기)은 문서 줄 밖에서 — 훑는 동안 이 문서의 다른 도구를 막지 않는다
   const fonts = await deps.fonts();
-  const pdf = await svgPagesToPdf(collected.sources, fonts, { screenFonts: collected.screenFonts, pause: nextTurn });
+  const drawn = await drawPages(session, args, deps, fonts);
+  deps.progress?.(drawn.pageCount + 1, drawn.pageCount + 1, 'PDF 쓰는 중');
+  const pdf = await drawn.builder.finish();
   const write = deps.write ?? writeSave;
   const path = await write(
     {
-      path: collected.path,
-      overwrite: collected.overwrite,
+      path: drawn.path,
+      overwrite: drawn.overwrite,
       // 기본 이름은 그사이 같은 이름이 생기면(동시 내보내기, 다른 프로그램) 다음 번호로
       numbered: args.path === undefined,
-      next: nextPdfName(pdfBase(collected.place.documentPath)),
+      next: nextPdfName(pdfBase(drawn.place.documentPath)),
     },
     pdf.bytes,
   );
-  log(`PDF 내보내기 ${collected.pageCount}쪽 ${Math.round(performance.now() - started)}ms → ${path}`);
-  const warnings = [...(collected.unsavedEdits > 0 ? [unsavedEditsWarning(collected.unsavedEdits)] : []), ...pdf.warnings];
-  return { path, pageCount: collected.pageCount, bytes: pdf.bytes.length, ...(warnings.length === 0 ? {} : { warnings }) };
+  log(`PDF 내보내기 ${drawn.pageCount}쪽 ${Math.round(performance.now() - started)}ms → ${path}`);
+  const warnings = [...(drawn.unsavedEdits > 0 ? [unsavedEditsWarning(drawn.unsavedEdits)] : []), ...pdf.warnings];
+  return { path, pageCount: drawn.pageCount, bytes: pdf.bytes.length, ...(warnings.length === 0 ? {} : { warnings }) };
 }

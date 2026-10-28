@@ -1,9 +1,10 @@
 // SPEC-008 서버 글꼴 읽기(PR #112 리뷰): 비동기 읽기와 글꼴 바이트 캐시 한도.
 // 시험 글꼴(tests/fonts/, Noto Sans KR 부분 집합, OFL)만 쓴다.
 import { readFileSync } from 'node:fs';
+import { delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { FONT_CACHE_BYTES, FontBytesCache, fontEntries, fontLibraryFromFiles } from '../src/core/pdf-fonts-node.ts';
+import { extraFontDirs, FONT_CACHE_BYTES, FontBytesCache, fontEntries, fontLibraryFromFiles, systemFontLibrary } from '../src/core/pdf-fonts-node.ts';
 
 const fontPath = (name: string) => fileURLToPath(new URL(`./fonts/${name}`, import.meta.url));
 const REGULAR = fontPath('NotoSansKR-test.ttf');
@@ -69,7 +70,25 @@ describe('SPEC-008 서버 글꼴 읽기', () => {
     expect(again).toEqual(regular);
   });
 
-  it('서버 캐시 한도는 96MB(실제 공고문이 쓴 글꼴 74.3MB 가 들어간다 — ADR 005)', () => {
-    expect(FONT_CACHE_BYTES).toBe(96 * 1024 * 1024);
+  it('서버 기본 캐시는 96MB 까지 둔다 — 실제 공고문이 쓴 글꼴 7개(떼어 낸 글꼴 70.9MB, ADR 005)는 다 들어가고, 넘으면 오래된 것부터 버린다', () => {
+    const MB = 1024 * 1024;
+    const cache = new FontBytesCache();
+    cache.set('공고문 글꼴', new Uint8Array(71 * MB));
+    cache.set('다른 글꼴', new Uint8Array(25 * MB));
+
+    expect(cache.ids).toEqual(['공고문 글꼴', '다른 글꼴']);
+    expect(FONT_CACHE_BYTES).toBe(96 * MB);
+    cache.set('하나 더', new Uint8Array(1));
+    expect(cache.ids).toEqual(['다른 글꼴', '하나 더']);
+  });
+
+  it('DOCBRIDGE_FONT_DIRS 의 폴더(경로 구분자로 여럿, 빈 칸은 무시)도 시스템 글꼴 폴더와 함께 훑는다', async () => {
+    const fontsDir = fileURLToPath(new URL('./fonts', import.meta.url));
+    expect(extraFontDirs(undefined)).toEqual([]);
+    expect(extraFontDirs(`${fontsDir}${delimiter}${delimiter}/없는/폴더`)).toEqual([fontsDir, '/없는/폴더']);
+
+    const library = await systemFontLibrary(new FontBytesCache(), extraFontDirs(fontsDir));
+
+    expect(library.faces.map((face) => face.id)).toContain(`${REGULAR}#0`);
   });
 });

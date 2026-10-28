@@ -15,7 +15,7 @@ import { DocumentSessions } from '../src/server/documents.ts';
 import { PAGE_BATCH, parsePages, unsavedEditsWarning } from '../src/server/export-pdf-tool.ts';
 import { createMcpServer } from '../src/server/mcp.ts';
 import type { RequestMessage } from '../src/shared/protocol.ts';
-import { compact, inspectPdf } from '../scripts/pdf-check/inspect.ts';
+import { compact, inspectPdf, pageContents } from '../scripts/pdf-check/inspect.ts';
 import { FakeViewer } from './fake-viewer.ts';
 import { fixturePath, openFixture } from './fixtures.ts';
 import { rhwpViewerHandler } from './rhwp-viewer.ts';
@@ -127,15 +127,21 @@ describe('SPEC-008 PDF 로 내보내기 (export_pdf)', () => {
     }
   });
 
-  it('하이라이트·note·바뀐 블록 표시는 PDF 에 들어가지 않는다(쪽 SVG 는 문서 내용만)', async () => {
-    // AC-3: 표시는 뷰어 오버레이라 renderPageSvg 에 없다 — 뷰어에서 SVG 를 보는 확인은 E2E(e2e/export-pdf.spec.ts)
+  it('하이라이트·note 가 있을 때 내보낸 PDF 는 표시를 지운 뒤 내보낸 PDF 와 그리기 명령·글자가 같다(쪽 SVG 는 문서 내용만)', async () => {
+    // AC-3: 표시는 뷰어 DOM 오버레이라 쪽 SVG(pdfPages — 뷰어·테스트 뷰어 공용)에 없다. 표시가 SVG·글자 배치로 새면 그리기 명령이나 글자가 달라져 실패한다
+    // (실제 뷰어에서 표시가 있을 때와 없을 때 SVG 가 같은지는 E2E e2e/export-pdf.spec.ts)
     await openCopy('notice.hwpx', '공문.hwpx');
     await json('highlight', { targets: [{ id: 'b1' }], note: '여기 확인할 메모' });
+    expect(viewer.history.some((request) => request.method === 'highlight' && request.params.note === '여기 확인할 메모')).toBe(true);
+    const marked = await exportPdf({ path: '표시 있음.pdf' });
 
-    const text = await pdfText((await exportPdf()).path);
+    await json('clear_highlight');
+    const clean = await exportPdf({ path: '표시 없음.pdf' });
 
-    expect(text).not.toContain('여기확인할메모');
-    expect(text).toBe(await pdfText((await exportPdf({ path: '표시 없음.pdf' })).path));
+    const markedBytes = new Uint8Array(await readFile(marked.path));
+    expect(await pdfText(marked.path)).not.toContain('여기확인할메모');
+    expect(await pdfText(marked.path)).toBe(await pdfText(clean.path));
+    expect(await pageContents(markedBytes)).toEqual(await pageContents(new Uint8Array(await readFile(clean.path))));
   });
 
   it('pages 로 일부 쪽만 내보내고, 범위 밖은 뷰어에 묻기 전에 거부한다', async () => {
@@ -205,16 +211,42 @@ describe('SPEC-008 PDF 로 내보내기 (export_pdf)', () => {
     expect(sessions.get().editCount).toBe(0);
   });
 
-  it('클라이언트가 진행 알림을 받으면(progressToken) 쪽 묶음마다와 PDF 만들기 전에 알린다(큰 문서는 수십 초)', async () => {
+  it('클라이언트가 진행 알림을 받으면(progressToken) 쪽 묶음을 그릴 때마다와 PDF 쓰기 전에 알린다 — total = 쪽 수 + 1(쓰기 한 단계)', async () => {
     await openCopy('outline-demo.hwpx', '개요.hwpx');
     const progress: Array<{ progress: number; total?: number; message?: string }> = [];
 
     await client.callTool({ name: 'export_pdf', arguments: {} }, undefined, { onprogress: (event) => progress.push(event) });
 
     expect(progress).toEqual([
-      { progress: 3, total: 3, message: '쪽 3/3 받음' },
-      { progress: 3, total: 3, message: 'PDF 만드는 중' },
+      { progress: 3, total: 4, message: '쪽 3/3 그림' },
+      { progress: 4, total: 4, message: 'PDF 쓰는 중' },
     ]);
+  });
+
+  it(`묶음이 여럿이면(${PAGE_BATCH}쪽 넘게) 묶음마다 알리고 progress 는 알림마다 늘어난다(MCP 규격 MUST)`, async () => {
+    // 개요 문서(3쪽)를 45쪽 문서인 척: 열 때 쪽 수를 45 로, 쪽은 쪽 번호 % 3
+    const handle = rhwpViewerHandler();
+    const realPages = openFixture('outline-demo.hwpx').pageCount();
+    viewer.serve((request) => {
+      if (request.method === 'export_pdf_pages') return handle({ ...request, params: { pages: request.params.pages.map((page) => page % realPages) } });
+      const result = handle(request);
+      return request.method === 'load_document' && typeof result === 'object' && result !== null ? { ...result, pageCount: 45 } : result;
+    });
+    await openCopy('outline-demo.hwpx', '개요.hwpx');
+    const progress: Array<{ progress: number; total?: number; message?: string }> = [];
+
+    const result = toolResultSchema.parse(await client.callTool({ name: 'export_pdf', arguments: {} }, undefined, { onprogress: (event) => progress.push(event) }));
+
+    expect(result.isError).toBeUndefined();
+    expect(pageRequests().map((request) => request.params.pages.length)).toEqual([20, 20, 5]);
+    expect(progress).toEqual([
+      { progress: 20, total: 46, message: '쪽 20/45 그림' },
+      { progress: 40, total: 46, message: '쪽 40/45 그림' },
+      { progress: 45, total: 46, message: '쪽 45/45 그림' },
+      { progress: 46, total: 46, message: 'PDF 쓰는 중' },
+    ]);
+    for (const [i, event] of progress.entries()) if (i > 0) expect(event.progress).toBeGreaterThan(progress[i - 1]?.progress ?? Infinity);
+    expect((await inspectPdf(new Uint8Array(await readFile(join(dir, '개요.pdf'))))).pages).toHaveLength(45);
   });
 
   it('뷰어가 연결되지 않았으면 기존 "뷰어가 없습니다" 오류', async () => {
