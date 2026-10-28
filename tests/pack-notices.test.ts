@@ -43,4 +43,13 @@ describe('SPEC-004 THIRD_PARTY_NOTICES 패키지 모으기 (.mcpb)', () => {
       '라이선스 파일이 없습니다: docbridge (scripts/)',
     );
   });
+
+  it('패키지에 라이선스 파일이 없으면 scripts/pack/licenses/ 의 보충 고지(사람이 확인해 넣은 것)를 쓴다', async () => {
+    // @pdf-lib/fontkit 1.1.1 은 package.json 에 MIT 만 적고 LICENSE 파일이 없다(SPEC-008, #108)
+    const notices = await thirdPartyNotices([{ name: '@pdf-lib/fontkit', dir: 'node_modules/@pdf-lib/fontkit/' }], REPO_ROOT);
+
+    expect(notices).toContain('## @pdf-lib/fontkit\n\n');
+    expect(notices).toContain('Permission is hereby granted, free of charge');
+    expect(notices).toContain('Devon Govett');
+  });
 });

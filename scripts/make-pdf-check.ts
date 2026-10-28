@@ -110,7 +110,7 @@ function pdfKitTexts(paths: string[]): Map<string, string> {
 async function main(): Promise<void> {
   mkdirSync(outDir, { recursive: true });
   const fontScanStarted = performance.now();
-  const library = systemFontLibrary();
+  const library = await systemFontLibrary();
   const fontScanMs = performance.now() - fontScanStarted;
   console.error(`시스템 글꼴 ${library.faces.length}개 (${fontScanMs.toFixed(0)}ms)`);
 
@@ -180,7 +180,7 @@ async function main(): Promise<void> {
     if (first === undefined) continue;
 
     // 같은 SVG 를 Node(서버 자리)에서: 처음(글꼴 읽기 포함, 새 글꼴 목록) / 다시(읽어 둔 글꼴)
-    const nodeLibrary = systemFontLibrary();
+    const nodeLibrary = await systemFontLibrary();
     const sources = first.svgs.map((svg, i) => ({ svg, textLayout: first?.layouts[i] }));
     let started = performance.now();
     const node = await svgPagesToPdf(sources, nodeLibrary);

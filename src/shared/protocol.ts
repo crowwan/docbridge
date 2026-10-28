@@ -142,6 +142,18 @@ export const viewerMethodSchemas = {
   },
   /** 문서를 닫는다(close_document, SPEC-007): 문서와 되돌리기 스냅샷을 버리고 확인 창을 끄고 "닫힌 문서" 화면. 탭은 다음 문서가 쓸 수 있다 */
   close_document: { params: z.object({}), result: z.object({}) },
+  /**
+   * PDF 로 내보낼 쪽(0부터, SPEC-008): 쪽마다 rhwp renderPageSvg(모양) + getPageTextLayout(글자·빈칸·자리, JSON 글).
+   * 편집이 아니다(문서·되돌리기·표시를 건드리지 않는다). 하이라이트·note·바뀐 블록 표시는 뷰어 오버레이라 SVG 에 없다.
+   * screenFonts: SVG font-family 차례마다 브라우저가 실제로 쓰는 글꼴 이름(Canvas 로 잼, core/screen-fonts.ts) — 서버가 같은 글꼴을 고르게
+   */
+  export_pdf_pages: {
+    params: z.object({ pages: z.array(z.number().int().min(0)).min(1) }),
+    result: z.object({
+      pages: z.array(z.object({ svg: z.string(), textLayout: z.string() })),
+      screenFonts: z.record(z.string(), z.string()),
+    }),
+  },
 } as const;
 
 type MethodSchemas = typeof viewerMethodSchemas;
@@ -166,6 +178,7 @@ export const parseViewerResult: { [M in ViewerMethod]: (result: unknown) => View
   export_hwpx: (result) => viewerMethodSchemas.export_hwpx.result.parse(result),
   edit_state: (result) => viewerMethodSchemas.edit_state.result.parse(result),
   close_document: (result) => viewerMethodSchemas.close_document.result.parse(result),
+  export_pdf_pages: (result) => viewerMethodSchemas.export_pdf_pages.result.parse(result),
 };
 
 const requestSchema = <M extends ViewerMethod, P extends z.ZodType>(method: M, params: P) =>
@@ -185,6 +198,7 @@ const requestSchemas = {
   export_hwpx: requestSchema('export_hwpx', viewerMethodSchemas.export_hwpx.params),
   edit_state: requestSchema('edit_state', viewerMethodSchemas.edit_state.params),
   close_document: requestSchema('close_document', viewerMethodSchemas.close_document.params),
+  export_pdf_pages: requestSchema('export_pdf_pages', viewerMethodSchemas.export_pdf_pages.params),
 } satisfies { [M in ViewerMethod]: z.ZodObject };
 
 /** 뷰어가 요청을 읽는 스키마. 메서드마다 입력 모양이 다르다 */
@@ -201,6 +215,7 @@ export const requestMessageSchema = z.discriminatedUnion('method', [
   requestSchemas.export_hwpx,
   requestSchemas.edit_state,
   requestSchemas.close_document,
+  requestSchemas.export_pdf_pages,
 ]);
 export type RequestMessage = z.infer<typeof requestMessageSchema>;
 

@@ -10,6 +10,7 @@ import { blockBoxes, highlightTargets } from '../src/core/highlight-targets.ts';
 import { exportForSave, type Reopen } from '../src/core/hwpx-export.ts';
 import type { BlockAnchor } from '../src/core/block-ids.ts';
 import { openHwpDocument } from '../src/core/open-document.ts';
+import { pdfPages } from '../src/core/pdf-pages.ts';
 import { initRhwpForNode } from '../src/core/rhwp-node.ts';
 import { paragraphStyles } from '../src/core/styles.ts';
 import type { RequestMessage, ViewerParams } from '../src/shared/protocol.ts';
@@ -105,6 +106,9 @@ export function rhwpViewer(options: RhwpViewerOptions = {}): RhwpViewer {
         unsaved = request.params.unsavedEdits;
         newDocument = request.params.newDocument;
         return {};
+      case 'export_pdf_pages':
+        // 뷰어와 같은 함수(쪽 SVG·글자 배치). 브라우저가 없어 화면 글꼴은 재지 않는다
+        return { pages: pdfPages(opened().doc, request.params.pages), screenFonts: {} };
       case 'close_document':
         // 뷰어처럼 문서를 닫고 확인 창을 끈다(SPEC-007)
         close();

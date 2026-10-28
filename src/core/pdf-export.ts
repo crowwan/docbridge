@@ -49,6 +49,7 @@ import { parseJson } from './json.ts';
 import { FontResolver, type FontChoice, type FontLibrary } from './pdf-fonts.ts';
 import { GlyphForms } from './pdf-glyphs.ts';
 import { TEXT_LAYER_FONT, TextLayerFont } from './pdf-text-layer.ts';
+import { fontStackKey } from './screen-fonts.ts';
 import {
   isElement,
   multiply,
@@ -76,6 +77,8 @@ const RHWP_BOLD_STROKE = 0.02;
 const KAPPA = 0.5522847498;
 /** 글자 층 글자의 기준선: 줄 위쪽 + 줄 높이 × 이 값(rhwp SVG 기준선과 비교해 잼 — 공문 fixture 0.85) */
 const LAYER_BASELINE = 0.85;
+/** 글꼴 고르기 루프에서 이만큼 글자 묶음(SVG <text>)마다 쉰다(pause) */
+const RESOLVE_PAUSE_EVERY = 100;
 
 export interface PdfExportStats {
   pages: number;
@@ -146,11 +149,26 @@ function layoutChars(textLayout: string): LayerChar[] {
   });
 }
 
+export interface PdfExportOptions {
+  /**
+   * 화면(브라우저)이 font-family 차례마다 실제로 쓰는 첫 글꼴 이름(열쇠 = screen-fonts.ts fontStackKey, 뷰어가 Canvas 로 잼).
+   * 있으면 그 이름을 차례 맨 앞에 두고 고르고, 서버 글꼴에 없으면 warnings 로 알린다
+   */
+  screenFonts?: Record<string, string>;
+  /** 쪽 하나를 그릴 때마다 기다린다 — 서버는 다음 이벤트 루프 차례로 넘겨 큰 문서를 만드는 동안 MCP·뷰어 연결이 멈추지 않게 */
+  pause?: () => Promise<void>;
+}
+
 /** 쪽들 → PDF 바이트. 쪽 크기는 SVG width·height(px) 그대로 */
-export async function svgPagesToPdf(sources: PdfPageSource[], library: FontLibrary): Promise<PdfExportResult> {
+export async function svgPagesToPdf(sources: PdfPageSource[], library: FontLibrary, options: PdfExportOptions = {}): Promise<PdfExportResult> {
   const pdf = await PDFDocument.create();
   const resolver = new FontResolver(library);
-  const pages = sources.map((source) => parseSvg(source.svg));
+  const pause = options.pause ?? (async () => undefined);
+  const pages: SvgElement[] = [];
+  for (const source of sources) {
+    pages.push(parseSvg(source.svg));
+    await pause();
+  }
   const warnings = new Map<string, number>();
   const warn = (kind: string): void => {
     warnings.set(kind, (warnings.get(kind) ?? 0) + 1);
@@ -158,10 +176,21 @@ export async function svgPagesToPdf(sources: PdfPageSource[], library: FontLibra
 
   // 1) 글자마다 글꼴을 고른다(글꼴 바이트를 읽어 글자가 있는지 봐야 해서 먼저 다 한다)
   const runs: TextRun[] = [];
-  for (const svg of pages) collectText(svg, runs);
+  for (const svg of pages) {
+    collectText(svg, runs);
+    await pause();
+  }
+  for (const run of runs) {
+    const screen = options.screenFonts?.[fontStackKey(run.families)];
+    if (screen === undefined) continue;
+    run.families = [screen, ...run.families.filter((name) => name !== screen)];
+    if (!resolver.hasFamily(screen)) warn(`화면 글꼴 "${screen}" 를 이 컴퓨터 글꼴에서 쓸 수 없음(다른 글꼴로 그림)`);
+  }
   const glyphFonts = new Map<SvgElement, Array<FontChoice | undefined>>();
   let missingGlyphs = 0;
-  for (const run of runs) {
+  for (const [index, run] of runs.entries()) {
+    // 글꼴을 이미 고른 글자는 기다림 없이(마이크로태스크로만) 지나가 큰 문서면 루프가 길게 멈춘다 — 글자 묶음마다 쉰다
+    if (index % RESOLVE_PAUSE_EVERY === 0) await pause();
     const choices: Array<FontChoice | undefined> = [];
     for (const char of run.text) {
       const choice = await resolver.resolve(run.families, run.weight, run.italic, char);
@@ -170,6 +199,8 @@ export async function svgPagesToPdf(sources: PdfPageSource[], library: FontLibra
     }
     glyphFonts.set(run.element, choices);
   }
+  // 그 글자가 든 글꼴이 이 컴퓨터에 하나도 없다(글꼴 없는 리눅스 등) — 보이지 않을 뿐 글자 층에는 있다
+  if (missingGlyphs > 0) warnings.set('글꼴이 없어 그리지 못한 글자(선택·검색은 됨)', missingGlyphs);
 
   // 2) 쓰인 글꼴을 연다(윤곽은 쓸 때 글리프마다 Form 으로)
   const glyphs = new GlyphForms(pdf);
@@ -179,6 +210,7 @@ export async function svgPagesToPdf(sources: PdfPageSource[], library: FontLibra
       if (choice === undefined || usedIds.has(choice.id)) continue;
       usedIds.add(choice.id);
       glyphs.addFont(choice.id, await library.load(choice.id));
+      await pause();
     }
   }
 
@@ -192,10 +224,12 @@ export async function svgPagesToPdf(sources: PdfPageSource[], library: FontLibra
     const textLayout = sources[index]?.textLayout;
     const painter = new PagePainter({ pdf, page, svg, glyphs, textLayer, glyphFonts, images, warn });
     await painter.paint(textLayout === undefined ? undefined : layoutChars(textLayout));
+    await pause();
   }
   textLayer.finish();
 
-  const bytes = await pdf.save();
+  // objectsPerTick: 큰 PDF 를 쓰는 동안에도 사이사이 다른 일이 돈다(pdf-lib 가 그만큼마다 쉰다)
+  const bytes = await pdf.save({ objectsPerTick: options.pause === undefined ? Infinity : 50 });
   return {
     bytes,
     stats: { pages: pages.length, textElements: runs.length, missingGlyphs, fonts: [...usedIds], glyphForms: glyphs.count },
@@ -517,7 +551,8 @@ class PagePainter {
     if (baseline === 'hanging' || baseline === 'text-before-edge') y += size * 0.8;
     const transform = parseTransform(element.attrs.get('transform'));
 
-    // 글자 층(글자 배치가 없을 때만 씀): SVG 글자 자리 그대로
+    // 글자 층(글자 배치가 없을 때만 씀): SVG 글자 자리 그대로. 한계: <text> 자신의 transform 만 반영하고 조상 <g transform> 은 반영하지 않는다
+    // (글자 층은 쪽 끝에 그룹 밖에서 그린다). rhwp 는 글자마다 transform 을 주고 export_pdf 는 늘 글자 배치를 보내 지금은 쓰이지 않는다(PR #112 리뷰)
     let cursor = x;
     chars.forEach((char, i) => {
       const width = (advances[i] ?? 0) * size * stretch;

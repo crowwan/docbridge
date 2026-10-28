@@ -25,13 +25,22 @@ export function bundledPackages(inputs: string[]): BundledPackage[] {
   return [...packages.values()].sort((a, b) => a.name.localeCompare(b.name) || a.dir.localeCompare(b.dir));
 }
 
-/** 패키지마다 "## 이름" + 라이선스 전문. 라이선스 파일이 없으면 실패한다(빠진 채 배포하지 않게) */
+/**
+ * 라이선스 파일이 없는 패키지의 보충 고지: scripts/pack/licenses/<이름, / 는 __>.txt — 사람이 package.json·README 를 확인해 넣은 것
+ * (@pdf-lib/fontkit 은 MIT 라고만 적고 LICENSE 파일이 없다, #108)
+ */
+const supplementPath = (root: string, name: string) => `${root}scripts/pack/licenses/${name.replace('/', '__')}.txt`;
+
+/** 패키지마다 "## 이름" + 라이선스 전문. 라이선스 파일도 보충 고지도 없으면 실패한다(빠진 채 배포하지 않게) */
 export async function thirdPartyNotices(packages: BundledPackage[], root: string): Promise<string> {
   const sections = await Promise.all(
     packages.map(async ({ name, dir }) => {
       const licenseFile = (await readdir(`${root}${dir}`)).find((file) => /^licen[cs]e/i.test(file));
-      if (licenseFile === undefined) throw new Error(`라이선스 파일이 없습니다: ${name} (${dir})`);
-      return `## ${name}\n\n${(await readFile(`${root}${dir}${licenseFile}`, 'utf8')).trim()}\n`;
+      const path = licenseFile === undefined ? supplementPath(root, name) : `${root}${dir}${licenseFile}`;
+      const text = await readFile(path, 'utf8').catch(() => {
+        throw new Error(`라이선스 파일이 없습니다: ${name} (${dir})`);
+      });
+      return `## ${name}\n\n${text.trim()}\n`;
     }),
   );
   return `docbridge 의 server/index.js · viewer/ 에 함께 묶인 패키지와 라이선스\n\n${sections.join('\n')}`;

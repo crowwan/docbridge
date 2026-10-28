@@ -18,7 +18,7 @@ export interface InspectedPdf {
   embeddedFonts: string[];
   /** 글꼴 파일이 없는(넣지 않은) 글꼴 이름 */
   unembeddedFonts: string[];
-  /** Type3 글꼴(윤곽을 글리프로 넣은 것 — CFF 글꼴) 이름 */
+  /** Type3 글꼴 이름 — 지금은 보이지 않는 글자 층(DocbridgeTextLayer)뿐이다(보이는 글자는 글꼴이 아니라 윤곽 Form) */
   type3Fonts: string[];
 }
 

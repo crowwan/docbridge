@@ -20,7 +20,7 @@
 
 ## 스택
 
-- Web (TS, Node 24). 로컬 MCP 서버(stdio, `@modelcontextprotocol/sdk`) + 같은 프로세스의 127.0.0.1 HTTP·WebSocket(`ws`, 기본 포트 7790) + 브라우저 뷰어(Vite, `@rhwp/core` 0.8.7 고정 직접 사용) — 결정과 측정값: `docs/decisions/001-stack-and-rhwp.md`, 편집·저장 방식: `docs/decisions/002-edit-and-save.md`, 새 문서 만들기: `docs/decisions/003-create-document.md`, 문서 사이 복사: `docs/decisions/004-cross-document-copy.md`, PDF 로 내보내기: `docs/decisions/005-export-pdf.md`(쪽 SVG + 글자 배치 → 서버 pdf-lib, 시스템 글꼴 윤곽 + 보이지 않는 글자 층 — `src/core/pdf-*.ts`, 테스트 `tests/pdf-spike.test.ts`)
+- Web (TS, Node 24). 로컬 MCP 서버(stdio, `@modelcontextprotocol/sdk`) + 같은 프로세스의 127.0.0.1 HTTP·WebSocket(`ws`, 기본 포트 7790) + 브라우저 뷰어(Vite, `@rhwp/core` 0.8.7 고정 직접 사용) — 결정과 측정값: `docs/decisions/001-stack-and-rhwp.md`, 편집·저장 방식: `docs/decisions/002-edit-and-save.md`, 새 문서 만들기: `docs/decisions/003-create-document.md`, 문서 사이 복사: `docs/decisions/004-cross-document-copy.md`, PDF 로 내보내기: `docs/decisions/005-export-pdf.md`(쪽 SVG + 글자 배치 + 화면 글꼴 이름 → 서버 pdf-lib, 시스템 글꼴 윤곽(비동기 읽기·96MB 캐시) + 보이지 않는 글자 층 — `src/core/pdf-*.ts`·`screen-fonts.ts`, 도구 `src/server/export-pdf-tool.ts`, 테스트 `tests/pdf-spike.test.ts`·`export-pdf.test.ts`)
 - `any`·타입 단언(`as`) 금지(`as const` 는 허용). rhwp 가 돌려주는 JSON 문자열은 zod 스키마로 읽는다(`src/core/json.ts` parseJson). 오류 문구 꺼내기는 `src/shared/errors.ts` errorMessage
 - 상대 import 는 `.ts` 확장자까지 쓴다(Node 가 TS 를 바로 실행하고, 빌드 때 `.js` 로 바뀐다)
 - stdout 은 MCP 전용. 서버 로그는 `src/server/log.ts`(stderr)로만 쓴다
@@ -37,18 +37,19 @@ npm start              # 빌드 결과 실행: MCP 서버(stdio) + 뷰어 서버
                        # = node dist/server/index.js. DOCBRIDGE_PORT 로 시작 포트 변경
 npm run typecheck
 npm test               # Vitest: 블록 추출·블록 id·글자 단위·하이라이트 계산·note 자리·요청/응답·open_document·읽기·하이라이트 도구(가짜/rhwp 테스트 뷰어)·편집 기술 검증·편집 공용 경로·replace_text·replace_all·insert_paragraph·delete_blocks·move_blocks·undo·insert_table·저장(경로 규칙·검증·새로고침)·스타일(styles.ts·list_styles·set_style·insert_paragraph style)·새 문서 만들기(create_document·새 문서 저장·새로고침)·새 문서 만들기 기술 검증(빈 문서·표·양식 비우기)·문서 사이 복사 기술 검증(importParagraphBlock·번호·스타일 보정·HTML 대안)·사람 편집 요청(user_edit·⌘Z 공용 되돌리기·알림·늦은 요청 거부)·더블클릭 고칠 자리(hitTest → 블록·칸·누름틀, 바뀐 범위만, 누름틀 걸침, 입력 중 Claude 편집 따라가기)·끌어 옮기기·메뉴(점 → 본문 블록, 놓일 자리, 지우기·위로·아래로)·여러 문서(doc 표·마지막으로 쓴 문서·문서별 id/undo/편집 수·8개 상한·close_document·탭 닫기 알림·문서별 사람 편집·같은 파일 = 실제 경로·다른 문서 파일로 저장 거부)·copy_blocks(원본 범위 계획·대상 탭 편집·보정 후속·문서 사이/같은 문서 복사·거부)·넣은·옮긴 문단 줄 배치(대상 본문 폭, #85)·열 때 줄 배치 다시 계산(줄 배치 빠진 저장 파일 다시 열기·fixture 6개 그대로·구역 둘과 머리말, #89·#80)·
-                       # 플랫폼별 브라우저 열기 명령·윈도우 경로 규칙(path.win32/posix 주입, #93)·주소에 % 없음·THIRD_PARTY_NOTICES 패키지 모으기·릴리스 태그 = package.json 버전(#94)·mcpb bin 문자열·객체(#99)·
+                       # 플랫폼별 브라우저 열기 명령·윈도우 경로 규칙(path.win32/posix 주입, #93)·주소에 % 없음·THIRD_PARTY_NOTICES 패키지 모으기·릴리스 태그 = package.json 버전(#94)·mcpb bin 문자열·객체(#99)·PDF 내보내기(export_pdf 경로 규칙·쪽 범위·편집 아님·진행 알림, 쪽 SVG → PDF·글꼴 고르기·화면 글꼴 맞추기·글꼴 비동기 읽기와 캐시, #107·#108)·
                        # fixture 별 get_outline 기대 JSON(tests/outline/, rhwp 회귀 — 바꿀 때 -u)·서버 통합 (CI)
 npm run pack           # Claude Desktop 확장 → dist/docbridge-<버전>.mcpb (뷰어 빌드 → esbuild 서버 한 파일 → manifest(버전·도구 목록 자동) → mcpb validate·pack, scripts/pack/) — SPEC-004
 node scripts/release/check-tag.ts <태그>   # 태그 = v<package.json 버전> 이면 올릴 파일 경로(dist/docbridge-<버전>.mcpb), 아니면 실패 (Release 워크플로)
-npm run test:pack      # pack 후 설치판 검사(tests/pack/): manifest 버전·도구 = 서버 등록 도구, THIRD_PARTY_NOTICES 에 dependencies 전부, node_modules 없는 임시 폴더에 풀어 node server/index.js → open_document·read_blocks·save_document (PATH 빈 폴더로 브라우저 막음, CI)
-npm run e2e            # 빌드 후 Playwright: 렌더링·하이라이트·측정·문서 열기·토큰 거부·읽기 도구·하이라이트 도구·편집 표시(표 넣기 포함)·스타일 바꾸기 표시·저장과 새로고침 확인 창·새 문서 만들기(빈 문서·양식·확인 창)·사람 편집 요청과 ⌘Z·더블클릭 글자 고치기·여러 문서 탭(탭 제목·doc 이름·●·탭 닫기 알림·close_document·copy_blocks 대상 탭 표시와 undo)·끌어 옮기기와 오른쪽 클릭 메뉴 (로컬 전용, CI 에 없음)
+npm run test:pack      # pack 후 설치판 검사(tests/pack/): manifest 버전·도구 = 서버 등록 도구, THIRD_PARTY_NOTICES 에 dependencies 전부, node_modules 없는 임시 폴더에 풀어 node server/index.js → open_document·read_blocks·save_document·export_pdf(글꼴 없는 CI 에서도 — 글자 층만 단언) (PATH 빈 폴더로 브라우저 막음, CI)
+npm run e2e            # 빌드 후 Playwright: 렌더링·하이라이트·측정·문서 열기·토큰 거부·읽기 도구·하이라이트 도구·편집 표시(표 넣기 포함)·스타일 바꾸기 표시·저장과 새로고침 확인 창·새 문서 만들기(빈 문서·양식·확인 창)·사람 편집 요청과 ⌘Z·더블클릭 글자 고치기·여러 문서 탭(탭 제목·doc 이름·●·탭 닫기 알림·close_document·copy_blocks 대상 탭 표시와 undo)·끌어 옮기기와 오른쪽 클릭 메뉴·PDF 내보내기(쪽 SVG 에 화면 표시 없음·화면 글꼴 이름·시스템 글꼴 PDF) (로컬 전용, CI 에 없음)
 node scripts/make-fixtures.ts   # fixtures/ 의 생성 문서 다시 만들기
 node scripts/measure-edits.ts [문서…]   # 편집·되돌리기·HWPX 저장 검증 비용 측정 (ADR 002)
 node scripts/make-hwp-check.ts [폴더]   # 한글 프로그램 확인용 편집 HWPX (기본 ~/Downloads/docbridge-hwp-check, 레포에 넣지 않음)
 node scripts/make-create-check.ts [폴더] # 한글 프로그램 확인용 새로 만든 HWPX (기본 ~/Downloads/docbridge-create-check, ADR 003)
 node scripts/make-copy-check.ts [폴더]   # 한글 프로그램 확인용 다른 문서에서 복사해 넣은 HWPX (기본 ~/Downloads/docbridge-copy-check, ADR 004)
 node scripts/make-pdf-check.ts [폴더] [--runs N] [--doc 문서]…  # PDF 후보 측정(Playwright Chromium)·미리보기 확인용 PDF (기본 ~/Downloads/docbridge-pdf-check, ADR 005)
+node scripts/measure-pdf-export.ts [문서…] [--pages N]   # export_pdf 서버 쪽 측정: 시스템 글꼴 훑기·처음/다음 내보내기·이벤트 루프 최대 멈춤·글꼴 캐시·N쪽 큰 문서 (ADR 005)
 npm run demo           # 빌드 후 데모 영상 녹화(scripts/demo/, 서버 포트 7900, 헤드리스 Chromium) → ~/Downloads/docbridge-demo (레포에 넣지 않음)
 ```
 
@@ -67,8 +68,9 @@ src/
                읽기 도구(read-tools.ts: 뷰어 요청 + id 붙이기, reading.ts: 개요·읽기 결과와 500블록·20,000자 자르기),
                하이라이트 도구(highlight-tools.ts: 대상 id → id 표 위치로 바꿔 뷰어에 요청),
                문서 사이 복사(copy-tool.ts: copy_blocks — 원본 줄에서 범위 계획 + export_hwpx 바이트 → 대상 session.edit 편집 하나, SPEC-007), 편집 도구(edit-tools.ts: replace_text·replace_all(서버가 일치를 구해 replace_text 여러 자리 편집으로)·insert_paragraph·insert_table·delete_blocks·move_blocks·undo → session.edit/undo 편집 공용 경로), 사람 편집(user-edit.ts: 뷰어 user_edit 블록 위치 → id 표로 id, 문서 상태 번호 확인(뷰어가 본 문서 = 줄 차례의 문서), 받은 뒤 20초 넘게 늦은 요청 거부(USER_REQUEST_DEADLINE_MS < 뷰어 기다림), 같은 session.edit 줄·거부 규칙, ⌘Z user_undo — SPEC-006, 그 탭 문서 세션으로 — 알림은 documents takeNotices), 스타일 도구(style-tools.ts: list_styles·set_style, 스타일 목록 항목 styleItems), 옮기기 계획(move-plan.ts: id 표로 이어짐·기준 등 거부 판정과 옮길 문단 범위, copy_blocks 원본 범위 planCopySource 도 같은 범위 규칙), 편집 기록(edit-log.ts: 되돌리기 20칸 id 표 사본·저장하지 않은 편집 수·문서 상태 번호 state — 편집·되돌리기·edit_state 요청에 실어 뷰어에 보낸다),
+               PDF 로 내보내기(export-pdf-tool.ts: export_pdf — 쪽 범위 parsePages·뷰어 export_pdf_pages 20쪽 묶음(문서 줄 안)·시스템 글꼴(처음 한 번 훑기)·svgPagesToPdf·쓰기, 저장 전 편집 warnings·진행 알림, 편집 아님 — SPEC-008),
                저장(save-tool.ts: 뷰어 export_hwpx → 검증 실패면 블록 id → 쓰기 → 마지막 파일·기준 id 표,
-               save-path.ts: 경로 규칙(새 문서 경로·새 문서 저장 포함)·배타적 만들기·임시 파일 → 이름 바꾸기, paths.ts: ~·절대 경로 판정·같은 파일 열쇠 — 순수 규칙은 path(win32/posix)를 받는다, SPEC-004),
+               save-path.ts: 경로 규칙(새 문서 경로·새 문서 저장·PDF 경로 resolvePdfPath 포함)·배타적 만들기·임시 파일 → 이름 바꾸기, paths.ts: ~·절대 경로 판정·같은 파일 열쇠 — 순수 규칙은 path(win32/posix)를 받는다, SPEC-004),
                HTTP·WebSocket(bridge.ts: 토큰·포트, 연결마다 문서 이름(주소 &doc=, 없으면 빈 탭)·요청 추적, 요청은 그 문서의 마지막 연결로, 빈 탭 쓰기 claimViewer·빈 탭으로 돌리기 releaseViewer, 뷰어 요청 받기 serveUserRequests — 그 문서의 마지막 탭만), 포트 설정(port.ts), 브라우저 열기(browser.ts: 맥 open·윈도우 cmd /c start ""(& 는 ^&)·리눅스 xdg-open, 플랫폼 주입), stderr 로그
   shared/      서버 ↔ 뷰어 요청/응답 프로토콜(protocol.ts: 메서드별 입력·결과 스키마·요청 id·타임아웃·TextTarget, 뷰어 → 서버 user_request(user_edit·user_undo)/user_response, 사람 편집 서버 마감 USER_REQUEST_DEADLINE_MS·뷰어 타임아웃 문구 userRequestTimeoutMessage), 오류 문구(errors.ts), 거부 코드와 사람용 문구(rejections.ts: EditRejection = Claude 용 message + code, 거부 코드 → 사람용 문구 표 — 사람 편집 거부 알림, 뷰어 응답에도 code 를 실음, #77),
                파일 크기 상한(limits.ts: 열기·저장 50MB), base64(base64.ts: 뷰어·테스트 뷰어 공용)
@@ -87,13 +89,14 @@ src/
                새 문서 만들기(create-document.ts: 표 넣기(insert_table 편집이 씀, #38)·양식 본문 비우기, #35 기술 검증, createNewDocument = 뷰어가 새 문서 만들기(#36)) — ADR 003,
                문서 사이 복사(copy-paragraphs.ts: 원본 HWPX 바이트 → importParagraphBlock + 번호(넣는 자리 앞 목록 우선)·스타일(다음 스타일 포함, 넣은 문단만 봄) 보정 — copy_blocks 편집이 씀) — ADR 004,
                문서 바이트 열기(open-document.ts: openHwpDocument = new HwpDocument + 줄 배치가 빈 본문 문단이 있으면 reflowLinesegs(구역 첫 문단은 먼저 문단 모양 다시 걸기) — 뷰어 load_document·create_document 양식·테스트 뷰어 공용, #89) — ADR 004 결정 7,
+               PDF(pdf-export.ts = 쪽 SVG → pdf-lib, pdf-svg·pdf-glyphs·pdf-text-layer·pdf-fonts(글꼴 고르기)·pdf-fonts-node(시스템 글꼴 비동기 읽기·FontBytesCache 96MB), pdf-pages.ts = 쪽 SVG·글자 배치(뷰어·테스트 뷰어 공용), screen-fonts.ts = 화면 글꼴 이름(Canvas 폭 주입)) — ADR 005,
                Node 용 초기화(rhwp-node.ts)
   viewer/      브라우저 뷰어(Vite root). Canvas 렌더링 + 하이라이트·note·바뀐 블록 표시 오버레이. 탭 하나 = 문서 하나(주소 &doc=, 도구 막대 doc 이름, 탭 제목 = 파일 이름·보지 않는 사이 바뀌면 ●, close_document 면 빈 탭).) 사람 편집은 서버에 user_edit 로 보내고(window.docbridge.userEdit), ⌘Z/Ctrl+Z 는 서버 user_undo.
                더블클릭 글자 고치기(inline-edit.ts: 마우스 올림 테두리·입력칸), 끌어 옮기기·오른쪽 클릭 메뉴(block-actions.ts: 놓일 자리 가로선·role=menu 위로·아래로·지우기·메뉴 키), 실패 알림(toast.ts: 뷰어 아래 3초). 디자인 토큰은 tokens.css (의도는 docs/design.md)
 tests/         Vitest (Node 에서 rhwp WASM 을 직접 띄움). outline/ = fixture 별 get_outline 기대 JSON, pack/ = 설치판 검사(npm test 에서 빠짐, npm run test:pack)
 e2e/           Playwright (렌더링·하이라이트·측정·서버가 내주는 뷰어·문서 열기·읽기 도구·하이라이트 도구·편집 표시·스타일 바꾸기 표시·사람 편집과 ⌘Z·더블클릭 글자 고치기·여러 문서 탭·끌어 옮기기와 메뉴)
 fixtures/      테스트용 문서와 출처(README.md)
-scripts/       fixtures 생성(hwpx-zip.ts = 구역 둘 fixture 를 두 HWPX 합치기로 — rhwp 편집 API 에 구역 나누기가 없다), 편집 비용 측정(measure-edits.ts), 한글 확인 파일 생성(make-hwp-check.ts 편집, make-create-check.ts 새 문서, make-copy-check.ts 문서 사이 복사), 데모 영상 녹화(demo/: 채팅+뷰어 화면 demo.html, record-demo.ts), .mcpb 만들기(pack/: manifest.ts = 버전·서버에 물은 도구 목록·Node 범위·mcpb CLI 는 node 로 JS 진입 파일 실행(윈도우 .cmd 피함, bin 문자열·객체 둘 다), notices.ts = 번들 입력의 마지막 node_modules 기준 패키지·라이선스, pack.ts = esbuild 번들(target node24 = Desktop 내장 Node 24.22)·LICENSE·THIRD_PARTY_NOTICES·mcpb pack),
+scripts/       fixtures 생성(hwpx-zip.ts = 구역 둘 fixture 를 두 HWPX 합치기로 — rhwp 편집 API 에 구역 나누기가 없다), 편집 비용 측정(measure-edits.ts), 한글 확인 파일 생성(make-hwp-check.ts 편집, make-create-check.ts 새 문서, make-copy-check.ts 문서 사이 복사), 데모 영상 녹화(demo/: 채팅+뷰어 화면 demo.html, record-demo.ts), .mcpb 만들기(pack/: manifest.ts = 버전·서버에 물은 도구 목록·Node 범위·mcpb CLI 는 node 로 JS 진입 파일 실행(윈도우 .cmd 피함, bin 문자열·객체 둘 다), notices.ts = 번들 입력의 마지막 node_modules 기준 패키지·라이선스(라이선스 파일 없는 패키지는 licenses/ 보충 고지), pack.ts = esbuild 번들(target node24 = Desktop 내장 Node 24.22)·LICENSE·THIRD_PARTY_NOTICES·mcpb pack),
                릴리스(release/: tag.ts·check-tag.ts = 태그 = package.json 버전 확인 → 올릴 파일, .github/workflows/release.yml 이 부른다)
 docs/          PRD, 스펙, ADR(decisions/), 조사 자료(research/), QA 체크리스트
 ```
