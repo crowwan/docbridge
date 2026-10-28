@@ -128,8 +128,9 @@ export function setupInlineEdit(pagesEl: HTMLElement, host: InlineEditHost): Inl
     editing = { spot, original: spot.text, pageIndex, textarea };
 
     textarea.addEventListener('keydown', (event) => {
-      // 한글 조합 중 Enter 는 조합을 끝내는 것이라 적용하지 않는다
-      if (event.isComposing) return;
+      // 한글 조합 중 Enter 는 조합을 끝내는 것이라 적용하지 않는다.
+      // Safari(WebKit)는 조합을 확정하는 Enter 를 isComposing=false, keyCode 229 로 보낼 수 있어 둘 다 거른다(#86)
+      if (event.isComposing || event.keyCode === 229) return;
       if (event.key === 'Enter') {
         // 줄바꿈은 받지 않는다(Shift+Enter 도 무시) — 문단 나누기는 범위 밖
         event.preventDefault();
